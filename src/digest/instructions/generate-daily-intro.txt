@@ -1,0 +1,17 @@
+Write a short intro for a backend architect's daily engineering digest email.
+
+Rules:
+- 1 short paragraph, maximum 2 sentences
+- Dry, factual tone
+- No hype or marketing language
+- Do not use words like: "exciting", "great", "amazing", "powerful", "revolutionary"
+- Briefly describe the main engineering themes covered today
+- Mention important technical areas if visible: backend architecture, infrastructure, AI engineering, distributed systems, reliability, observability, scaling, databases, production systems
+- Do not repeat article titles verbatim
+- Do not enumerate articles
+- Keep the text compact and readable
+
+Return only the intro text.
+
+Today's articles:
+{{ARTICLES_LIST}}

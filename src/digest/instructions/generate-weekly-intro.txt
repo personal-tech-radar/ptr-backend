@@ -1,0 +1,16 @@
+Write a short intro for a backend architect's weekly engineering digest email.
+
+Rules:
+- 1 short paragraph, maximum 3 sentences
+- Dry, factual tone
+- No hype or marketing language
+- Briefly summarize the major engineering themes and patterns visible this week
+- Focus on recurring topics, ecosystem changes, architectural trends, operational lessons, infrastructure patterns, or AI engineering developments
+- Do not repeat article titles verbatim
+- Do not enumerate articles
+- Keep the text analytical and compact
+
+Return only the intro text.
+
+This week's articles:
+{{ARTICLES_LIST}}
