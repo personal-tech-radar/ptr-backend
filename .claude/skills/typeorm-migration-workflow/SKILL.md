@@ -46,7 +46,7 @@ Use this skill when making entity changes or running migrations. It covers the e
 | `src/common/database/data-source.ts` | Dev CLI (via ts-node) | `src/**/*.entity.ts`, `src/migrations/*.ts` |
 | `src/common/database/data-source-prod.ts` | Prod CLI (compiled JS) | `dist/**/*.entity.js`, `dist/migrations/*.js` |
 
-Prod commands require `npm run build` first.
+Prod commands require `npm run build` first. The build must output to `dist/` (not `dist/src/`) — ensure `tsconfig.json` contains `"rootDir": "./src"`.
 
 ---
 
