@@ -1,6 +1,17 @@
-# NestJS Project Template
+# Personal Tech Radar — Backend
 
-A production-ready NestJS template with pre-wired infrastructure modules for rapid service development.
+A NestJS service that automatically curates a daily engineering digest. It fetches articles from RSS/Atom feeds and GitHub release pages, scores each one with OpenAI against a configurable interest profile, picks the top 5 by relevance and quality, and delivers a clean email digest via Resend.
+
+![C4 Context Diagram](./diagram/context/c4-context.png)
+
+**How it works:**
+
+1. A cron job fires every hour and dispatches a `fetch-all-sources` BullMQ job.
+2. The feed fetcher downloads each enabled source, parses RSS/Atom/GitHub releases, and saves new articles to PostgreSQL. Duplicates are detected by URL hash; near-duplicates by title hash within 7 days.
+3. Each new article triggers an `analyze-article` job. The AI analysis service calls OpenAI with the article title, summary, and user interests from `config/user-interests.yaml`. It stores a relevance score, quality score, and a flag for digest inclusion.
+4. A second cron job fires daily (default 07:00 UTC) and dispatches `build-daily-digest`. The digest builder queries analyzed articles from the last 24 hours, ranks them using a weighted score (relevance × 0.45 + quality × 0.30 + source trust × 0.15 + recency × 0.10), applies source and category diversification, and selects up to 5 items.
+5. The digest is saved as a draft, then the email is rendered and sent through Resend. The digest status is updated to `sent`.
+6. At any time, `POST /digests/daily/resend-latest` re-sends the most recently built digest without rebuilding it.
 
 ---
 
@@ -11,11 +22,14 @@ A production-ready NestJS template with pre-wired infrastructure modules for rap
 | Framework | NestJS 11 (Express) |
 | Language | TypeScript 5.7 |
 | Database | PostgreSQL + TypeORM 0.3 |
-| Cache | Redis (ioredis) |
-| Object Storage | S3-compatible (MinIO locally) |
+| Cache / Queues | Redis + BullMQ |
+| AI Analysis | OpenAI API |
+| Email | Resend SDK |
+| Feed Parsing | rss-parser |
+| Scheduler | @nestjs/schedule |
 | Validation | class-validator + class-transformer |
-| Documentation | Swagger / OpenAPI |
-| Auth | API key guard |
+| Documentation | Swagger / OpenAPI (`/docs`) |
+| Auth | API key guard (`X-API-KEY` header) |
 
 ---
 
@@ -24,158 +38,220 @@ A production-ready NestJS template with pre-wired infrastructure modules for rap
 ```
 src/
 ├── common/
-│   ├── database/          # TypeORM PostgreSQL module + DataSource for CLI migrations
-│   ├── redis/             # Global RedisService with get/set/del/smembers helpers
-│   ├── s3/                # Global S3StorageService (uploadFile, deleteFile)
-│   ├── http/              # HttpService — fetch wrapper with configurable retry + backoff
-│   ├── error/             # Global exception filter → { statusCode, path, message }
-│   ├── logging/           # LoggingService wrapper over NestJS Logger
-│   ├── guards/            # ApiKeyGuard — X-API-KEY header validation
-│   └── dto/               # Shared DTOs: PaginatedResponseDto
-├── health/                # GET /health — app name, env, uptime
-│   ├── controllers/
-│   ├── services/
-│   └── dto/
-├── migrations/            # TypeORM migration files
-├── app.module.ts
-└── main.ts                # Bootstrap: CORS, ValidationPipe, Swagger
+│   ├── database/          # TypeORM module + DataSource for migrations
+│   ├── redis/             # Global RedisService
+│   ├── s3/                # Global S3StorageService
+│   ├── http/              # HttpService — fetch wrapper with retry/backoff
+│   ├── error/             # Global exception filter + ErrorResponseDto
+│   ├── logging/           # LoggingService (thin NestJS Logger wrapper)
+│   ├── guards/            # ApiKeyGuard
+│   └── dto/               # PaginatedResponseDto
+├── config/
+│   └── user-interests.yaml  # AI analysis interest profile
+├── sources/               # Source CRUD — RSS/Atom/GitHub feeds
+├── articles/              # Article storage and querying
+├── feed-fetcher/          # Fetches and parses feeds, creates articles
+├── ai-analysis/           # OpenAI article analysis, ArticleAnalysis entity
+├── digest/                # Digest building, scoring, email body generation
+├── mail/                  # Resend email delivery
+├── queue/                 # BullMQ setup and QueueService
+├── scheduler/             # Cron jobs: fetch hourly, digest daily
+├── health/                # GET /health
+├── seeds/                 # Seed script for initial sources
+└── migrations/            # TypeORM migration files
 ```
 
 ---
 
-## Infrastructure Modules
+## Domain Modules
 
-### `DatabaseModule`
-Connects to PostgreSQL via TypeORM. `autoLoadEntities: true`, `synchronize: false` (migrations-based schema management). Loads Docker secrets before connecting.
-Configured via `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`.
+### SourcesModule
+Manages feed sources. Admin CRUD endpoints protected by `X-API-KEY`.
 
-### `RedisModule` (global)
-ioredis client with exponential retry strategy (max 2000ms delay).
-Exposes `RedisService` with `get`, `set` (optional TTL), `del`, `smembers`, `sadd`, `expire`, `isConnected`.
-Configured via `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`.
+- `GET /sources` — list all active sources
+- `POST /sources` — add a source
+- `PATCH /sources/:id` — update a source
+- `DELETE /sources/:id` — soft-delete (sets `deletedAt`)
 
-### `S3Module` (global)
-AWS SDK v3 S3 client. Gracefully no-ops if credentials are missing — the service throws `InternalServerErrorException` only when an operation is actually attempted.
-Exposes `S3StorageService` with `uploadFile` and `deleteFile`.
-Configured via `S3_ENDPOINT`, `S3_REGION`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_BUCKET`, `S3_FORCE_PATH_STYLE`.
+Source categories: `backend_architecture_infra`, `engineering_deep_dives`, `node_typescript_nestjs`, `ai_engineering`
 
-### `HttpModule`
-Native `fetch`-based HTTP client with configurable timeout, retry count, and exponential backoff.
-Import into any feature module that needs to call external services.
-Exposes `HttpService` with `get`, `post`, `put`, `patch`, `delete` convenience methods.
-Configured via `HTTP_TIMEOUT_MS`, `HTTP_RETRIES`, `HTTP_RETRY_DELAY_MS`.
+### ArticlesModule
+Stores articles fetched from sources.
 
-### `ErrorModule`
-Global `APP_FILTER` that catches all unhandled exceptions and returns a consistent JSON error shape:
-```json
-{ "statusCode": 400, "path": "/resource", "message": "Validation failed" }
+- `GET /articles` — paginated list (filter by `status`, `sourceId`)
+- `GET /articles/:id` — single article
+
+Statuses: `new` → `pending_analysis` → `analyzed` | `duplicate` | `rejected` | `failed`
+
+### FeedFetcherModule
+Fetches RSS/Atom/GitHub release feeds using `rss-parser`. Deduplicates by `urlHash` (SHA-256 of URL). Articles with a matching `titleHash` from the last 7 days are saved as `duplicate`. New articles are dispatched to the `article-analysis` queue automatically.
+
+### AiAnalysisModule
+Calls OpenAI API to analyze each article. Loads user interests from `src/config/user-interests.yaml`. Returns `relevanceScore`, `qualityScore`, `shouldIncludeInDailyDigest`, and other fields. Stores results in `article_analyses` table.
+
+### DigestModule
+Selects the 5 best articles from the last 24 hours using:
+
+```
+finalScore = relevanceScore × 0.45 + qualityScore × 0.30 + trustScore × 0.15 + recencyScore × 0.10
 ```
 
-### `LoggingService`
-Thin wrapper over NestJS `Logger`. Always instantiate with a context string via `useFactory`:
-```ts
-{
-  provide: LoggingService,
-  useFactory: () => new LoggingService('MyService'),
-}
-```
+Recency: 100 (≤12h), 80 (≤24h), 50 (older). Diversification: max 2 articles per source, preferably max 2 per category.
 
-### `ApiKeyGuard`
-Validates `X-API-KEY` header against `API_KEY` env var. Apply per-controller or per-route with `@UseGuards(ApiKeyGuard)`.
+- `POST /digests/daily/resend-latest` — resend latest built/sent digest via Resend
 
-### `HealthModule`
-Simple `GET /health` endpoint returning `appName`, `environment`, and `uptime`.
+### MailModule
+Sends digest emails via Resend SDK. Uses `DIGEST_FROM_EMAIL` and `DIGEST_TO_EMAIL` env vars.
 
----
+### QueueModule
+Three BullMQ queues backed by Redis:
+- `feed-fetch` — `fetch-all-sources`, `fetch-source`
+- `article-analysis` — `analyze-article`
+- `digest` — `build-daily-digest`, `send-daily-digest`
 
-## Docker Secrets
-
-`loadDockerSecrets()` (called in `main.ts` and `database.module.ts`) reads files from `/run/secrets/` and injects them as environment variables. Existing env vars take precedence, so it is safe to call multiple times.
+### SchedulerModule
+Cron jobs registered dynamically from env vars:
+- `FETCH_CRON` (default `0 * * * *`) — dispatch `fetch-all-sources` every hour
+- `DIGEST_CRON` (default `0 7 * * *`) — dispatch `build-daily-digest` daily at 07:00 UTC
 
 ---
 
 ## Getting Started
 
-### Prerequisites
+### 1. Install dependencies
+```bash
+npm install
+```
 
-- Node.js 22+
-- PostgreSQL
-- Redis
-- MinIO (optional, for S3 functionality)
+### 2. Configure environment
+```bash
+cp .env.example .env
+# Edit .env with your DB, Redis, OpenAI, and Resend credentials
+```
 
-### Setup
+### 3. Generate and run database migrations
+
+Migrations are generated by the TypeORM CLI — never hand-written. With a running PostgreSQL, generate one migration per domain:
 
 ```bash
-# Install dependencies
-npm install
+npm run migration:generate -- src/migrations/CreateSources
+npm run migration:generate -- src/migrations/CreateArticles
+npm run migration:generate -- src/migrations/CreateArticleAnalyses
+npm run migration:generate -- src/migrations/CreateDigests
+npm run migration:generate -- src/migrations/CreateDigestItems
+```
 
-# Copy env file and fill in values
-cp .env.example .env
-
-# Run database migrations
+Then apply:
+```bash
 npm run migration:run
+```
 
-# Start in development (watch) mode
+### 4. Seed initial sources
+```bash
+npm run seed:sources
+```
+
+### 5. Start in development mode
+```bash
 npm run start:dev
 ```
 
-### Swagger UI
+Swagger UI: `http://localhost:3000/docs`
+Health check: `http://localhost:3000/health`
 
-Available at: [http://localhost:3000/docs](http://localhost:3000/docs)
+---
 
-### Health check
+## Environment Variables
 
-```
-GET /health
-```
+| Variable | Description | Default |
+|---|---|---|
+| `APP_NAME` | Application name | `ptr-backend` |
+| `PORT` | HTTP port | `3000` |
+| `NODE_ENV` | Environment | `development` |
+| `DB_HOST` | PostgreSQL host | `localhost` |
+| `DB_PORT` | PostgreSQL port | `5432` |
+| `DB_USER` | PostgreSQL user | `postgres` |
+| `DB_PASSWORD` | PostgreSQL password | — |
+| `DB_NAME` | PostgreSQL database | `ptr` |
+| `REDIS_HOST` | Redis host | `localhost` |
+| `REDIS_PORT` | Redis port | `6379` |
+| `REDIS_PASSWORD` | Redis password | — |
+| `API_KEY` | Admin API key for `X-API-KEY` header | — |
+| `OPENAI_API_KEY` | OpenAI API key | — |
+| `OPENAI_MODEL` | OpenAI model | `gpt-4o-mini` |
+| `RESEND_API_KEY` | Resend API key | — |
+| `DIGEST_FROM_EMAIL` | Sender email (verified in Resend) | — |
+| `DIGEST_TO_EMAIL` | Digest recipient email | — |
+| `FETCH_CRON` | Cron for feed fetching | `0 * * * *` |
+| `DIGEST_CRON` | Cron for daily digest | `0 7 * * *` |
+| `CORS_ORIGINS` | Allowed origins (production) | — |
+| `SWAGGER_SERVER_URL` | Swagger server URL (production) | — |
 
 ---
 
 ## Database Migrations
 
+Migrations are generated by the TypeORM CLI by diffing entity definitions against the live database schema. Never hand-write migration files.
+
 ```bash
-# Generate a new migration after changing entities
-npm run migration:generate -- src/migrations/MigrationName
-
-# Apply pending migrations
-npm run migration:run
-
-# Revert the last migration
-npm run migration:revert
-
-# Show migration status
-npm run migration:show
+npm run migration:generate -- src/migrations/DescriptiveName   # Generate from entity diff
+npm run migration:run                                           # Apply pending migrations
+npm run migration:revert                                        # Revert last migration
+npm run migration:show                                          # List migration status
 ```
+
+Name migrations descriptively per domain: `CreateSources`, `CreateArticles`, `AddPublishedAtIndex`, etc.
+
+Production: `npm run migration:run:prod` (requires `npm run build` first)
+
+---
+
+## Seeding Sources
+
+```bash
+npm run seed:sources
+```
+
+Seeds 18 pre-configured sources across 4 categories from `seeds/sources.seed.json`. Skips sources that already exist (by URL).
 
 ---
 
 ## Testing
 
 ```bash
-# Unit tests
-npm run test
-
-# Watch mode
-npm run test:watch
-
-# Coverage report
-npm run test:cov
-
-# E2E tests
-npm run test:e2e
+npm run test          # Unit tests
+npm run test:cov      # Coverage report
 ```
 
----
-
-## Adding a Feature Module
-
-1. Create `src/<feature>/<feature>.module.ts` with controllers, services, and DTOs.
-2. Import `HttpModule` or inject `RedisService` / `S3StorageService` as needed (both are global).
-3. Register the module in `AppModule`.
-4. Generate a migration for any new entities: `npm run migration:generate -- src/migrations/AddFeature`.
+Unit tests cover `DigestBuilderService` scoring and diversification logic.
 
 ---
 
-## Environment Variables
+## Deployment
 
-See `.env.example` for all variables with descriptions.
+### GitHub Actions (manual trigger)
+
+The workflow in `.github/workflows/deploy-prod.yml`:
+1. Runs tests
+2. Builds Docker image and pushes to Docker Hub with tags `prod` and `sha-<commit>`
+3. Triggers Dokploy migration webhook
+4. Waits 10 seconds
+5. Triggers Dokploy backend deployment webhook
+
+### Required GitHub Secrets
+
+| Secret | Description |
+|---|---|
+| `DOCKERHUB_USERNAME` | Docker Hub username |
+| `DOCKERHUB_TOKEN` | Docker Hub access token |
+| `IMAGE_NAME` | Full image name (e.g. `username/ptr-backend`) |
+| `DOKPLOY_BACKEND_MIGRATE_WEBHOOK_URL` | Dokploy webhook to run migrations |
+| `DOKPLOY_BACKEND_WEBHOOK_URL` | Dokploy webhook to deploy backend |
+
+### Production migration command (Dokploy)
+
+Configure Dokploy's migration service to run:
+```bash
+node dist/main && npm run migration:run:prod
+```
+Or as a separate one-off container using the same image.

@@ -1,11 +1,19 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ThrottlerModule } from '@nestjs/throttler';
+import { AiAnalysisModule } from './ai-analysis/ai-analysis.module';
+import { ArticlesModule } from './articles/articles.module';
 import { DatabaseModule } from './common/database/database.module';
+import { ErrorModule } from './common/error/error.module';
 import { RedisModule } from './common/redis/redis.module';
 import { S3Module } from './common/s3/s3.module';
-import { ErrorModule } from './common/error/error.module';
+import { DigestModule } from './digest/digest.module';
+import { FeedFetcherModule } from './feed-fetcher/feed-fetcher.module';
 import { HealthModule } from './health/health.module';
+import { MailModule } from './mail/mail.module';
+import { QueueModule } from './queue/queue.module';
+import { SchedulerModule } from './scheduler/scheduler.module';
+import { SourcesModule } from './sources/sources.module';
 
 @Module({
   imports: [
@@ -16,9 +24,14 @@ import { HealthModule } from './health/health.module';
     S3Module,
     ErrorModule,
     HealthModule,
-    // TODO: add feature modules here
+    QueueModule,
+    SourcesModule,
+    ArticlesModule,
+    FeedFetcherModule,
+    AiAnalysisModule,
+    DigestModule,
+    MailModule,
+    SchedulerModule,
   ],
-  controllers: [],
-  providers: [],
 })
 export class AppModule {}
