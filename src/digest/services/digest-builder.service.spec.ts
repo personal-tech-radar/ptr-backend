@@ -12,6 +12,7 @@ import { DigestBuilderService } from './digest-builder.service';
 
 const DAILY_CONFIG: DigestBuildConfig = {
   lookbackHours: 24,
+  minItems: 5,
   maxItems: 5,
   subjectSuffix: 'Daily Brief',
   recencyFreshHours: 12,
@@ -34,6 +35,7 @@ const mockAnalysisRepo = {
   innerJoinAndSelect: jest.fn().mockReturnThis(),
   where: jest.fn().mockReturnThis(),
   andWhere: jest.fn().mockReturnThis(),
+  orderBy: jest.fn().mockReturnThis(),
   getMany: jest.fn(),
 };
 
@@ -264,9 +266,17 @@ describe('DigestBuilderService', () => {
   });
 
   describe('buildWeeklyDigest', () => {
-    it('returns null (not yet implemented)', async () => {
+    it('returns null when no candidates exist', async () => {
+      mockAnalysisRepo.getMany.mockResolvedValue([]);
       const result = await service.buildWeeklyDigest();
       expect(result).toBeNull();
+    });
+
+    it('sets digest type to WEEKLY when candidates exist', async () => {
+      mockAnalysisRepo.getMany.mockResolvedValue([makeAnalysis()]);
+      await service.buildWeeklyDigest();
+      const saveCall = mockDigestRepo.save.mock.calls[0][0];
+      expect(saveCall.type).toBe(DigestType.WEEKLY);
     });
   });
 });
