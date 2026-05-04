@@ -15,9 +15,9 @@ Focus on:
 - real-world implementation details
 
 Return JSON with:
-- shortSummary: 1 short sentence explaining what the material is about
-- whyItMatters: 1 short sentence explaining why it may be useful
-- practicalValue: 1 short sentence explaining how it may help a backend architect or tech lead
+- shortSummary: 3 sentences explaining what the material is about, the core problem it addresses, and the approach or solution it presents
+- whyItMatters: 3 sentences explaining why this is relevant to the engineering community, what problem or trend it responds to, and what the broader implications are
+- practicalValue: 3 sentences explaining how a backend architect or tech lead can apply this, what decisions or trade-offs it informs, and what concrete next steps or takeaways it suggests
 - tags: array of short tags (max 5)
 - matchedInterests: array of user interests that are directly relevant to the article (max 5)
 - relevanceScore: integer from 0 to 100

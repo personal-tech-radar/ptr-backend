@@ -8,6 +8,7 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 import { DigestItem } from './digest-item.entity';
+import { DigestBuildDebug } from '../digest.types';
 
 export enum DigestType {
   DAILY = 'daily',
@@ -52,6 +53,9 @@ export class Digest {
 
   @Column({ type: 'timestamp', nullable: true })
   sentAt: Date | null;
+
+  @Column({ type: 'jsonb', nullable: true, default: null })
+  buildDebug: DigestBuildDebug | null;
 
   @OneToMany(() => DigestItem, (item) => item.digest)
   items: DigestItem[];

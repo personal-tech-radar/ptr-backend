@@ -142,5 +142,53 @@
     "category": "ai_engineering",
     "enabled": true,
     "trustScore": 88
+  },
+  {
+    "name": "Microservices.io",
+    "url": "https://microservices.io/feed.xml",
+    "type": "rss",
+    "category": "backend_architecture_infra",
+    "trustScore": 85,
+    "enabled": true
+  },
+  {
+    "name": "Slack Engineering",
+    "url": "https://slack.engineering/feed/",
+    "type": "rss",
+    "category": "engineering_deep_dives",
+    "trustScore": 80,
+    "enabled": true
+  },
+  {
+    "name": "Grab Engineering",
+    "url": "https://engineering.grab.com/feed.xml",
+    "type": "rss",
+    "category": "engineering_deep_dives",
+    "trustScore": 75,
+    "enabled": true
+  },
+  {
+    "name": "Confluent Blog",
+    "url": "https://www.confluent.io/rss.xml",
+    "type": "rss",
+    "category": "backend_architecture_infra",
+    "trustScore": 75,
+    "enabled": true
+  },
+  {
+    "name": "Elastic Blog",
+    "url": "https://www.elastic.co/blog/feed",
+    "type": "rss",
+    "category": "backend_architecture_infra",
+    "trustScore": 75,
+    "enabled": true
+  },
+  {
+    "name": "Stripe Engineering",
+    "url": "https://stripe.com/blog/feed.rss",
+    "type": "rss",
+    "category": "engineering_deep_dives",
+    "trustScore": 85,
+    "enabled": true
   }
 ]
