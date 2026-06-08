@@ -12,6 +12,8 @@ type FeedItem = RssParser.Item & {
   summary?: string;
 };
 
+const ANALYSIS_CUTOFF_HOURS = 78;
+
 @Injectable()
 export class FeedFetcherService {
   private readonly logger = new LoggingService(FeedFetcherService.name);
@@ -95,40 +97,10 @@ export class FeedFetcherService {
         ? new Date(item.pubDate)
         : null;
 
-    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-    const isTooOld = !publishedAt || publishedAt < sevenDaysAgo;
+    const cutoff = new Date(Date.now() - ANALYSIS_CUTOFF_HOURS * 60 * 60 * 1000);
+    const isTooOldForAnalysis = !publishedAt || publishedAt < cutoff;
 
-    if (isTooOld) {
-      await this.articlesService.create({
-        sourceId,
-        title: item.title.trim(),
-        url,
-        urlHash,
-        titleHash,
-        author: (item as any).creator ?? (item as any).author ?? null,
-        publishedAt,
-        summaryFromFeed:
-          (item as any).summary ??
-          item.contentSnippet ??
-          null,
-        rawContent:
-          (item as any)['content:encoded'] ?? item.content ?? null,
-        status: ArticleStatus.SKIPPED,
-      });
-      return true;
-    }
-
-    const summaryFromFeed =
-      (item as any).summary ??
-      item.contentSnippet ??
-      null;
-
-    const rawContent =
-      (item as any)['content:encoded'] ?? item.content ?? null;
-
-    const status = titleDuplicate
-      ? ArticleStatus.DUPLICATE
-      : ArticleStatus.NEW;
+    const status = titleDuplicate ? ArticleStatus.DUPLICATE : ArticleStatus.NEW;
 
     const article = await this.articlesService.create({
       sourceId,
@@ -138,16 +110,13 @@ export class FeedFetcherService {
       titleHash,
       author: (item as any).creator ?? (item as any).author ?? null,
       publishedAt,
-      summaryFromFeed,
-      rawContent,
+      summaryFromFeed: (item as any).summary ?? item.contentSnippet ?? null,
+      rawContent: (item as any)['content:encoded'] ?? item.content ?? null,
       status,
     });
 
-    if (status === ArticleStatus.NEW) {
-      await this.articlesService.updateStatus(
-        article.id,
-        ArticleStatus.PENDING_ANALYSIS,
-      );
+    if (status === ArticleStatus.NEW && !isTooOldForAnalysis) {
+      await this.articlesService.updateStatus(article.id, ArticleStatus.PENDING_ANALYSIS);
       await this.queueService.addAnalyzeArticleJob(article.id);
     }
 

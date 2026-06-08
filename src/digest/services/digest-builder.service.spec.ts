@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { ArticleAnalysis } from '../../ai-analysis/entities/article-analysis.entity';
+import { ArticleRelevance } from '../../ai-analysis/entities/article-relevance.entity';
 import { ArticleStatus } from '../../articles/entities/article.entity';
 import { SourceCategory } from '../../sources/entities/source.entity';
 import { DigestItem } from '../entities/digest-item.entity';
@@ -12,8 +13,8 @@ import { DigestBuilderService } from './digest-builder.service';
 
 const DAILY_CONFIG: DigestBuildConfig = {
   lookbackHours: 24,
-  minItems: 5,
-  maxItems: 5,
+  minItems: 3,
+  maxItems: 3,
   subjectSuffix: 'Daily Brief',
   recencyFreshHours: 12,
   recencyRecentHours: 24,
@@ -28,16 +29,27 @@ const mockDigestRepo = {
 const mockDigestItemRepo = {
   create: jest.fn((data) => data),
   save: jest.fn((data) => Promise.resolve({ id: 'item-1', ...data })),
+  createQueryBuilder: jest.fn().mockReturnThis(),
+  select: jest.fn().mockReturnThis(),
+  innerJoin: jest.fn().mockReturnThis(),
+  where: jest.fn().mockReturnThis(),
+  andWhere: jest.fn().mockReturnThis(),
+  getRawMany: jest.fn().mockResolvedValue([]),
 };
 
 const mockAnalysisRepo = {
   createQueryBuilder: jest.fn().mockReturnThis(),
   innerJoinAndSelect: jest.fn().mockReturnThis(),
+  innerJoin: jest.fn().mockReturnThis(),
+  select: jest.fn().mockReturnThis(),
   where: jest.fn().mockReturnThis(),
   andWhere: jest.fn().mockReturnThis(),
   orderBy: jest.fn().mockReturnThis(),
   getMany: jest.fn(),
+  getCount: jest.fn().mockResolvedValue(0),
 };
+
+const mockRelevanceRepo = {};
 
 const mockAiDigestService = {
   generateIntro: jest.fn().mockResolvedValue('Test intro.'),
@@ -101,12 +113,16 @@ describe('DigestBuilderService', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    mockDigestItemRepo.getRawMany.mockResolvedValue([]);
+    mockAnalysisRepo.getCount.mockResolvedValue(0);
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         DigestBuilderService,
         { provide: getRepositoryToken(Digest), useValue: mockDigestRepo },
         { provide: getRepositoryToken(DigestItem), useValue: mockDigestItemRepo },
         { provide: getRepositoryToken(ArticleAnalysis), useValue: mockAnalysisRepo },
+        { provide: getRepositoryToken(ArticleRelevance), useValue: mockRelevanceRepo },
         { provide: AiDigestService, useValue: mockAiDigestService },
         { provide: EmailTemplateService, useValue: mockEmailTemplateService },
       ],
@@ -227,15 +243,16 @@ describe('DigestBuilderService', () => {
   });
 
   describe('buildDailyDigest', () => {
-    it('returns null when no candidates exist', async () => {
+    it('returns null when no candidates exist after all fallback windows', async () => {
       mockAnalysisRepo.getMany.mockResolvedValue([]);
       const result = await service.buildDailyDigest();
       expect(result).toBeNull();
     });
 
-    it('builds and saves digest with items when candidates exist', async () => {
+    it('builds and saves digest when enough candidates found in 24h window', async () => {
       const analysis = makeAnalysis();
       mockAnalysisRepo.getMany.mockResolvedValue([analysis]);
+      mockAnalysisRepo.getCount.mockResolvedValue(1);
 
       const result = await service.buildDailyDigest();
       expect(result).toBeDefined();
@@ -245,6 +262,7 @@ describe('DigestBuilderService', () => {
 
     it('sets digest status to DRAFT on creation', async () => {
       mockAnalysisRepo.getMany.mockResolvedValue([makeAnalysis()]);
+      mockAnalysisRepo.getCount.mockResolvedValue(1);
       await service.buildDailyDigest();
       const saveCall = mockDigestRepo.save.mock.calls[0][0];
       expect(saveCall.status).toBe(DigestStatus.DRAFT);
@@ -252,6 +270,7 @@ describe('DigestBuilderService', () => {
 
     it('includes date in subject', async () => {
       mockAnalysisRepo.getMany.mockResolvedValue([makeAnalysis()]);
+      mockAnalysisRepo.getCount.mockResolvedValue(1);
       await service.buildDailyDigest();
       const saveCall = mockDigestRepo.save.mock.calls[0][0];
       expect(saveCall.subject).toMatch(/Personal Tech Radar — Daily Brief — \d{4}-\d{2}-\d{2}/);
@@ -259,9 +278,82 @@ describe('DigestBuilderService', () => {
 
     it('sets digest type to DAILY', async () => {
       mockAnalysisRepo.getMany.mockResolvedValue([makeAnalysis()]);
+      mockAnalysisRepo.getCount.mockResolvedValue(1);
       await service.buildDailyDigest();
       const saveCall = mockDigestRepo.save.mock.calls[0][0];
       expect(saveCall.type).toBe(DigestType.DAILY);
+    });
+
+    it('persists buildDebug with attempt data', async () => {
+      const analyses = Array.from({ length: 5 }, (_, i) =>
+        makeAnalysis({ id: `aa-${i}`, articleId: `a-${i}` }),
+      );
+      mockAnalysisRepo.getMany.mockResolvedValue(analyses);
+      mockAnalysisRepo.getCount.mockResolvedValue(5);
+      await service.buildDailyDigest();
+      const saveCall = mockDigestRepo.save.mock.calls[0][0];
+      expect(saveCall.buildDebug).toBeDefined();
+      expect(saveCall.buildDebug.attempts).toHaveLength(1);
+      expect(saveCall.buildDebug.finalWindowHours).toBe(24);
+      expect(saveCall.buildDebug.fallbackUsed).toBe(false);
+    });
+
+    it('falls back to 48h window when 24h yields fewer than 3 candidates', async () => {
+      const analyses = Array.from({ length: 6 }, (_, i) =>
+        makeAnalysis({ id: `aa-${i}`, articleId: `a-${i}` }),
+      );
+      // First call (24h getEligible): 2 articles. Second call (48h getEligible): 6 articles.
+      mockAnalysisRepo.getMany
+        .mockResolvedValueOnce(analyses.slice(0, 2))
+        .mockResolvedValue(analyses);
+      mockAnalysisRepo.getCount.mockResolvedValue(2);
+
+      const result = await service.buildDailyDigest();
+      expect(result).toBeDefined();
+      const saveCall = mockDigestRepo.save.mock.calls[0][0];
+      expect(saveCall.buildDebug.fallbackUsed).toBe(true);
+      expect(saveCall.buildDebug.attempts).toHaveLength(2);
+      expect(saveCall.buildDebug.finalWindowHours).toBe(48);
+    });
+
+    it('respects the configured article limit and saves only that many items', async () => {
+      const categories = Object.values(SourceCategory);
+      const analyses = Array.from({ length: 6 }, (_, i) =>
+        makeAnalysis({
+          id: `aa-${i}`,
+          articleId: `a-${i}`,
+          article: {
+            ...makeAnalysis().article,
+            id: `a-${i}`,
+            sourceId: `src-${i}`,
+            source: {
+              ...makeAnalysis().article.source,
+              id: `src-${i}`,
+              category: categories[i % categories.length],
+            },
+          } as any,
+        }),
+      );
+      mockAnalysisRepo.getMany.mockResolvedValue(analyses);
+      mockAnalysisRepo.getCount.mockResolvedValue(6);
+
+      await service.buildDailyDigest();
+
+      expect(mockDigestItemRepo.save).toHaveBeenCalledTimes(3);
+    });
+
+    it('excludes articles already in prior digests', async () => {
+      mockDigestItemRepo.getRawMany.mockResolvedValue([{ articleId: 'used-article-id' }]);
+      mockAnalysisRepo.getMany.mockResolvedValue([makeAnalysis()]);
+      mockAnalysisRepo.getCount.mockResolvedValue(1);
+
+      await service.buildDailyDigest();
+
+      const andWhereCalls = mockAnalysisRepo.andWhere.mock.calls.map((c: any[]) => c[0]);
+      const hasExcludeClause = andWhereCalls.some(
+        (call: string) => typeof call === 'string' && call.includes('NOT IN'),
+      );
+      expect(hasExcludeClause).toBe(true);
     });
   });
 

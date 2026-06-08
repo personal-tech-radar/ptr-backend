@@ -5,10 +5,11 @@ import { QueueModule } from '../queue/queue.module';
 import { ArticleAnalysisProcessor } from './processors/article-analysis.processor';
 import { AiAnalysisService } from './services/ai-analysis.service';
 import { ArticleAnalysis } from './entities/article-analysis.entity';
+import { ArticleRelevance } from './entities/article-relevance.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([ArticleAnalysis]),
+    TypeOrmModule.forFeature([ArticleAnalysis, ArticleRelevance]),
     ArticlesModule,
     QueueModule,
   ],

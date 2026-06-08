@@ -3,17 +3,26 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { LoggingService } from '../../common/logging/logging.service';
 import { ArticleAnalysis } from '../../ai-analysis/entities/article-analysis.entity';
+import { ArticleRelevance } from '../../ai-analysis/entities/article-relevance.entity';
+import { DEFAULT_USER_ID } from '../../ai-analysis/services/ai-analysis.service';
 import { ArticleStatus } from '../../articles/entities/article.entity';
 import { Digest, DigestStatus, DigestType } from '../entities/digest.entity';
 import { DigestItem } from '../entities/digest-item.entity';
-import { DigestBuildConfig, ScoredCandidate } from '../digest.types';
+import {
+  DigestBuildAttempt,
+  DigestBuildConfig,
+  DigestBuildDebug,
+  ScoredCandidate,
+} from '../digest.types';
 import { AiDigestService } from './ai-digest.service';
 import { DigestEmailItem, EmailTemplateService } from './email-template.service';
 
+const DAILY_DIGEST_ARTICLES_LIMIT = Number(process.env.DAILY_DIGEST_ARTICLES_LIMIT) || 3;
+
 const DAILY_CONFIG: DigestBuildConfig = {
   lookbackHours: 24,
-  minItems: 5,
-  maxItems: 5,
+  minItems: DAILY_DIGEST_ARTICLES_LIMIT,
+  maxItems: DAILY_DIGEST_ARTICLES_LIMIT,
   subjectSuffix: 'Daily Brief',
   recencyFreshHours: 12,
   recencyRecentHours: 24,
@@ -40,6 +49,8 @@ const DEEP_DIVE_WEEKLY_CONFIG: DigestBuildConfig = {
   includeFlag: 'shouldIncludeInDeepDiveDigest',
 };
 
+const DAILY_FALLBACK_WINDOWS = [24, 48, 72];
+
 @Injectable()
 export class DigestBuilderService {
   private readonly logger = new LoggingService(DigestBuilderService.name);
@@ -51,12 +62,97 @@ export class DigestBuilderService {
     private readonly digestItemRepo: Repository<DigestItem>,
     @InjectRepository(ArticleAnalysis)
     private readonly analysisRepo: Repository<ArticleAnalysis>,
+    @InjectRepository(ArticleRelevance)
+    private readonly relevanceRepo: Repository<ArticleRelevance>,
     private readonly aiDigestService: AiDigestService,
     private readonly emailTemplateService: EmailTemplateService,
   ) {}
 
   async buildDailyDigest(): Promise<Digest | null> {
-    return this.buildDigest(DigestType.DAILY, DAILY_CONFIG);
+    const config = DAILY_CONFIG;
+    const now = new Date();
+    const attempts: DigestBuildAttempt[] = [];
+
+    let candidates: ArticleAnalysis[] = [];
+    let finalWindowHours = DAILY_FALLBACK_WINDOWS[0];
+
+    for (const windowHours of DAILY_FALLBACK_WINDOWS) {
+      const periodStart = new Date(now.getTime() - windowHours * 60 * 60 * 1000);
+      const candidatesFound = await this.countCandidates(periodStart, config.includeFlag);
+      const eligible = await this.getEligibleCandidatesForDaily(periodStart, config.includeFlag);
+
+      attempts.push({ windowHours, candidatesFound, eligibleFound: eligible.length });
+      candidates = eligible;
+      finalWindowHours = windowHours;
+
+      if (eligible.length >= config.minItems) break;
+    }
+
+    if (candidates.length === 0) {
+      this.logger.info(`No candidates for ${DigestType.DAILY} digest`);
+      return null;
+    }
+
+    const scored: ScoredCandidate[] = candidates.map((analysis) => ({
+      analysis,
+      computedFinalScore: this.computeFinalScore(analysis, config),
+    }));
+    scored.sort((a, b) => b.computedFinalScore - a.computedFinalScore);
+
+    const selected = this.selectWithDiversification(scored, config.maxItems);
+    if (selected.length === 0) return null;
+
+    const dateStr = now.toISOString().split('T')[0];
+    const subject = `Personal Tech Radar — ${config.subjectSuffix} — ${dateStr}`;
+    const intro = await this.aiDigestService.generateIntro(DigestType.DAILY, selected);
+
+    const emailItems = this.toEmailItems(selected);
+    const htmlBody = this.emailTemplateService.renderHtml(subject, intro, emailItems);
+    const textBody = this.emailTemplateService.renderText(subject, intro, emailItems);
+
+    const buildDebug: DigestBuildDebug = {
+      requestedItemCount: config.minItems,
+      fallbackUsed: attempts.length > 1 && finalWindowHours > DAILY_FALLBACK_WINDOWS[0],
+      attempts,
+      finalWindowHours,
+      finalSelectedCount: selected.length,
+    };
+
+    const periodStart = new Date(now.getTime() - finalWindowHours * 60 * 60 * 1000);
+
+    const digest = await this.digestRepo.save(
+      this.digestRepo.create({
+        type: DigestType.DAILY,
+        periodStart,
+        periodEnd: now,
+        subject,
+        intro,
+        htmlBody,
+        textBody,
+        status: DigestStatus.DRAFT,
+        sentAt: null,
+        buildDebug,
+      }),
+    );
+
+    for (let i = 0; i < selected.length; i++) {
+      await this.digestItemRepo.save(
+        this.digestItemRepo.create({
+          digestId: digest.id,
+          articleId: selected[i].analysis.articleId,
+          position: i + 1,
+        }),
+      );
+    }
+
+    this.logger.info(`${DigestType.DAILY} digest built`, {
+      digestId: digest.id,
+      itemCount: selected.length,
+      fallbackUsed: buildDebug.fallbackUsed,
+      finalWindowHours,
+    });
+
+    return digest;
   }
 
   async buildWeeklyDigest(): Promise<Digest | null> {
@@ -67,14 +163,9 @@ export class DigestBuilderService {
     return this.buildDigest(DigestType.DEEP_DIVE_WEEKLY, DEEP_DIVE_WEEKLY_CONFIG);
   }
 
-  private async buildDigest(
-    type: DigestType,
-    config: DigestBuildConfig,
-  ): Promise<Digest | null> {
+  private async buildDigest(type: DigestType, config: DigestBuildConfig): Promise<Digest | null> {
     const now = new Date();
-    const periodStart = new Date(
-      now.getTime() - config.lookbackHours * 60 * 60 * 1000,
-    );
+    const periodStart = new Date(now.getTime() - config.lookbackHours * 60 * 60 * 1000);
 
     let candidates = await this.getAnalyzedCandidates(periodStart, config.includeFlag);
 
@@ -142,10 +233,7 @@ export class DigestBuilderService {
     const relevance = Number(analysis.relevanceScore);
     const quality = Number(analysis.qualityScore);
     const trust = Number(analysis.article?.source?.trustScore ?? 50);
-    const recency = this.getRecencyScore(
-      analysis.article?.publishedAt ?? null,
-      config,
-    );
+    const recency = this.getRecencyScore(analysis.article?.publishedAt ?? null, config);
     return relevance * 0.45 + quality * 0.3 + trust * 0.15 + recency * 0.1;
   }
 
@@ -157,10 +245,7 @@ export class DigestBuilderService {
     return 50;
   }
 
-  selectWithDiversification(
-    scored: ScoredCandidate[],
-    max: number,
-  ): ScoredCandidate[] {
+  selectWithDiversification(scored: ScoredCandidate[], max: number): ScoredCandidate[] {
     const selected: ScoredCandidate[] = [];
     const sourceCount = new Map<string, number>();
     const categoryCount = new Map<string, number>();
@@ -173,7 +258,10 @@ export class DigestBuilderService {
       const src = sourceCount.get(sourceId) ?? 0;
       const cat = categoryCount.get(category) ?? 0;
       if (src >= 2) continue;
-      if (cat >= 2) { skipped.push(candidate); continue; }
+      if (cat >= 2) {
+        skipped.push(candidate);
+        continue;
+      }
       selected.push(candidate);
       sourceCount.set(sourceId, src + 1);
       categoryCount.set(category, cat + 1);
@@ -202,6 +290,71 @@ export class DigestBuilderService {
     }));
   }
 
+  private async getUsedArticleIds(): Promise<string[]> {
+    const rows = await this.digestItemRepo
+      .createQueryBuilder('di')
+      .select('di.articleId', 'articleId')
+      .innerJoin('di.digest', 'd')
+      .where('d.status IN (:...statuses)', { statuses: [DigestStatus.DRAFT, DigestStatus.SENT] })
+      .andWhere('d.deletedAt IS NULL')
+      .andWhere('di.deletedAt IS NULL')
+      .getRawMany<{ articleId: string }>();
+
+    return rows.map((r) => r.articleId);
+  }
+
+  private async countCandidates(periodStart: Date, includeFlag: string): Promise<number> {
+    return this.analysisRepo
+      .createQueryBuilder('aa')
+      .innerJoin('aa.article', 'a')
+      .innerJoin(
+        ArticleRelevance,
+        'ar',
+        'ar.articleId = aa.articleId AND ar.userId = :userId AND ar.preAnalysisIsRelevant = :relevant',
+        { userId: DEFAULT_USER_ID, relevant: true },
+      )
+      .where('aa.deletedAt IS NULL')
+      .andWhere('a.deletedAt IS NULL')
+      .andWhere(`aa.${includeFlag} = :flag`, { flag: true })
+      .andWhere('a.status = :status', { status: ArticleStatus.ANALYZED })
+      .andWhere('a.publishedAt >= :periodStart', { periodStart })
+      .andWhere("a.title != ''")
+      .andWhere("a.url != ''")
+      .getCount();
+  }
+
+  private async getEligibleCandidatesForDaily(
+    periodStart: Date,
+    includeFlag: string,
+  ): Promise<ArticleAnalysis[]> {
+    const usedIds = await this.getUsedArticleIds();
+
+    const qb = this.analysisRepo
+      .createQueryBuilder('aa')
+      .innerJoinAndSelect('aa.article', 'a')
+      .innerJoinAndSelect('a.source', 's')
+      .innerJoin(
+        ArticleRelevance,
+        'ar',
+        'ar.articleId = aa.articleId AND ar.userId = :userId AND ar.preAnalysisIsRelevant = :relevant',
+        { userId: DEFAULT_USER_ID, relevant: true },
+      )
+      .where('aa.deletedAt IS NULL')
+      .andWhere('a.deletedAt IS NULL')
+      .andWhere('s.deletedAt IS NULL')
+      .andWhere(`aa.${includeFlag} = :flag`, { flag: true })
+      .andWhere('a.status = :status', { status: ArticleStatus.ANALYZED })
+      .andWhere('a.publishedAt >= :periodStart', { periodStart })
+      .andWhere("a.title != ''")
+      .andWhere("a.url != ''");
+
+    if (usedIds.length > 0) {
+      qb.andWhere('aa.articleId NOT IN (:...usedIds)', { usedIds });
+    }
+
+    return qb.getMany();
+  }
+
   private async getAnalyzedCandidates(
     periodStart: Date,
     includeFlag: string,
@@ -210,6 +363,12 @@ export class DigestBuilderService {
       .createQueryBuilder('aa')
       .innerJoinAndSelect('aa.article', 'a')
       .innerJoinAndSelect('a.source', 's')
+      .innerJoin(
+        ArticleRelevance,
+        'ar',
+        'ar.articleId = aa.articleId AND ar.userId = :userId AND ar.preAnalysisIsRelevant = :relevant',
+        { userId: DEFAULT_USER_ID, relevant: true },
+      )
       .where('aa.deletedAt IS NULL')
       .andWhere('a.deletedAt IS NULL')
       .andWhere('s.deletedAt IS NULL')
@@ -228,6 +387,12 @@ export class DigestBuilderService {
       .createQueryBuilder('aa')
       .innerJoinAndSelect('aa.article', 'a')
       .innerJoinAndSelect('a.source', 's')
+      .innerJoin(
+        ArticleRelevance,
+        'ar',
+        'ar.articleId = aa.articleId AND ar.userId = :userId AND ar.preAnalysisIsRelevant = :relevant',
+        { userId: DEFAULT_USER_ID, relevant: true },
+      )
       .where('aa.deletedAt IS NULL')
       .andWhere('a.deletedAt IS NULL')
       .andWhere('s.deletedAt IS NULL')

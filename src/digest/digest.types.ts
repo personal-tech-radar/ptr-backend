@@ -14,3 +14,17 @@ export interface DigestBuildConfig {
   recencyRecentHours: number;
   includeFlag: 'shouldIncludeInDailyDigest' | 'shouldIncludeInWeeklyDigest' | 'shouldIncludeInDeepDiveDigest';
 }
+
+export interface DigestBuildAttempt {
+  windowHours: number;
+  candidatesFound: number;
+  eligibleFound: number;
+}
+
+export interface DigestBuildDebug {
+  requestedItemCount: number;
+  fallbackUsed: boolean;
+  attempts: DigestBuildAttempt[];
+  finalWindowHours: number;
+  finalSelectedCount: number;
+}
