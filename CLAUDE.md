@@ -85,7 +85,7 @@ For test structure and implementation detail, use the `minimal-test-strategy` sk
 When you change the project in ways that affect behavior or structure:
 - **`README.md`** — update when adding domains, changing behavior, or adding env variables.
 - **`.env.example`** — add every new env variable with a description and a safe default.
-- **Instruction files** — update `CLAUDE.md` and the relevant `.claude/agents/` or `.claude/skills/` file when a new pattern or convention is established.
+- **Instruction files** — update `CLAUDE.md` and the relevant `.claude/agents/` or `.claude/skills/` file when a new pattern or convention is established. Use the `template-curator` agent to judge whether a new pattern is specific to this service or belongs in the shared template instructions for every project built from it.
 
 ---
 

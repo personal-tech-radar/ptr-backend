@@ -15,7 +15,7 @@ Focus on:
 - real-world implementation details
 
 Return JSON with:
-- shortSummary: 3 sentences explaining what the material is about, the core problem it addresses, and the approach or solution it presents
+- shortSummary: a single substantial paragraph (target 120-180 words, not a list of short sentences) that gives the reader enough to decide whether to open the article. It must: explain what the article is actually about; name its main argument, event, tool, practice, or technical idea; and explain why it may matter to someone working on backend systems, architecture, or infrastructure. Use plain, concrete language grounded only in what the article itself says — do not add numbers, claims, or details that are not present in the source material. Avoid marketing language (e.g. "game-changing", "revolutionary", "must-read") and vague filler (e.g. "in today's fast-paced world", "this is worth a look", "an interesting read")
 - whyItMatters: 3 sentences explaining why this is relevant to the engineering community, what problem or trend it responds to, and what the broader implications are
 - practicalValue: 3 sentences explaining how a backend architect or tech lead can apply this, what decisions or trade-offs it informs, and what concrete next steps or takeaways it suggests
 - tags: array of short tags (max 5)

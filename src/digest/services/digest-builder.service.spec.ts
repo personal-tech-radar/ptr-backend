@@ -13,8 +13,8 @@ import { DigestBuilderService } from './digest-builder.service';
 
 const DAILY_CONFIG: DigestBuildConfig = {
   lookbackHours: 24,
-  minItems: 5,
-  maxItems: 5,
+  minItems: 3,
+  maxItems: 3,
   subjectSuffix: 'Daily Brief',
   recencyFreshHours: 12,
   recencyRecentHours: 24,
@@ -298,7 +298,7 @@ describe('DigestBuilderService', () => {
       expect(saveCall.buildDebug.fallbackUsed).toBe(false);
     });
 
-    it('falls back to 48h window when 24h yields fewer than 5 candidates', async () => {
+    it('falls back to 48h window when 24h yields fewer than 3 candidates', async () => {
       const analyses = Array.from({ length: 6 }, (_, i) =>
         makeAnalysis({ id: `aa-${i}`, articleId: `a-${i}` }),
       );
@@ -314,6 +314,32 @@ describe('DigestBuilderService', () => {
       expect(saveCall.buildDebug.fallbackUsed).toBe(true);
       expect(saveCall.buildDebug.attempts).toHaveLength(2);
       expect(saveCall.buildDebug.finalWindowHours).toBe(48);
+    });
+
+    it('respects the configured article limit and saves only that many items', async () => {
+      const categories = Object.values(SourceCategory);
+      const analyses = Array.from({ length: 6 }, (_, i) =>
+        makeAnalysis({
+          id: `aa-${i}`,
+          articleId: `a-${i}`,
+          article: {
+            ...makeAnalysis().article,
+            id: `a-${i}`,
+            sourceId: `src-${i}`,
+            source: {
+              ...makeAnalysis().article.source,
+              id: `src-${i}`,
+              category: categories[i % categories.length],
+            },
+          } as any,
+        }),
+      );
+      mockAnalysisRepo.getMany.mockResolvedValue(analyses);
+      mockAnalysisRepo.getCount.mockResolvedValue(6);
+
+      await service.buildDailyDigest();
+
+      expect(mockDigestItemRepo.save).toHaveBeenCalledTimes(3);
     });
 
     it('excludes articles already in prior digests', async () => {

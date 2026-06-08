@@ -17,10 +17,12 @@ import {
 import { AiDigestService } from './ai-digest.service';
 import { DigestEmailItem, EmailTemplateService } from './email-template.service';
 
+const DAILY_DIGEST_ARTICLES_LIMIT = Number(process.env.DAILY_DIGEST_ARTICLES_LIMIT) || 3;
+
 const DAILY_CONFIG: DigestBuildConfig = {
   lookbackHours: 24,
-  minItems: 5,
-  maxItems: 5,
+  minItems: DAILY_DIGEST_ARTICLES_LIMIT,
+  maxItems: DAILY_DIGEST_ARTICLES_LIMIT,
   subjectSuffix: 'Daily Brief',
   recencyFreshHours: 12,
   recencyRecentHours: 24,
@@ -161,14 +163,9 @@ export class DigestBuilderService {
     return this.buildDigest(DigestType.DEEP_DIVE_WEEKLY, DEEP_DIVE_WEEKLY_CONFIG);
   }
 
-  private async buildDigest(
-    type: DigestType,
-    config: DigestBuildConfig,
-  ): Promise<Digest | null> {
+  private async buildDigest(type: DigestType, config: DigestBuildConfig): Promise<Digest | null> {
     const now = new Date();
-    const periodStart = new Date(
-      now.getTime() - config.lookbackHours * 60 * 60 * 1000,
-    );
+    const periodStart = new Date(now.getTime() - config.lookbackHours * 60 * 60 * 1000);
 
     let candidates = await this.getAnalyzedCandidates(periodStart, config.includeFlag);
 
@@ -236,10 +233,7 @@ export class DigestBuilderService {
     const relevance = Number(analysis.relevanceScore);
     const quality = Number(analysis.qualityScore);
     const trust = Number(analysis.article?.source?.trustScore ?? 50);
-    const recency = this.getRecencyScore(
-      analysis.article?.publishedAt ?? null,
-      config,
-    );
+    const recency = this.getRecencyScore(analysis.article?.publishedAt ?? null, config);
     return relevance * 0.45 + quality * 0.3 + trust * 0.15 + recency * 0.1;
   }
 
@@ -251,10 +245,7 @@ export class DigestBuilderService {
     return 50;
   }
 
-  selectWithDiversification(
-    scored: ScoredCandidate[],
-    max: number,
-  ): ScoredCandidate[] {
+  selectWithDiversification(scored: ScoredCandidate[], max: number): ScoredCandidate[] {
     const selected: ScoredCandidate[] = [];
     const sourceCount = new Map<string, number>();
     const categoryCount = new Map<string, number>();
@@ -267,7 +258,10 @@ export class DigestBuilderService {
       const src = sourceCount.get(sourceId) ?? 0;
       const cat = categoryCount.get(category) ?? 0;
       if (src >= 2) continue;
-      if (cat >= 2) { skipped.push(candidate); continue; }
+      if (cat >= 2) {
+        skipped.push(candidate);
+        continue;
+      }
       selected.push(candidate);
       sourceCount.set(sourceId, src + 1);
       categoryCount.set(category, cat + 1);

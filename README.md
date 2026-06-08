@@ -11,7 +11,7 @@ A NestJS service that automatically curates a daily engineering digest. It fetch
 3. Each fresh article (≤ 78 h old, not a duplicate) triggers an `analyze-article` job. Analysis runs in two stages:
    - **Pre-analysis** — a lightweight OpenAI call using only the article title and feed description. Returns `isPotentiallyRelevant` + a one-sentence reason. The result is saved as an `ArticleRelevance` record (per user). This stage acts as a cheap relevance gate and avoids spending tokens on full analysis for clearly irrelevant content.
    - **Full analysis** — runs only when `preAnalysisIsRelevant = true`. Calls OpenAI with the full article context, produces `relevanceScore`, `qualityScore`, scoring flags, and a digest summary. Stored in `ArticleAnalysis` (shared across users). The `ArticleRelevance` record is updated with a `fullAnalysisId` link. Full analysis is reused if it already exists for the article.
-4. A second cron job fires daily (default 07:00 UTC) and dispatches `build-daily-digest`. The digest builder selects only articles with a relevant `ArticleRelevance` record (`preAnalysisIsRelevant = true`) and attempts to find at least 5 using a time-window fallback: 24 h → 48 h → 72 h. Articles already included in any previously built or sent digest are excluded. Ranking: relevance × 0.45 + quality × 0.30 + source trust × 0.15 + recency × 0.10. Source/category diversification is applied and up to 5 items are selected. Build metadata is stored in `buildDebug`.
+4. A second cron job fires daily (default 07:00 UTC) and dispatches `build-daily-digest`. The digest builder selects only articles with a relevant `ArticleRelevance` record (`preAnalysisIsRelevant = true`) and attempts to find at least `DAILY_DIGEST_ARTICLES_LIMIT` (default 3) using a time-window fallback: 24 h → 48 h → 72 h. Articles already included in any previously built or sent digest are excluded. Ranking: relevance × 0.45 + quality × 0.30 + source trust × 0.15 + recency × 0.10. Source/category diversification is applied and up to `DAILY_DIGEST_ARTICLES_LIMIT` items are selected. Build metadata is stored in `buildDebug`.
 5. The digest is saved as a draft, then the email is rendered and sent through Resend. The digest status is updated to `sent`.
 6. At any time, `POST /digests/daily/resend-latest` re-sends the most recently built digest without rebuilding it.
 
@@ -110,7 +110,7 @@ Two-stage pipeline to minimise token usage and prepare for multi-user relevance.
 User interests are loaded from `config/user-interests.yaml`. The default user ID is `default_user`; the schema supports multiple users via the `(articleId, userId)` unique constraint on `article_relevances`.
 
 ### DigestModule
-Selects the 5 best articles using a time-window fallback (24 h → 48 h → 72 h). Articles already present in any digest with status `draft` or `sent` are excluded. Ranking formula:
+Selects the best `DAILY_DIGEST_ARTICLES_LIMIT` articles (default 3) using a time-window fallback (24 h → 48 h → 72 h). Articles already present in any digest with status `draft` or `sent` are excluded. Ranking formula:
 
 ```
 finalScore = relevanceScore × 0.45 + qualityScore × 0.30 + trustScore × 0.15 + recencyScore × 0.10
@@ -209,6 +209,7 @@ Health check: `http://localhost:3000/health`
 | `RESEND_API_KEY` | Resend API key | — |
 | `DIGEST_FROM_EMAIL` | Sender email (verified in Resend) | — |
 | `DIGEST_TO_EMAIL` | Digest recipient email | — |
+| `DAILY_DIGEST_ARTICLES_LIMIT` | Number of articles included in the daily digest | `3` |
 | `FETCH_CRON` | Cron for feed fetching | `0 * * * *` |
 | `DIGEST_CRON` | Cron for daily digest | `0 7 * * *` |
 | `CORS_ORIGINS` | Allowed origins (production) | — |
