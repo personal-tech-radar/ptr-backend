@@ -255,6 +255,20 @@ Unit tests cover `DigestBuilderService` scoring and diversification logic.
 
 ---
 
+## Linting & Formatting
+
+```bash
+npm run lint          # ESLint with auto-fix
+npm run format        # Prettier
+```
+
+`.prettierrc` sets `singleQuote: true`, `trailingComma: "all"`, and `printWidth: 100` to match
+this codebase's existing style (single-quoted strings, ~100-character lines). ESLint disables
+`@typescript-eslint/no-explicit-any` since `noImplicitAny` is off in `tsconfig.json` and the
+codebase uses `any` deliberately in a handful of places (test mocks, third-party type gaps).
+
+---
+
 ## Deployment
 
 ### GitHub Actions (manual trigger)
