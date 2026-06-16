@@ -82,6 +82,10 @@ Stores articles fetched from sources.
 
 - `GET /articles` — paginated list (filter by `status`, `sourceId`)
 - `GET /articles/:id` — single article
+- `POST /articles/:id/feedback` — submit `useful` / `not_useful` feedback (requires `X-API-KEY`); updates the source's `trustScore` automatically
+- `GET /articles/:id/feedback/click?type=useful|not_useful&token=TOKEN` — unguarded endpoint for email digest links; saves feedback and rescores the source
+
+Feedback is single-user (`DEFAULT_USER_ID = 'default_user'`). The `article_feedbacks` table has a `userId` column and a `(articleId, userId)` unique constraint, so the schema is ready for multi-user when needed — the feedback and rescoring logic will need to be updated to aggregate per-user at that point.
 
 Statuses: `new` → `pending_analysis` → `analyzed` | `duplicate` | `rejected` | `failed`
 
@@ -204,6 +208,8 @@ Health check: `http://localhost:3000/health`
 | `REDIS_PORT` | Redis port | `6379` |
 | `REDIS_PASSWORD` | Redis password | — |
 | `API_KEY` | Admin API key for `X-API-KEY` header | — |
+| `APP_URL` | Public base URL of this API (used in digest email feedback links) | — |
+| `FEEDBACK_TOKEN` | Secret token validated when feedback links in emails are clicked | — |
 | `OPENAI_API_KEY` | OpenAI API key | — |
 | `OPENAI_MODEL` | OpenAI model | `gpt-4o-mini` |
 | `RESEND_API_KEY` | Resend API key | — |

@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { NotFoundException } from '@nestjs/common';
 import { ArticleFeedback, ArticleFeedbackType } from '../entities/article-feedback.entity';
+import { Source } from '../../sources/entities/source.entity';
 import { ArticlesService } from './articles.service';
 import { ArticleFeedbackService } from './article-feedback.service';
 
@@ -12,10 +13,22 @@ const mockFeedbackRepo = {
   findOne: jest.fn(),
   create: jest.fn((data) => data),
   save: jest.fn((data) => Promise.resolve({ id: 'fb-1', ...data })),
+  createQueryBuilder: jest.fn().mockReturnValue({
+    select: jest.fn().mockReturnThis(),
+    addSelect: jest.fn().mockReturnThis(),
+    innerJoin: jest.fn().mockReturnThis(),
+    where: jest.fn().mockReturnThis(),
+    groupBy: jest.fn().mockReturnThis(),
+    getRawMany: jest.fn().mockResolvedValue([]),
+  }),
+};
+
+const mockSourceRepo = {
+  update: jest.fn().mockResolvedValue(undefined),
 };
 
 const mockArticlesService = {
-  findOne: jest.fn().mockResolvedValue({ id: articleId }),
+  findOne: jest.fn().mockResolvedValue({ id: articleId, sourceId: 'src-1' }),
 };
 
 describe('ArticleFeedbackService', () => {
@@ -23,7 +36,15 @@ describe('ArticleFeedbackService', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
-    mockArticlesService.findOne.mockResolvedValue({ id: articleId });
+    mockArticlesService.findOne.mockResolvedValue({ id: articleId, sourceId: 'src-1' });
+    mockFeedbackRepo.createQueryBuilder.mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      addSelect: jest.fn().mockReturnThis(),
+      innerJoin: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      groupBy: jest.fn().mockReturnThis(),
+      getRawMany: jest.fn().mockResolvedValue([]),
+    });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -31,6 +52,10 @@ describe('ArticleFeedbackService', () => {
         {
           provide: getRepositoryToken(ArticleFeedback),
           useValue: mockFeedbackRepo,
+        },
+        {
+          provide: getRepositoryToken(Source),
+          useValue: mockSourceRepo,
         },
         { provide: ArticlesService, useValue: mockArticlesService },
       ],
