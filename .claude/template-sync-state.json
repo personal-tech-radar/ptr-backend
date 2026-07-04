@@ -1,0 +1,19 @@
+{
+  "upstreamRepo": "https://github.com/mitersidorov/nestjs-project-template",
+  "upstreamBranch": "main",
+  "lastReviewedCommit": "ead953ad3f65b5073cffaa9074393aa149827b6a",
+  "lastAppliedCommit": "ead953ad3f65b5073cffaa9074393aa149827b6a",
+  "files": {
+    ".claude/agents/team-lead.md": { "status": "adopted", "note": "copied verbatim from upstream" },
+    ".claude/agents/system-analyst.md": { "status": "adopted", "note": "copied verbatim from upstream" },
+    ".claude/agents/template-maintainer.md": { "status": "adopted", "note": "copied verbatim from upstream" },
+    ".claude/agents/changelog.md": { "status": "adopted", "note": "copied verbatim from upstream" },
+    ".claude/agents/repo-publisher.md": { "status": "adopted", "note": "synced to add changelog-first step" },
+    ".claude/agents/template-curator.md": { "status": "adopted", "note": "no functional diff, trailing newline only" },
+    ".claude/settings.json": { "status": "adopted", "note": "SessionStart hook copied verbatim" },
+    "CLAUDE.md": { "status": "adopted", "note": "Delivery Workflow section added verbatim" },
+    "README.md": { "status": "adopted", "note": "Claude Agent Workflow section added, adapted to this project's actual specialist agents" },
+    ".claude/skills/typeorm-migration-workflow/SKILL.md": { "status": "diverged", "note": "local addition documents a dist/ vs dist/src/ build fix specific to this project's tsconfig; not present upstream, kept intentionally" }
+  },
+  "unresolvedNotes": []
+}

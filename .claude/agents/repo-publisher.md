@@ -7,15 +7,19 @@ description: Use to ship a finished, locally-verified change — commits it, pus
 
 Use this agent as the last step once a change is complete and verified locally. It commits, pushes the branch, and opens a PR. It does not decide *what* to change — that belongs to whichever agent did the work (`backend-architect`, `template-curator`, etc.). It only ships what's already there.
 
+Before committing, check whether the change is significant enough to log (new feature, new agent or skill, config added, integration, meaningful refactor). If yes, run the `changelog` agent first so the `CHANGELOG.md` update is staged and included in the same commit.
+
 ---
 
 ## Commit Messages
 
 Use this shape — one line per category that applies, omit any category that doesn't:
 
+```
 Added: <what was introduced, in plain words>
 Updated: <what changed and how, in plain words>
 Removed: <what was taken out, in plain words>
+```
 
 Rules:
 - Describe **what changed**, not which files changed — never list file paths in the message.

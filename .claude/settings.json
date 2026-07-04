@@ -1,0 +1,24 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cat <<'JSONEOF'\n{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"Team Lead: before handling the first substantive or template-synchronization request this session, invoke template-maintainer once in proposal mode for a startup synchronization audit (inspect and report only; never modify files; never trigger implementation, review, changelog, commit, push, or PR creation from this audit). Skip it entirely for informational requests and tiny isolated edits. Run it at most once per session — do not repeat it later even if this hook fires again.\"}}\nJSONEOF"
+          }
+        ]
+      },
+      {
+        "matcher": "resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cat <<'JSONEOF'\n{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"Team Lead: before handling the first substantive or template-synchronization request this session, invoke template-maintainer once in proposal mode for a startup synchronization audit (inspect and report only; never modify files; never trigger implementation, review, changelog, commit, push, or PR creation from this audit). Skip it entirely for informational requests and tiny isolated edits. Run it at most once per session — do not repeat it later even if this hook fires again.\"}}\nJSONEOF"
+          }
+        ]
+      }
+    ]
+  }
+}
