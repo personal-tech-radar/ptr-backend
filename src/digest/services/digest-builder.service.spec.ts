@@ -4,6 +4,7 @@ import { ArticleAnalysis } from '../../ai-analysis/entities/article-analysis.ent
 import { ArticleRelevance } from '../../ai-analysis/entities/article-relevance.entity';
 import { Article, ArticleStatus } from '../../articles/entities/article.entity';
 import { Source, SourceCategory } from '../../sources/entities/source.entity';
+import { UserSourcePreferenceService } from '../../sources/services/user-source-preference.service';
 import { DigestItem } from '../entities/digest-item.entity';
 import { Digest, DigestStatus, DigestType } from '../entities/digest.entity';
 import { DigestBuildConfig } from '../digest.types';
@@ -60,6 +61,10 @@ const mockArticleRepo = {
 
 const mockSourceRepo = {
   count: jest.fn().mockResolvedValue(0),
+};
+
+const mockUserSourcePreferenceService = {
+  getAdjustmentsForSources: jest.fn().mockResolvedValue(new Map()),
 };
 
 const mockAiDigestService = {
@@ -126,6 +131,7 @@ describe('DigestBuilderService', () => {
     jest.clearAllMocks();
     mockDigestItemRepo.getRawMany.mockResolvedValue([]);
     mockAnalysisRepo.getCount.mockResolvedValue(0);
+    mockUserSourcePreferenceService.getAdjustmentsForSources.mockResolvedValue(new Map());
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -136,6 +142,10 @@ describe('DigestBuilderService', () => {
         { provide: getRepositoryToken(ArticleRelevance), useValue: mockRelevanceRepo },
         { provide: getRepositoryToken(Article), useValue: mockArticleRepo },
         { provide: getRepositoryToken(Source), useValue: mockSourceRepo },
+        {
+          provide: UserSourcePreferenceService,
+          useValue: mockUserSourcePreferenceService,
+        },
         { provide: AiDigestService, useValue: mockAiDigestService },
         { provide: EmailTemplateService, useValue: mockEmailTemplateService },
       ],
@@ -190,6 +200,17 @@ describe('DigestBuilderService', () => {
         50 * 0.15 +
         50 * 0.1;
       expect(score).toBeCloseTo(expected, 5);
+    });
+
+    it('adds the feedback adjustment additively on top of the base score', () => {
+      const analysis = makeAnalysis({ relevanceScore: 80, qualityScore: 70 });
+      analysis.article.source.trustScore = 90;
+      analysis.article.publishedAt = new Date(Date.now() - 6 * 60 * 60 * 1000);
+
+      const baseScore = service.computeFinalScore(analysis, DAILY_CONFIG);
+      const withAdjustment = service.computeFinalScore(analysis, DAILY_CONFIG, 4.5);
+
+      expect(withAdjustment).toBeCloseTo(baseScore + 4.5, 5);
     });
   });
 
@@ -353,6 +374,40 @@ describe('DigestBuilderService', () => {
       await service.buildDailyDigest();
 
       expect(mockDigestItemRepo.save).toHaveBeenCalledTimes(3);
+    });
+
+    it('persists a scoreBreakdown with no feedback adjustment when no preference row exists', async () => {
+      const analysis = makeAnalysis();
+      mockAnalysisRepo.getMany.mockResolvedValue([analysis]);
+      mockAnalysisRepo.getCount.mockResolvedValue(1);
+      mockUserSourcePreferenceService.getAdjustmentsForSources.mockResolvedValue(new Map());
+
+      await service.buildDailyDigest();
+
+      const itemSaveCall = mockDigestItemRepo.save.mock.calls[0][0];
+      const expectedBaseScore = service.computeFinalScore(analysis, DAILY_CONFIG);
+      expect(itemSaveCall.scoreBreakdown).toEqual({
+        baseScore: expectedBaseScore,
+        feedbackAdjustment: 0,
+        finalScore: expectedBaseScore,
+      });
+    });
+
+    it('persists a scoreBreakdown with the feedback adjustment applied additively', async () => {
+      const analysis = makeAnalysis();
+      mockAnalysisRepo.getMany.mockResolvedValue([analysis]);
+      mockAnalysisRepo.getCount.mockResolvedValue(1);
+      mockUserSourcePreferenceService.getAdjustmentsForSources.mockResolvedValue(
+        new Map([['src-1', 3.5]]),
+      );
+
+      await service.buildDailyDigest();
+
+      const itemSaveCall = mockDigestItemRepo.save.mock.calls[0][0];
+      const expectedBaseScore = service.computeFinalScore(analysis, DAILY_CONFIG);
+      expect(itemSaveCall.scoreBreakdown.baseScore).toBeCloseTo(expectedBaseScore, 5);
+      expect(itemSaveCall.scoreBreakdown.feedbackAdjustment).toBe(3.5);
+      expect(itemSaveCall.scoreBreakdown.finalScore).toBeCloseTo(expectedBaseScore + 3.5, 5);
     });
 
     it('excludes articles already in prior digests', async () => {

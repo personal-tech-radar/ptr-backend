@@ -55,4 +55,33 @@ describe('EmailTemplateService', () => {
       expect(text).toContain(item.url);
     });
   });
+
+  describe('whyItMatters rendering', () => {
+    const dailyItem: DigestEmailItem = { ...item, whyItMatters: undefined };
+    const weeklyItem: DigestEmailItem = { ...item, whyItMatters: 'It matters a lot.' };
+
+    it('omits the whyItMatters block in HTML when not present (daily digest)', () => {
+      const html = service.renderHtml('Subject', 'Intro text', [dailyItem]);
+
+      expect(html).not.toContain('It matters a lot.');
+    });
+
+    it('includes the whyItMatters block in HTML when present (weekly/deep-dive digest)', () => {
+      const html = service.renderHtml('Subject', 'Intro text', [weeklyItem]);
+
+      expect(html).toContain('It matters a lot.');
+    });
+
+    it('omits the whyItMatters line in plain text when not present (daily digest)', () => {
+      const text = service.renderText('Subject', 'Intro text', [dailyItem]);
+
+      expect(text).not.toContain('It matters a lot.');
+    });
+
+    it('includes the whyItMatters line in plain text when present (weekly/deep-dive digest)', () => {
+      const text = service.renderText('Subject', 'Intro text', [weeklyItem]);
+
+      expect(text).toContain('It matters a lot.');
+    });
+  });
 });

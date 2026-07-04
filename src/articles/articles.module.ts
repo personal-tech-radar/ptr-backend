@@ -4,12 +4,12 @@ import { ArticlesController } from './controllers/articles.controller';
 import { FeedbackClickController } from './controllers/feedback-click.controller';
 import { Article } from './entities/article.entity';
 import { ArticleFeedback } from './entities/article-feedback.entity';
-import { Source } from '../sources/entities/source.entity';
+import { SourcesModule } from '../sources/sources.module';
 import { ArticleFeedbackService } from './services/article-feedback.service';
 import { ArticlesService } from './services/articles.service';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Article, ArticleFeedback, Source])],
+  imports: [TypeOrmModule.forFeature([Article, ArticleFeedback]), SourcesModule],
   controllers: [ArticlesController, FeedbackClickController],
   providers: [ArticlesService, ArticleFeedbackService],
   exports: [ArticlesService, ArticleFeedbackService],

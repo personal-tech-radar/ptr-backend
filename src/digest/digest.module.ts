@@ -22,7 +22,14 @@ import { EmailTemplateService } from './services/email-template.service';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Digest, DigestItem, ArticleAnalysis, ArticleRelevance, Article, Source]),
+    TypeOrmModule.forFeature([
+      Digest,
+      DigestItem,
+      ArticleAnalysis,
+      ArticleRelevance,
+      Article,
+      Source,
+    ]),
     MailModule,
     QueueModule,
     AiAnalysisModule,

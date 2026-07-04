@@ -2,7 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { NotFoundException } from '@nestjs/common';
 import { ArticleFeedback, ArticleFeedbackType } from '../entities/article-feedback.entity';
-import { Source } from '../../sources/entities/source.entity';
+import { UserSourcePreferenceService } from '../../sources/services/user-source-preference.service';
 import { ArticlesService } from './articles.service';
 import { ArticleFeedbackService } from './article-feedback.service';
 
@@ -13,22 +13,14 @@ const mockFeedbackRepo = {
   findOne: jest.fn(),
   create: jest.fn((data) => data),
   save: jest.fn((data) => Promise.resolve({ id: 'fb-1', ...data })),
-  createQueryBuilder: jest.fn().mockReturnValue({
-    select: jest.fn().mockReturnThis(),
-    addSelect: jest.fn().mockReturnThis(),
-    innerJoin: jest.fn().mockReturnThis(),
-    where: jest.fn().mockReturnThis(),
-    groupBy: jest.fn().mockReturnThis(),
-    getRawMany: jest.fn().mockResolvedValue([]),
-  }),
-};
-
-const mockSourceRepo = {
-  update: jest.fn().mockResolvedValue(undefined),
 };
 
 const mockArticlesService = {
   findOne: jest.fn().mockResolvedValue({ id: articleId, sourceId: 'src-1' }),
+};
+
+const mockUserSourcePreferenceService = {
+  applyFeedback: jest.fn().mockResolvedValue(undefined),
 };
 
 describe('ArticleFeedbackService', () => {
@@ -37,14 +29,6 @@ describe('ArticleFeedbackService', () => {
   beforeEach(async () => {
     jest.clearAllMocks();
     mockArticlesService.findOne.mockResolvedValue({ id: articleId, sourceId: 'src-1' });
-    mockFeedbackRepo.createQueryBuilder.mockReturnValue({
-      select: jest.fn().mockReturnThis(),
-      addSelect: jest.fn().mockReturnThis(),
-      innerJoin: jest.fn().mockReturnThis(),
-      where: jest.fn().mockReturnThis(),
-      groupBy: jest.fn().mockReturnThis(),
-      getRawMany: jest.fn().mockResolvedValue([]),
-    });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -53,11 +37,8 @@ describe('ArticleFeedbackService', () => {
           provide: getRepositoryToken(ArticleFeedback),
           useValue: mockFeedbackRepo,
         },
-        {
-          provide: getRepositoryToken(Source),
-          useValue: mockSourceRepo,
-        },
         { provide: ArticlesService, useValue: mockArticlesService },
+        { provide: UserSourcePreferenceService, useValue: mockUserSourcePreferenceService },
       ],
     }).compile();
 
@@ -86,7 +67,41 @@ describe('ArticleFeedbackService', () => {
       expect(result.type).toBe(ArticleFeedbackType.USEFUL);
     });
 
-    it('updates the existing feedback instead of creating a duplicate', async () => {
+    it('does not touch Source at all — only calls the preference service', async () => {
+      mockFeedbackRepo.findOne.mockResolvedValue(null);
+
+      await service.upsertFeedback(articleId, ArticleFeedbackType.USEFUL);
+
+      expect(mockUserSourcePreferenceService.applyFeedback).toHaveBeenCalledWith(
+        DEFAULT_USER_ID,
+        'src-1',
+        ArticleFeedbackType.USEFUL,
+        null,
+      );
+    });
+
+    it('updates the existing feedback with the same type without flipping counters', async () => {
+      const existing: Partial<ArticleFeedback> = {
+        id: 'fb-1',
+        articleId,
+        userId: DEFAULT_USER_ID,
+        type: ArticleFeedbackType.USEFUL,
+      };
+      mockFeedbackRepo.findOne.mockResolvedValue(existing);
+
+      const result = await service.upsertFeedback(articleId, ArticleFeedbackType.USEFUL);
+
+      expect(mockFeedbackRepo.create).not.toHaveBeenCalled();
+      expect(result.type).toBe(ArticleFeedbackType.USEFUL);
+      expect(mockUserSourcePreferenceService.applyFeedback).toHaveBeenCalledWith(
+        DEFAULT_USER_ID,
+        'src-1',
+        ArticleFeedbackType.USEFUL,
+        ArticleFeedbackType.USEFUL,
+      );
+    });
+
+    it('updates the existing feedback and reports the type flip to the preference service', async () => {
       const existing: Partial<ArticleFeedback> = {
         id: 'fb-1',
         articleId,
@@ -106,6 +121,12 @@ describe('ArticleFeedbackService', () => {
       );
       expect(result.id).toBe('fb-1');
       expect(result.type).toBe(ArticleFeedbackType.NOT_USEFUL);
+      expect(mockUserSourcePreferenceService.applyFeedback).toHaveBeenCalledWith(
+        DEFAULT_USER_ID,
+        'src-1',
+        ArticleFeedbackType.NOT_USEFUL,
+        ArticleFeedbackType.USEFUL,
+      );
     });
 
     it('propagates NotFoundException when the article does not exist', async () => {
@@ -115,6 +136,7 @@ describe('ArticleFeedbackService', () => {
         NotFoundException,
       );
       expect(mockFeedbackRepo.findOne).not.toHaveBeenCalled();
+      expect(mockUserSourcePreferenceService.applyFeedback).not.toHaveBeenCalled();
     });
   });
 });

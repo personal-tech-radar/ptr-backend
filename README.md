@@ -82,10 +82,10 @@ Stores articles fetched from sources.
 
 - `GET /articles` — paginated list (filter by `status`, `sourceId`)
 - `GET /articles/:id` — single article
-- `POST /articles/:id/feedback` — submit `useful` / `not_useful` feedback (requires `X-API-KEY`); updates the source's `trustScore` automatically
-- `GET /articles/:id/feedback/click?type=useful|not_useful&token=TOKEN` — unguarded endpoint for email digest links; saves feedback and rescores the source
+- `POST /articles/:id/feedback` — submit `useful` / `not_useful` feedback (requires `X-API-KEY`); upserts the user's per-source `UserSourcePreference` row
+- `GET /articles/:id/feedback/click?type=useful|not_useful&token=TOKEN` — unguarded endpoint for email digest links; saves feedback and updates the same per-source preference
 
-Feedback is single-user (`DEFAULT_USER_ID = 'default_user'`). The `article_feedbacks` table has a `userId` column and a `(articleId, userId)` unique constraint, so the schema is ready for multi-user when needed — the feedback and rescoring logic will need to be updated to aggregate per-user at that point.
+Feedback no longer touches `Source.trustScore`. Each `useful`/`not_useful` vote updates a `UserSourcePreference` row (`usefulCount`, `notUsefulCount`, `feedbackAdjustment`) for that `(userId, sourceId)` pair — `feedbackAdjustment` is a dampened score in the range ±8 that feeds into digest ranking (see DigestModule below). Feedback is single-user (`DEFAULT_USER_ID = 'default_user'`). The `article_feedbacks` table has a `userId` column and a `(articleId, userId)` unique constraint, so the schema is ready for multi-user when needed — the feedback and preference logic will need to be updated to aggregate per-user at that point.
 
 Statuses: `new` → `pending_analysis` → `analyzed` | `duplicate` | `rejected` | `failed`
 
@@ -114,13 +114,14 @@ Two-stage pipeline to minimise token usage and prepare for multi-user relevance.
 User interests are loaded from `config/user-interests.yaml`. The default user ID is `default_user`; the schema supports multiple users via the `(articleId, userId)` unique constraint on `article_relevances`.
 
 ### DigestModule
-Selects the best `DAILY_DIGEST_ARTICLES_LIMIT` articles (default 3) using a time-window fallback (24 h → 48 h → 72 h). Articles already present in any digest with status `draft` or `sent` are excluded. Ranking formula:
+Selects the best `DAILY_DIGEST_ARTICLES_LIMIT` articles (default 3) for the daily digest, and 5 articles each for the weekly and deep-dive digests, using a time-window fallback (24 h → 48 h → 72 h for daily; a relaxed-threshold fallback for weekly/deep-dive). Articles already present in any digest with status `draft` or `sent` are excluded. Ranking formula:
 
 ```
-finalScore = relevanceScore × 0.45 + qualityScore × 0.30 + trustScore × 0.15 + recencyScore × 0.10
+baseScore = relevanceScore × 0.45 + qualityScore × 0.30 + trustScore × 0.15 + recencyScore × 0.10
+finalScore = baseScore + feedbackAdjustment
 ```
 
-Recency: 100 (≤12h), 80 (≤24h), 50 (older). Diversification: max 2 articles per source, preferably max 2 per category.
+`trustScore` remains editorial-only (set on the source, not touched by feedback). `feedbackAdjustment` comes from the user's `UserSourcePreference` row for the article's source (0 if none exists) and is applied additively on top of `baseScore`. Recency: 100 (≤12h), 80 (≤24h), 50 (older). Diversification: max 2 articles per source, preferably max 2 per category.
 
 Each built digest stores a `buildDebug` JSONB column with:
 - `requestedItemCount` — minimum items required
@@ -128,6 +129,10 @@ Each built digest stores a `buildDebug` JSONB column with:
 - `attempts[]` — per-window stats: `windowHours`, `candidatesFound`, `eligibleFound`
 - `finalWindowHours` — the window that was ultimately used
 - `finalSelectedCount` — actual items in the digest
+
+Each `DigestItem` also stores a `scoreBreakdown` JSONB column (`{ baseScore, feedbackAdjustment, finalScore }`) for explainability.
+
+Daily digest emails omit the `whyItMatters` paragraph per article; weekly and deep-dive digests still include it.
 
 - `POST /digests/daily/resend-latest` — resend latest built/sent digest via Resend
 
