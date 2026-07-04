@@ -80,6 +80,31 @@ For test structure and implementation detail, use the `minimal-test-strategy` sk
 
 ---
 
+## Delivery Workflow
+
+`team-lead` is the single owner of the delivery workflow. All substantive development requests enter through it — never invoke `system-analyst`, a specialist agent, or `repo-publisher` directly for work that has real behavioral, architectural, or contract impact.
+
+Allowed delegation direction only:
+
+```
+team-lead → system-analyst → team-lead → specialist agents → code-reviewer → changelog → repo-publisher
+team-lead → template-maintainer → team-lead → code-reviewer → changelog → repo-publisher
+```
+
+Rules:
+- **Classification first.** `team-lead` sorts every request into informational/investigative, tiny isolated edit, substantive change, or template synchronization, and only routes substantive/template work through the full chain (see `.claude/agents/team-lead.md`).
+- **`system-analyst` is planning-only.** It inspects the codebase, checks fit against architecture and conventions, and returns a plan. It never writes code, generates migrations, installs dependencies, commits, pushes, opens a PR, or invokes another agent.
+- **No implementation before approval.** `team-lead` waits for explicit user approval of the `system-analyst` plan before invoking any implementation agent.
+- **`template-maintainer` owns upstream sync analysis** against `https://github.com/mitersidorov/nestjs-project-template` — proposal mode (inspect/report only) unless `team-lead` invokes it in apply mode after explicit user approval. It never invokes `team-lead`, `system-analyst`, `repo-publisher`, or itself.
+- **`repo-publisher` is always terminal** — last agent in any chain, never invokes another agent, never merges a pull request.
+- **`changelog` runs immediately before `repo-publisher`** for every significant change.
+- **No recursion:** an agent must not invoke itself or its own parent, and a completed workflow stage is not re-run without a concrete unresolved finding.
+- **Session start:** `team-lead` triggers exactly one `template-maintainer` proposal-mode audit per session (see the `SessionStart` hook in `.claude/settings.json`), before the first substantive request. The audit inspects and reports only — it never triggers implementation, review, changelog, commit, push, or PR creation on its own.
+
+See `.claude/agents/team-lead.md`, `system-analyst.md`, and `template-maintainer.md` for full role detail.
+
+---
+
 ## Maintenance Rules
 
 When you change the project in ways that affect behavior or structure:

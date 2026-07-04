@@ -303,3 +303,22 @@ Configure Dokploy's migration service to run:
 node dist/main && npm run migration:run:prod
 ```
 Or as a separate one-off container using the same image.
+
+---
+
+## Claude Agent Workflow
+
+This repo uses a role-based set of Claude Code agents under `.claude/agents/`. `team-lead` is the single entry point and workflow owner for any request; it classifies the request and routes accordingly:
+
+| Agent | Role |
+|---|---|
+| `team-lead` | Entry point and workflow owner. Classifies requests and orchestrates the rest. |
+| `system-analyst` | Planning-only: discovery, conflict/risk analysis, scope, and an implementation plan. No code, no commits. |
+| `template-maintainer` | Compares this project's agents/skills/instructions against the upstream template and proposes (or, once approved, applies) updates. |
+| `backend-architect`, `api-contracts`, `migrations` | Implementation specialists for modules, contracts, and schema. |
+| `code-reviewer` | Reviews changes against template architecture. |
+| `changelog` | Records significant changes in `CHANGELOG.md` before publishing. |
+| `template-curator` | Judges whether a new convention belongs in the shared template instructions. |
+| `repo-publisher` | Terminal step: commits, pushes, opens a PR. Never merges. |
+
+Delegation always flows `team-lead → system-analyst → team-lead → specialists → code-reviewer → changelog → repo-publisher` (or `team-lead → template-maintainer → team-lead → ...` for template sync). A session-start hook prompts `team-lead` to run one `template-maintainer` audit per session. See `CLAUDE.md` for the full orchestration rules.
