@@ -2,8 +2,8 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { ArticleAnalysis } from '../../ai-analysis/entities/article-analysis.entity';
 import { ArticleRelevance } from '../../ai-analysis/entities/article-relevance.entity';
-import { ArticleStatus } from '../../articles/entities/article.entity';
-import { SourceCategory } from '../../sources/entities/source.entity';
+import { Article, ArticleStatus } from '../../articles/entities/article.entity';
+import { Source, SourceCategory } from '../../sources/entities/source.entity';
 import { DigestItem } from '../entities/digest-item.entity';
 import { Digest, DigestStatus, DigestType } from '../entities/digest.entity';
 import { DigestBuildConfig } from '../digest.types';
@@ -47,9 +47,20 @@ const mockAnalysisRepo = {
   orderBy: jest.fn().mockReturnThis(),
   getMany: jest.fn(),
   getCount: jest.fn().mockResolvedValue(0),
+  count: jest.fn().mockResolvedValue(0),
 };
 
-const mockRelevanceRepo = {};
+const mockRelevanceRepo = {
+  count: jest.fn().mockResolvedValue(0),
+};
+
+const mockArticleRepo = {
+  count: jest.fn().mockResolvedValue(0),
+};
+
+const mockSourceRepo = {
+  count: jest.fn().mockResolvedValue(0),
+};
 
 const mockAiDigestService = {
   generateIntro: jest.fn().mockResolvedValue('Test intro.'),
@@ -123,6 +134,8 @@ describe('DigestBuilderService', () => {
         { provide: getRepositoryToken(DigestItem), useValue: mockDigestItemRepo },
         { provide: getRepositoryToken(ArticleAnalysis), useValue: mockAnalysisRepo },
         { provide: getRepositoryToken(ArticleRelevance), useValue: mockRelevanceRepo },
+        { provide: getRepositoryToken(Article), useValue: mockArticleRepo },
+        { provide: getRepositoryToken(Source), useValue: mockSourceRepo },
         { provide: AiDigestService, useValue: mockAiDigestService },
         { provide: EmailTemplateService, useValue: mockEmailTemplateService },
       ],

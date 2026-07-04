@@ -28,3 +28,12 @@ export interface DigestBuildDebug {
   finalWindowHours: number;
   finalSelectedCount: number;
 }
+
+export interface DigestStats {
+  windowHours: number;
+  articlesIngested: number;
+  articlesPassedPreanalysis: number;
+  articlesAnalyzed: number;
+  totalArticlesInDb: number;
+  totalSourcesActive: number;
+}

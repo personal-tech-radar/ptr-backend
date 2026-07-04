@@ -1,17 +1,19 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { MoreThanOrEqual, Repository } from 'typeorm';
 import { LoggingService } from '../../common/logging/logging.service';
 import { ArticleAnalysis } from '../../ai-analysis/entities/article-analysis.entity';
 import { ArticleRelevance } from '../../ai-analysis/entities/article-relevance.entity';
 import { DEFAULT_USER_ID } from '../../ai-analysis/services/ai-analysis.service';
-import { ArticleStatus } from '../../articles/entities/article.entity';
+import { Article, ArticleStatus } from '../../articles/entities/article.entity';
+import { Source } from '../../sources/entities/source.entity';
 import { Digest, DigestStatus, DigestType } from '../entities/digest.entity';
 import { DigestItem } from '../entities/digest-item.entity';
 import {
   DigestBuildAttempt,
   DigestBuildConfig,
   DigestBuildDebug,
+  DigestStats,
   ScoredCandidate,
 } from '../digest.types';
 import { AiDigestService } from './ai-digest.service';
@@ -31,8 +33,8 @@ const DAILY_CONFIG: DigestBuildConfig = {
 
 const WEEKLY_CONFIG: DigestBuildConfig = {
   lookbackHours: 7 * 24,
-  minItems: 10,
-  maxItems: 10,
+  minItems: 5,
+  maxItems: 5,
   subjectSuffix: 'Weekly Brief',
   recencyFreshHours: 24,
   recencyRecentHours: 72,
@@ -41,8 +43,8 @@ const WEEKLY_CONFIG: DigestBuildConfig = {
 
 const DEEP_DIVE_WEEKLY_CONFIG: DigestBuildConfig = {
   lookbackHours: 7 * 24,
-  minItems: 10,
-  maxItems: 10,
+  minItems: 5,
+  maxItems: 5,
   subjectSuffix: 'Deep Dive Weekly',
   recencyFreshHours: 48,
   recencyRecentHours: 96,
@@ -64,6 +66,10 @@ export class DigestBuilderService {
     private readonly analysisRepo: Repository<ArticleAnalysis>,
     @InjectRepository(ArticleRelevance)
     private readonly relevanceRepo: Repository<ArticleRelevance>,
+    @InjectRepository(Article)
+    private readonly articleRepo: Repository<Article>,
+    @InjectRepository(Source)
+    private readonly sourceRepo: Repository<Source>,
     private readonly aiDigestService: AiDigestService,
     private readonly emailTemplateService: EmailTemplateService,
   ) {}
@@ -106,9 +112,10 @@ export class DigestBuilderService {
     const subject = `Personal Tech Radar — ${config.subjectSuffix} — ${dateStr}`;
     const intro = await this.aiDigestService.generateIntro(DigestType.DAILY, selected);
 
+    const stats = await this.gatherStats(finalWindowHours);
     const emailItems = this.toEmailItems(selected);
-    const htmlBody = this.emailTemplateService.renderHtml(subject, intro, emailItems);
-    const textBody = this.emailTemplateService.renderText(subject, intro, emailItems);
+    const htmlBody = this.emailTemplateService.renderHtml(subject, intro, emailItems, stats);
+    const textBody = this.emailTemplateService.renderText(subject, intro, emailItems, stats);
 
     const buildDebug: DigestBuildDebug = {
       requestedItemCount: config.minItems,
@@ -194,9 +201,10 @@ export class DigestBuilderService {
     const subject = `Personal Tech Radar — ${config.subjectSuffix} — ${dateStr}`;
     const intro = await this.aiDigestService.generateIntro(type, selected);
 
+    const stats = await this.gatherStats(config.lookbackHours);
     const emailItems = this.toEmailItems(selected);
-    const htmlBody = this.emailTemplateService.renderHtml(subject, intro, emailItems);
-    const textBody = this.emailTemplateService.renderText(subject, intro, emailItems);
+    const htmlBody = this.emailTemplateService.renderHtml(subject, intro, emailItems, stats);
+    const textBody = this.emailTemplateService.renderText(subject, intro, emailItems, stats);
 
     const digest = await this.digestRepo.save(
       this.digestRepo.create({
@@ -287,7 +295,32 @@ export class DigestBuilderService {
       whyItMatters: c.analysis.whyItMatters,
       url: c.analysis.article.url,
       matchedInterests: c.analysis.matchedInterests,
+      articleId: c.analysis.articleId,
     }));
+  }
+
+  private async gatherStats(windowHours: number): Promise<DigestStats> {
+    const windowStart = new Date(Date.now() - windowHours * 60 * 60 * 1000);
+
+    const [articlesIngested, articlesPassedPreanalysis, articlesAnalyzed, totalArticlesInDb, totalSourcesActive] =
+      await Promise.all([
+        this.articleRepo.count({ where: { createdAt: MoreThanOrEqual(windowStart) } }),
+        this.relevanceRepo.count({
+          where: { preAnalysisIsRelevant: true, createdAt: MoreThanOrEqual(windowStart) },
+        }),
+        this.analysisRepo.count({ where: { createdAt: MoreThanOrEqual(windowStart) } }),
+        this.articleRepo.count(),
+        this.sourceRepo.count({ where: { enabled: true } }),
+      ]);
+
+    return {
+      windowHours,
+      articlesIngested,
+      articlesPassedPreanalysis,
+      articlesAnalyzed,
+      totalArticlesInDb,
+      totalSourcesActive,
+    };
   }
 
   private async getUsedArticleIds(): Promise<string[]> {

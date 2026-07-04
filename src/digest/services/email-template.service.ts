@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { DigestStats } from '../digest.types';
 
 export interface DigestEmailItem {
   position: number;
@@ -8,6 +9,7 @@ export interface DigestEmailItem {
   whyItMatters: string;
   url: string;
   matchedInterests?: string[];
+  articleId?: string;
 }
 
 const FONT_URL =
@@ -18,11 +20,12 @@ const FONT_STACK =
 
 const STYLES = {
   body: `font-family:${FONT_STACK};max-width:640px;margin:0 auto;padding:0;background:#ffffff;color:#111827;`,
-  header: 'display:flex;align-items:center;padding:28px 32px 20px;border-bottom:2px solid #f3f4f6;margin-bottom:28px;',
-  logo: 'width:44px;height:44px;border-radius:10px;',
+  header:
+    'display:flex;align-items:center;padding:28px 32px 20px;border-bottom:2px solid #f3f4f6;margin-bottom:28px;',
   brand: 'margin-left:12px;font-size:15px;font-weight:700;color:#111827;letter-spacing:-0.01em;',
   content: 'padding:0 32px 32px;',
-  subject: 'font-size:13px;font-weight:500;color:#6b7280;text-transform:uppercase;letter-spacing:0.06em;margin:0 0 8px 0;',
+  subject:
+    'font-size:13px;font-weight:500;color:#6b7280;text-transform:uppercase;letter-spacing:0.06em;margin:0 0 8px 0;',
   intro: 'font-size:14px;color:#374151;margin:0 0 32px 0;line-height:1.7;border-bottom:1px solid #f3f4f6;padding-bottom:24px;',
   item: 'margin-bottom:28px;padding-bottom:24px;border-bottom:1px solid #f3f4f6;',
   itemTitle: 'margin:0 0 3px 0;font-size:15px;font-weight:600;color:#111827;',
@@ -31,6 +34,16 @@ const STYLES = {
   itemWhy: 'margin:0 0 8px 0;font-size:13px;color:#6b7280;line-height:1.5;',
   interests: 'font-size:12px;color:#9ca3af;margin:0 0 8px 0;',
   link: 'font-size:12px;color:#2563eb;text-decoration:none;word-break:break-all;',
+  feedbackRow: 'margin-top:10px;',
+  feedbackBtn:
+    'display:inline-block;padding:4px 12px;border-radius:4px;font-size:12px;font-weight:500;text-decoration:none;margin-right:8px;',
+  feedbackUseful: 'background:#f0fdf4;color:#166534;border:1px solid #bbf7d0;',
+  feedbackNot: 'background:#fef2f2;color:#991b1b;border:1px solid #fecaca;',
+  stats:
+    'margin-top:24px;padding:16px;background:#f9fafb;border-radius:8px;border:1px solid #f3f4f6;',
+  statsLabel: 'font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.06em;margin:0 0 8px 0;',
+  statsRow: 'font-size:12px;color:#6b7280;margin:4px 0;',
+  statsNum: 'font-weight:600;color:#374151;',
   footer: 'padding:20px 32px 28px;border-top:1px solid #f3f4f6;text-align:center;',
   footerText: 'font-size:11px;color:#d1d5db;margin:0;',
   footerLink: 'color:#9ca3af;text-decoration:none;',
@@ -38,7 +51,7 @@ const STYLES = {
 
 @Injectable()
 export class EmailTemplateService {
-  renderHtml(subject: string, intro: string, items: DigestEmailItem[]): string {
+  renderHtml(subject: string, intro: string, items: DigestEmailItem[], stats?: DigestStats): string {
     const renderedItems = items.map((item) => this.renderItemHtml(item)).join('');
 
     return `<!DOCTYPE html>
@@ -58,6 +71,7 @@ export class EmailTemplateService {
     <p style="${STYLES.subject}">${escapeHtml(subject)}</p>
     <p style="${STYLES.intro}">${escapeHtml(intro)}</p>
     ${renderedItems}
+    ${stats ? this.renderStatsHtml(stats) : ''}
   </div>
   <div style="${STYLES.footer}">
     <p style="${STYLES.footerText}">Personal Tech Radar &nbsp;·&nbsp; <a href="https://personalradar.dev" style="${STYLES.footerLink}">personalradar.dev</a></p>
@@ -66,7 +80,7 @@ export class EmailTemplateService {
 </html>`;
   }
 
-  renderText(subject: string, intro: string, items: DigestEmailItem[]): string {
+  renderText(subject: string, intro: string, items: DigestEmailItem[], stats?: DigestStats): string {
     const lines: string[] = ['Personal Tech Radar', subject, '', intro, ''];
     for (const item of items) {
       lines.push(
@@ -79,11 +93,21 @@ export class EmailTemplateService {
         '',
       );
     }
+    if (stats) {
+      const label = stats.windowHours >= 168 ? 'Last 7 days' : `Last ${stats.windowHours}h`;
+      lines.push(
+        `── Pipeline · ${label} ──`,
+        `${stats.articlesIngested} ingested · ${stats.articlesPassedPreanalysis} passed pre-analysis · ${stats.articlesAnalyzed} fully analyzed`,
+        `DB: ${stats.totalArticlesInDb} total articles · ${stats.totalSourcesActive} active sources`,
+        '',
+      );
+    }
     lines.push('', 'Personal Tech Radar · personalradar.dev');
     return lines.join('\n');
   }
 
   private renderItemHtml(item: DigestEmailItem): string {
+    const feedbackHtml = this.renderFeedbackButtons(item);
     return `
   <div style="${STYLES.item}">
     <p style="${STYLES.itemTitle}">${item.position}. ${escapeHtml(item.title)}</p>
@@ -92,6 +116,37 @@ export class EmailTemplateService {
     <p style="${STYLES.itemWhy}">${escapeHtml(item.whyItMatters)}</p>
     ${item.matchedInterests?.length ? `<p style="${STYLES.interests}">${escapeHtml(item.matchedInterests.join(', '))}</p>` : ''}
     <a href="${item.url}" style="${STYLES.link}">${item.url}</a>
+    ${feedbackHtml}
+  </div>`;
+  }
+
+  private renderFeedbackButtons(item: DigestEmailItem): string {
+    const appUrl = process.env.APP_URL;
+    const token = process.env.FEEDBACK_TOKEN;
+    if (!appUrl || !token || !item.articleId) return '';
+
+    const base = `${appUrl}/articles/${item.articleId}/feedback/click?token=${encodeURIComponent(token)}`;
+    return `
+    <div style="${STYLES.feedbackRow}">
+      <a href="${base}&type=useful" style="${STYLES.feedbackBtn}${STYLES.feedbackUseful}">👍 Useful</a>
+      <a href="${base}&type=not_useful" style="${STYLES.feedbackBtn}${STYLES.feedbackNot}">👎 Not for me</a>
+    </div>`;
+  }
+
+  private renderStatsHtml(stats: DigestStats): string {
+    const label = stats.windowHours >= 168 ? 'Last 7 days' : `Last ${stats.windowHours}h`;
+    return `
+  <div style="${STYLES.stats}">
+    <p style="${STYLES.statsLabel}">Pipeline · ${label}</p>
+    <p style="${STYLES.statsRow}">
+      <span style="${STYLES.statsNum}">${stats.articlesIngested}</span> ingested &nbsp;·&nbsp;
+      <span style="${STYLES.statsNum}">${stats.articlesPassedPreanalysis}</span> passed pre-analysis &nbsp;·&nbsp;
+      <span style="${STYLES.statsNum}">${stats.articlesAnalyzed}</span> fully analyzed
+    </p>
+    <p style="${STYLES.statsRow}">
+      DB: <span style="${STYLES.statsNum}">${stats.totalArticlesInDb}</span> total articles &nbsp;·&nbsp;
+      <span style="${STYLES.statsNum}">${stats.totalSourcesActive}</span> active sources
+    </p>
   </div>`;
   }
 }
