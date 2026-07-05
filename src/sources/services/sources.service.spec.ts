@@ -16,6 +16,9 @@ describe('SourcesService', () => {
   const mockSourceDiscoveryService = {
     discoverEntryPoints: jest.fn(),
   };
+  const mockSourceStructureAiService = {
+    suggestAndValidate: jest.fn(),
+  };
   const mockManager = {
     create: jest.fn((_entity: unknown, data: unknown) => data),
     save: jest.fn((_entity: unknown, data: unknown) =>
@@ -37,10 +40,13 @@ describe('SourcesService', () => {
     jest.clearAllMocks();
     mockSourceRepo.findOne.mockResolvedValue(null);
 
+    mockSourceStructureAiService.suggestAndValidate.mockResolvedValue(null);
+
     service = new SourcesService(
       mockSourceRepo as any,
       mockWebSourceConfigRepo as any,
       mockSourceDiscoveryService as any,
+      mockSourceStructureAiService as any,
       mockDataSource as any,
     );
   });
@@ -79,9 +85,43 @@ describe('SourcesService', () => {
 
       await expect(service.create(webSourceDto)).rejects.toThrow(BadRequestException);
 
+      // AI structural fallback is offered a chance before giving up.
+      expect(mockSourceStructureAiService.suggestAndValidate).toHaveBeenCalledWith(
+        webSourceDto.url,
+        expect.objectContaining({ entryUrls: [webSourceDto.url] }),
+        'no usable sitemap or feed found',
+      );
       // No orphaned Source row is possible: the transaction is never entered.
       expect(mockDataSource.transaction).not.toHaveBeenCalled();
       expect(mockManager.save).not.toHaveBeenCalled();
+    });
+
+    it('uses the AI-validated recipe when deterministic discovery fails but the AI fallback validates one', async () => {
+      mockSourceDiscoveryService.discoverEntryPoints.mockResolvedValue({
+        success: false,
+        method: null,
+        entryUrls: [],
+        confidence: 'low',
+        reason: 'no usable sitemap or feed found',
+      });
+      mockSourceStructureAiService.suggestAndValidate.mockResolvedValue({
+        validated: true,
+        result: {
+          success: true,
+          method: WebDiscoveryMethod.CHEERIO,
+          entryUrls: ['https://example.com/post-1'],
+          articleLinkSelector: '.post h2 a',
+          confidence: 'medium',
+        },
+      });
+
+      const result = await service.create(webSourceDto);
+
+      expect(mockDataSource.transaction).toHaveBeenCalledTimes(1);
+      expect(result.webConfig).toMatchObject({
+        preferredDiscoveryMethod: WebDiscoveryMethod.CHEERIO,
+        articleLinkSelector: '.post h2 a',
+      });
     });
   });
 

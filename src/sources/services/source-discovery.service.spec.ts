@@ -1,5 +1,6 @@
 import { SourceDiscoveryService } from './source-discovery.service';
 import { HttpService } from '../../common/http/http.service';
+import { PlaywrightFetchService } from './playwright-fetch.service';
 import { WebDiscoveryMethod } from '../entities/web-source-config.entity';
 import * as feedValidator from '../../common/util/feed-validator.util';
 
@@ -12,10 +13,19 @@ const textResponse = (status: number, data: string) => ({ status, data, headers:
 describe('SourceDiscoveryService', () => {
   let service: SourceDiscoveryService;
   const mockHttpService = { getText: jest.fn() };
+  const mockPlaywrightFetchService = { fetchRenderedHtml: jest.fn() };
 
   beforeEach(() => {
     jest.clearAllMocks();
-    service = new SourceDiscoveryService(mockHttpService as unknown as HttpService);
+    mockPlaywrightFetchService.fetchRenderedHtml.mockResolvedValue({
+      success: false,
+      html: null,
+      reason: 'playwright_disabled',
+    });
+    service = new SourceDiscoveryService(
+      mockHttpService as unknown as HttpService,
+      mockPlaywrightFetchService as unknown as PlaywrightFetchService,
+    );
   });
 
   describe('sitemap discovery (Step A + B)', () => {
@@ -306,10 +316,144 @@ describe('SourceDiscoveryService', () => {
 
       expect(result.success).toBe(false);
     });
+
+    it('discards a config entryUrl on a different host before fetching it — never fetched, result unsuccessful', async () => {
+      const maliciousUrl = 'https://malicious-other-host.example/listing';
+      mockHttpService.getText.mockImplementation((url: string) => {
+        if (url === 'https://example.com/robots.txt') return textResponse(404, '');
+        // If the host check were skipped, this would be fetched and would even "succeed" —
+        // proving the guard, not the fetch outcome, is what matters here.
+        return textResponse(
+          200,
+          '<html><body><div class="listing"><a href="/a">1</a><a href="/b">2</a><a href="/c">3</a></div></body></html>',
+        );
+      });
+
+      const result = await service.runDiscoveryMethod(
+        WebDiscoveryMethod.CHEERIO,
+        'https://example.com',
+        { entryUrls: [maliciousUrl] },
+      );
+
+      expect(result.success).toBe(false);
+      expect(mockHttpService.getText).not.toHaveBeenCalledWith(maliciousUrl);
+    });
+  });
+
+  describe('Playwright-rendered link discovery (Step E)', () => {
+    it('extracts article links from Playwright-rendered HTML using the same link-grouping logic as Cheerio', async () => {
+      mockPlaywrightFetchService.fetchRenderedHtml.mockResolvedValue({
+        success: true,
+        html: `
+          <html><body>
+            <div class="listing">
+              <a href="/blog/rendered-article-one">One</a>
+              <a href="/blog/rendered-article-two">Two</a>
+              <a href="/blog/rendered-article-three">Three</a>
+            </div>
+          </body></html>`,
+      });
+
+      const result = await service.discoverViaPlaywright('https://example.com');
+
+      expect(result.success).toBe(true);
+      expect(result.method).toBe(WebDiscoveryMethod.PLAYWRIGHT);
+      expect(result.entryUrls.sort()).toEqual(
+        [
+          'https://example.com/blog/rendered-article-one',
+          'https://example.com/blog/rendered-article-two',
+          'https://example.com/blog/rendered-article-three',
+        ].sort(),
+      );
+    });
+
+    it('reports failure when Playwright is disabled or the render fails', async () => {
+      mockPlaywrightFetchService.fetchRenderedHtml.mockResolvedValue({
+        success: false,
+        html: null,
+        reason: 'playwright_disabled',
+      });
+
+      const result = await service.discoverViaPlaywright('https://example.com');
+
+      expect(result.success).toBe(false);
+    });
+
+    it('discards a config entryUrl on a different host before navigating to it — never navigated, result unsuccessful', async () => {
+      mockHttpService.getText.mockResolvedValue(textResponse(404, ''));
+
+      const result = await service.discoverViaPlaywright('https://example.com', {
+        entryUrls: ['https://malicious-other-host.example/listing'],
+      });
+
+      expect(result.success).toBe(false);
+      expect(mockPlaywrightFetchService.fetchRenderedHtml).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('robots.txt Disallow enforcement', () => {
+    it('skips an entryUrl under a disallowed path without fetching it, while an allowed entryUrl proceeds normally', async () => {
+      const disallowedUrl = 'https://example.com/private-section/listing';
+      const allowedUrl = 'https://example.com/blog/listing';
+      const listingHtml = `
+        <html><body>
+          <div class="listing">
+            <a href="/blog/first-article-slug">One</a>
+            <a href="/blog/second-article-slug">Two</a>
+            <a href="/blog/third-article-slug">Three</a>
+          </div>
+        </body></html>`;
+
+      mockHttpService.getText.mockImplementation((url: string) => {
+        if (url === 'https://example.com/robots.txt') {
+          return textResponse(200, 'User-agent: *\nDisallow: /private-section\n');
+        }
+        if (url === disallowedUrl) {
+          throw new Error('must not be fetched: path is disallowed by robots.txt');
+        }
+        if (url === allowedUrl) {
+          return textResponse(200, listingHtml);
+        }
+        return textResponse(404, '');
+      });
+
+      const result = await service.runDiscoveryMethod(
+        WebDiscoveryMethod.CHEERIO,
+        'https://example.com',
+        { entryUrls: [disallowedUrl, allowedUrl] },
+      );
+
+      expect(result.success).toBe(true);
+      expect(mockHttpService.getText).not.toHaveBeenCalledWith(disallowedUrl);
+      expect(mockHttpService.getText).toHaveBeenCalledWith(allowedUrl);
+    });
+
+    it('fails discovery when the only entryUrl is disallowed by robots.txt', async () => {
+      const disallowedUrl = 'https://example.com/private-section/listing';
+
+      mockHttpService.getText.mockImplementation((url: string) => {
+        if (url === 'https://example.com/robots.txt') {
+          return textResponse(200, 'User-agent: *\nDisallow: /private-section\n');
+        }
+        if (url === disallowedUrl) {
+          throw new Error('must not be fetched: path is disallowed by robots.txt');
+        }
+        return textResponse(404, '');
+      });
+
+      const result = await service.runDiscoveryMethod(
+        WebDiscoveryMethod.CHEERIO,
+        'https://example.com',
+        { entryUrls: [disallowedUrl] },
+      );
+
+      expect(result.success).toBe(false);
+      expect(mockHttpService.getText).not.toHaveBeenCalledWith(disallowedUrl);
+    });
   });
 
   describe('discoverEntryPoints (full fallback chain)', () => {
-    it('reports failure with a reason when every deterministic method fails', async () => {
+    it('reports failure with a reason when every deterministic method and Playwright fail', async () => {
       mockHttpService.getText.mockResolvedValue(textResponse(404, ''));
       mockedFetchAndValidateFeed.mockResolvedValue({
         ok: false,
@@ -322,6 +466,24 @@ describe('SourceDiscoveryService', () => {
       expect(result.success).toBe(false);
       expect(result.method).toBeNull();
       expect(result.reason).toBeTruthy();
+      expect(mockPlaywrightFetchService.fetchRenderedHtml).toHaveBeenCalled();
+    });
+
+    it('reports browserFallbackAvailable instead of running Playwright when browserFallback is disabled', async () => {
+      mockHttpService.getText.mockResolvedValue(textResponse(404, ''));
+      mockedFetchAndValidateFeed.mockResolvedValue({
+        ok: false,
+        reason: 'unreachable',
+        message: 'Feed URL is unreachable',
+      });
+
+      const result = await service.discoverEntryPoints('https://example.com', null, {
+        browserFallback: 'disabled',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.browserFallbackAvailable).toBe(true);
+      expect(mockPlaywrightFetchService.fetchRenderedHtml).not.toHaveBeenCalled();
     });
   });
 });

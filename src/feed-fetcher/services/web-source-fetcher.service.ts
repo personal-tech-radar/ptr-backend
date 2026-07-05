@@ -15,6 +15,7 @@ import {
   DiscoveryResult,
   SourceDiscoveryService,
 } from '../../sources/services/source-discovery.service';
+import { isPlaywrightEnabled } from '../../sources/services/playwright-fetch.service';
 import { SourcesService } from '../../sources/services/sources.service';
 import { Source } from '../../sources/entities/source.entity';
 import { WebSourceConfig } from '../../sources/entities/web-source-config.entity';
@@ -59,6 +60,15 @@ export class WebSourceFetcherService {
     const { result, usedStoredRecipe } = await this.discover(source, config);
 
     if (!result.success) {
+      if (result.browserFallbackAvailable && isPlaywrightEnabled()) {
+        await this.queueService.addBrowserFetchSourceJob(source.id);
+        this.logger.info(
+          'Deterministic discovery exhausted; queued isolated browser fallback fetch',
+          { sourceId: source.id, name: source.name },
+        );
+        return;
+      }
+
       this.logger.error('Web source discovery failed across the full fallback chain', null, {
         sourceId: source.id,
         name: source.name,
@@ -67,6 +77,65 @@ export class WebSourceFetcherService {
       return;
     }
 
+    await this.ingest(source, config, result, usedStoredRecipe);
+  }
+
+  // Invoked only by PlaywrightFetchProcessor, once the hourly cycle has already exhausted the
+  // deterministic chain and enqueued this source for an out-of-band browser fetch. Reuses the
+  // exact same ingestion path (dedup, publish-date priority, self-healing persistence) as
+  // `fetchSource` so the two entry points can never drift apart.
+  async fetchSourceViaBrowser(source: SourceWithWebConfig): Promise<void> {
+    const config = source.webConfig;
+    if (!config) {
+      this.logger.error('Web source has no WebSourceConfig, skipping browser fallback', null, {
+        sourceId: source.id,
+        name: source.name,
+      });
+      return;
+    }
+
+    const result = await this.sourceDiscoveryService.discoverViaPlaywright(source.url, config);
+
+    if (!result.success) {
+      this.logger.error('Playwright browser fallback failed to discover entry points', null, {
+        sourceId: source.id,
+        name: source.name,
+        reason: result.reason,
+      });
+      return;
+    }
+
+    await this.ingest(source, config, result, false);
+  }
+
+  private async discover(
+    source: Source,
+    config: WebSourceConfig,
+  ): Promise<{ result: DiscoveryResult; usedStoredRecipe: boolean }> {
+    if (config.preferredDiscoveryMethod) {
+      const recipeResult = await this.sourceDiscoveryService.runDiscoveryMethod(
+        config.preferredDiscoveryMethod,
+        source.url,
+        config,
+        { browserFallback: 'disabled' },
+      );
+      if (recipeResult.success) {
+        return { result: recipeResult, usedStoredRecipe: true };
+      }
+    }
+
+    const chainResult = await this.sourceDiscoveryService.discoverEntryPoints(source.url, config, {
+      browserFallback: 'disabled',
+    });
+    return { result: chainResult, usedStoredRecipe: false };
+  }
+
+  private async ingest(
+    source: Source,
+    config: WebSourceConfig,
+    result: DiscoveryResult,
+    usedStoredRecipe: boolean,
+  ): Promise<void> {
     if (!usedStoredRecipe && result.method !== config.preferredDiscoveryMethod) {
       await this.sourcesService.updateWebSourceConfigRecipe(source.id, {
         preferredDiscoveryMethod: result.method,
@@ -97,25 +166,6 @@ export class WebSourceFetcherService {
       newCount,
       method: result.method,
     });
-  }
-
-  private async discover(
-    source: Source,
-    config: WebSourceConfig,
-  ): Promise<{ result: DiscoveryResult; usedStoredRecipe: boolean }> {
-    if (config.preferredDiscoveryMethod) {
-      const recipeResult = await this.sourceDiscoveryService.runDiscoveryMethod(
-        config.preferredDiscoveryMethod,
-        source.url,
-        config,
-      );
-      if (recipeResult.success) {
-        return { result: recipeResult, usedStoredRecipe: true };
-      }
-    }
-
-    const chainResult = await this.sourceDiscoveryService.discoverEntryPoints(source.url, config);
-    return { result: chainResult, usedStoredRecipe: false };
   }
 
   private async tryIngestArticle(

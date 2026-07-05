@@ -13,6 +13,7 @@ import { UpdateSourceDto } from '../dto/update-source.dto';
 import { Source, SourceType } from '../entities/source.entity';
 import { WebSourceConfig } from '../entities/web-source-config.entity';
 import { SourceDiscoveryService } from './source-discovery.service';
+import { SourceStructureAiService } from './source-structure-ai.service';
 
 type SourceWithWebConfig = Source & { webConfig?: WebSourceConfig };
 
@@ -26,6 +27,7 @@ export class SourcesService {
     @InjectRepository(WebSourceConfig)
     private readonly webSourceConfigRepo: Repository<WebSourceConfig>,
     private readonly sourceDiscoveryService: SourceDiscoveryService,
+    private readonly sourceStructureAiService: SourceStructureAiService,
     @InjectDataSource()
     private readonly dataSource: DataSource,
   ) {}
@@ -49,19 +51,34 @@ export class SourcesService {
 
   private async createWebSource(dto: CreateSourceDto): Promise<SourceWithWebConfig> {
     const entryUrls = dto.webConfig?.entryUrls?.length ? dto.webConfig.entryUrls : [dto.url];
-    const discovery = await this.sourceDiscoveryService.discoverEntryPoints(dto.url, {
+    const discoveryConfig = {
       entryUrls,
       articleLinkSelector: dto.webConfig?.articleLinkSelector ?? null,
-    } as Partial<WebSourceConfig>);
+    } as Partial<WebSourceConfig>;
+
+    // Playwright, when needed, runs here inline (bounded by PLAYWRIGHT_TIMEOUT_MS) since this is
+    // a one-off, low-frequency admin action — unlike the hourly re-fetch cycle, which enqueues it
+    // instead (see WebSourceFetcherService).
+    let discovery = await this.sourceDiscoveryService.discoverEntryPoints(dto.url, discoveryConfig);
 
     if (!discovery.success) {
-      this.logger.error('Web source discovery failed, refusing to create source', null, {
-        url: dto.url,
-        reason: discovery.reason,
-      });
-      throw new BadRequestException(
-        `Could not discover a working entry point for this web source: ${discovery.reason}`,
+      const aiSuggestion = await this.sourceStructureAiService.suggestAndValidate(
+        dto.url,
+        discoveryConfig,
+        discovery.reason ?? 'Unknown discovery failure',
       );
+
+      if (aiSuggestion?.validated) {
+        discovery = aiSuggestion.result;
+      } else {
+        this.logger.error('Web source discovery failed, refusing to create source', null, {
+          url: dto.url,
+          reason: discovery.reason,
+        });
+        throw new BadRequestException(
+          `Could not discover a working entry point for this web source: ${discovery.reason}`,
+        );
+      }
     }
 
     const dtoWebConfig = dto.webConfig;

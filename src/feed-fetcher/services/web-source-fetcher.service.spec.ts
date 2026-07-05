@@ -64,6 +64,7 @@ describe('WebSourceFetcherService', () => {
   const mockSourceDiscoveryService = {
     runDiscoveryMethod: jest.fn(),
     discoverEntryPoints: jest.fn(),
+    discoverViaPlaywright: jest.fn(),
   };
   const mockContentExtractionService = { extract: jest.fn() };
   const mockSourcesService = {
@@ -76,10 +77,13 @@ describe('WebSourceFetcherService', () => {
     create: jest.fn(),
     updateStatus: jest.fn(),
   };
-  const mockQueueService = { addAnalyzeArticleJob: jest.fn() };
+  const mockQueueService = { addAnalyzeArticleJob: jest.fn(), addBrowserFetchSourceJob: jest.fn() };
+  const originalEnv = { ...process.env };
 
   beforeEach(() => {
     jest.clearAllMocks();
+    process.env = { ...originalEnv };
+    delete process.env.PLAYWRIGHT_ENABLED;
     mockArticlesService.create.mockResolvedValue({ id: 'article-1' });
 
     service = new WebSourceFetcherService(
@@ -90,6 +94,10 @@ describe('WebSourceFetcherService', () => {
       mockArticlesService as any,
       mockQueueService as any,
     );
+  });
+
+  afterAll(() => {
+    process.env = originalEnv;
   });
 
   describe('recipe reuse and self-healing fallback', () => {
@@ -110,6 +118,7 @@ describe('WebSourceFetcherService', () => {
         WebDiscoveryMethod.SITEMAP,
         source.url,
         source.webConfig,
+        { browserFallback: 'disabled' },
       );
       expect(mockSourceDiscoveryService.discoverEntryPoints).not.toHaveBeenCalled();
       expect(mockSourcesService.updateWebSourceConfigRecipe).not.toHaveBeenCalled();
@@ -140,6 +149,7 @@ describe('WebSourceFetcherService', () => {
       expect(mockSourceDiscoveryService.discoverEntryPoints).toHaveBeenCalledWith(
         source.url,
         source.webConfig,
+        { browserFallback: 'disabled' },
       );
       expect(mockSourcesService.updateWebSourceConfigRecipe).toHaveBeenCalledWith(source.id, {
         preferredDiscoveryMethod: WebDiscoveryMethod.CHEERIO,
@@ -147,7 +157,7 @@ describe('WebSourceFetcherService', () => {
       });
     });
 
-    it('logs and returns without throwing when the full fallback chain also fails', async () => {
+    it('logs and returns without throwing when the full fallback chain also fails (no browser fallback available)', async () => {
       const source = buildSource();
       source.webConfig = buildConfig();
       mockSourceDiscoveryService.discoverEntryPoints.mockResolvedValue({
@@ -162,6 +172,43 @@ describe('WebSourceFetcherService', () => {
 
       expect(mockSourcesService.updateLastChecked).not.toHaveBeenCalled();
       expect(mockArticlesService.create).not.toHaveBeenCalled();
+      expect(mockQueueService.addBrowserFetchSourceJob).not.toHaveBeenCalled();
+    });
+
+    it('enqueues the isolated browser-fetch job instead of failing when a browser fallback is available and Playwright is enabled', async () => {
+      process.env.PLAYWRIGHT_ENABLED = 'true';
+      const source = buildSource();
+      source.webConfig = buildConfig();
+      mockSourceDiscoveryService.discoverEntryPoints.mockResolvedValue({
+        success: false,
+        method: null,
+        entryUrls: [],
+        confidence: 'low',
+        reason: 'deterministic chain exhausted',
+        browserFallbackAvailable: true,
+      });
+
+      await service.fetchSource(source);
+
+      expect(mockQueueService.addBrowserFetchSourceJob).toHaveBeenCalledWith(source.id);
+      expect(mockSourcesService.updateLastChecked).not.toHaveBeenCalled();
+    });
+
+    it('does not enqueue the browser-fetch job when a fallback is available but Playwright is disabled', async () => {
+      const source = buildSource();
+      source.webConfig = buildConfig();
+      mockSourceDiscoveryService.discoverEntryPoints.mockResolvedValue({
+        success: false,
+        method: null,
+        entryUrls: [],
+        confidence: 'low',
+        reason: 'deterministic chain exhausted',
+        browserFallbackAvailable: true,
+      });
+
+      await service.fetchSource(source);
+
+      expect(mockQueueService.addBrowserFetchSourceJob).not.toHaveBeenCalled();
     });
 
     it('skips silently when the source has no WebSourceConfig at all', async () => {
@@ -171,6 +218,74 @@ describe('WebSourceFetcherService', () => {
 
       expect(mockSourceDiscoveryService.discoverEntryPoints).not.toHaveBeenCalled();
       expect(mockSourcesService.updateLastChecked).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('fetchSourceViaBrowser (invoked by PlaywrightFetchProcessor)', () => {
+    it('discovers via Playwright and reuses the same ingestion path as fetchSource', async () => {
+      const source = buildSource();
+      source.webConfig = buildConfig();
+      mockSourceDiscoveryService.discoverViaPlaywright.mockResolvedValue({
+        success: true,
+        method: WebDiscoveryMethod.PLAYWRIGHT,
+        entryUrls: ['https://example.com/rendered-post'],
+        articleLinkSelector: '.listing',
+        confidence: 'medium',
+      });
+      mockArticlesService.findByUrlHash.mockResolvedValue(null);
+      mockArticlesService.findByTitleHashInLastDays.mockResolvedValue(null);
+      mockHttpService.request.mockResolvedValue({
+        status: 200,
+        data: '<html></html>',
+        headers: {},
+      });
+      mockContentExtractionService.extract.mockReturnValue({
+        success: true,
+        method: 'readability',
+        title: 'Rendered Post',
+        content: 'content',
+        textContent: 'content',
+      });
+
+      await service.fetchSourceViaBrowser(source);
+
+      expect(mockSourceDiscoveryService.discoverViaPlaywright).toHaveBeenCalledWith(
+        source.url,
+        source.webConfig,
+      );
+      expect(mockSourcesService.updateWebSourceConfigRecipe).toHaveBeenCalledWith(source.id, {
+        preferredDiscoveryMethod: WebDiscoveryMethod.PLAYWRIGHT,
+        articleLinkSelector: '.listing',
+      });
+      expect(mockArticlesService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ title: 'Rendered Post' }),
+      );
+      expect(mockSourcesService.updateLastChecked).toHaveBeenCalledWith(source.id);
+    });
+
+    it('logs and returns without throwing when Playwright discovery itself fails', async () => {
+      const source = buildSource();
+      source.webConfig = buildConfig();
+      mockSourceDiscoveryService.discoverViaPlaywright.mockResolvedValue({
+        success: false,
+        method: null,
+        entryUrls: [],
+        confidence: 'low',
+        reason: 'no article links found',
+      });
+
+      await expect(service.fetchSourceViaBrowser(source)).resolves.toBeUndefined();
+
+      expect(mockSourcesService.updateLastChecked).not.toHaveBeenCalled();
+      expect(mockArticlesService.create).not.toHaveBeenCalled();
+    });
+
+    it('skips silently when the source has no WebSourceConfig at all', async () => {
+      const source = buildSource();
+
+      await expect(service.fetchSourceViaBrowser(source)).resolves.toBeUndefined();
+
+      expect(mockSourceDiscoveryService.discoverViaPlaywright).not.toHaveBeenCalled();
     });
   });
 

@@ -8,6 +8,7 @@ import { LoggingService } from '../../common/logging/logging.service';
 import { fetchAndValidateFeed } from '../../common/util/feed-validator.util';
 import { normalizeUrl } from '../../common/util/url-normalize.util';
 import { WebDiscoveryMethod, WebSourceConfig } from '../entities/web-source-config.entity';
+import { PlaywrightFetchService, toValidatedFetchUrl } from './playwright-fetch.service';
 
 export interface DiscoveryResult {
   success: boolean;
@@ -20,6 +21,20 @@ export interface DiscoveryResult {
   sitemapUrl?: string | null;
   confidence: 'high' | 'medium' | 'low';
   reason?: string;
+  // Set only on a failed result when the deterministic chain (sitemap/RSS/Cheerio) is exhausted
+  // and Playwright would be the next step. Lets a caller that requested `browserFallback:
+  // 'disabled'` decide whether to hand the browser fetch off to the isolated queue instead of
+  // treating the failure as final.
+  browserFallbackAvailable?: boolean;
+}
+
+export interface DiscoveryOptions {
+  // 'inline' (default) runs Playwright synchronously in-process, bounded by
+  // PLAYWRIGHT_TIMEOUT_MS — only safe for low-frequency, one-off callers (source
+  // creation/validation). 'disabled' skips Playwright entirely and reports
+  // `browserFallbackAvailable: true` instead, for callers (the hourly re-fetch cycle) that must
+  // enqueue it to the isolated `web-source-browser-fetch` queue rather than block on it.
+  browserFallback?: 'inline' | 'disabled';
 }
 
 const SITEMAP_SAMPLE_SIZE = 20;
@@ -74,21 +89,35 @@ interface SitemapXml {
   urlset?: { url?: SitemapEntry | SitemapEntry[] };
 }
 
+// Parsed `User-agent: *` block only — matches this codebase's existing scope decision (Phase 2
+// only ever read Sitemap: lines). Deliberately not the full spec: no wildcard/`$` matching, no
+// crawl-delay, no per-bot groups. Longest-prefix-match between Disallow/Allow is sufficient to
+// keep a real headless browser and the deterministic HTTP fetch off paths robots.txt excludes.
+interface RobotsRules {
+  disallow: string[];
+  allow: string[];
+}
+
 /**
- * Deterministic entry-point discovery fallback chain for `web` sources:
- * robots.txt sitemap directive -> common sitemap paths -> RSS/Atom -> Cheerio
- * listing-page link discovery. Playwright/LLM fallback is explicitly out of
- * scope for this phase; the chain simply reports failure when exhausted.
+ * Deterministic entry-point discovery fallback chain for `web` sources: robots.txt sitemap
+ * directive -> common sitemap paths -> RSS/Atom -> Cheerio listing-page link discovery ->
+ * Playwright-rendered link discovery (last resort, for JS-rendered listing pages the other
+ * steps can't see). Reports failure, with `browserFallbackAvailable`, when even that is
+ * exhausted or disabled for this call.
  */
 @Injectable()
 export class SourceDiscoveryService {
   private readonly logger = new LoggingService(SourceDiscoveryService.name);
 
-  constructor(private readonly httpService: HttpService) {}
+  constructor(
+    private readonly httpService: HttpService,
+    private readonly playwrightFetchService: PlaywrightFetchService,
+  ) {}
 
   async discoverEntryPoints(
     baseUrl: string,
     config?: Partial<WebSourceConfig> | null,
+    options?: DiscoveryOptions,
   ): Promise<DiscoveryResult> {
     const chain: WebDiscoveryMethod[] = [
       WebDiscoveryMethod.SITEMAP,
@@ -101,13 +130,14 @@ export class SourceDiscoveryService {
       if (result.success) return result;
     }
 
-    return this.failure('All deterministic discovery methods failed');
+    return this.runDiscoveryMethod(WebDiscoveryMethod.PLAYWRIGHT, baseUrl, config, options);
   }
 
   async runDiscoveryMethod(
     method: WebDiscoveryMethod,
     baseUrl: string,
     config?: Partial<WebSourceConfig> | null,
+    options?: DiscoveryOptions,
   ): Promise<DiscoveryResult> {
     switch (method) {
       case WebDiscoveryMethod.SITEMAP:
@@ -118,7 +148,13 @@ export class SourceDiscoveryService {
       case WebDiscoveryMethod.CHEERIO:
         return this.discoverViaCheerio(baseUrl, config);
       case WebDiscoveryMethod.PLAYWRIGHT:
-        return this.failure('Playwright discovery is out of scope for this phase');
+        if (options?.browserFallback === 'disabled') {
+          return {
+            ...this.failure('Playwright discovery deferred to the browser-fetch queue'),
+            browserFallbackAvailable: true,
+          };
+        }
+        return this.discoverViaPlaywright(baseUrl, config);
       default:
         return this.failure(`Unknown discovery method: ${method as string}`);
     }
@@ -127,7 +163,8 @@ export class SourceDiscoveryService {
   // ---- Step A + B: robots.txt Sitemap directive, then common sitemap locations ----
 
   private async discoverViaSitemap(baseUrl: string): Promise<DiscoveryResult> {
-    const robotsSitemaps = await this.readRobotsSitemaps(baseUrl);
+    const robotsText = await this.fetchRobotsTxt(baseUrl);
+    const robotsSitemaps = robotsText ? this.extractRobotsSitemaps(robotsText) : [];
     const candidates =
       robotsSitemaps.length > 0
         ? robotsSitemaps
@@ -154,25 +191,95 @@ export class SourceDiscoveryService {
     return this.failure('No usable sitemap found');
   }
 
-  private async readRobotsSitemaps(baseUrl: string): Promise<string[]> {
+  private async fetchRobotsTxt(baseUrl: string): Promise<string | null> {
     try {
       const robotsUrl = new URL('/robots.txt', baseUrl).toString();
       const response = await this.httpService.getText(robotsUrl);
-      if (response.status !== 200) return [];
-
-      const sitemaps: string[] = [];
-      for (const line of response.data.split(/\r?\n/)) {
-        const match = /^\s*sitemap\s*:\s*(\S+)/i.exec(line);
-        if (match) sitemaps.push(match[1]);
-      }
-      return Array.from(new Set(sitemaps));
+      return response.status === 200 ? response.data : null;
     } catch (err) {
       this.logger.info('robots.txt unavailable, skipping', {
         baseUrl,
         error: (err as Error).message,
       });
-      return [];
+      return null;
     }
+  }
+
+  private extractRobotsSitemaps(robotsText: string): string[] {
+    const sitemaps: string[] = [];
+    for (const line of robotsText.split(/\r?\n/)) {
+      const match = /^\s*sitemap\s*:\s*(\S+)/i.exec(line);
+      if (match) sitemaps.push(match[1]);
+    }
+    return Array.from(new Set(sitemaps));
+  }
+
+  // ---- robots.txt Disallow/Allow enforcement (User-agent: * block only) ----
+
+  private async fetchRobotsRules(baseUrl: string): Promise<RobotsRules> {
+    const robotsText = await this.fetchRobotsTxt(baseUrl);
+    return robotsText ? this.parseRobotsRules(robotsText) : { disallow: [], allow: [] };
+  }
+
+  private parseRobotsRules(robotsText: string): RobotsRules {
+    const disallow: string[] = [];
+    const allow: string[] = [];
+    let inWildcardGroup = false;
+
+    for (const rawLine of robotsText.split(/\r?\n/)) {
+      const line = rawLine.replace(/#.*$/, '').trim();
+      if (!line) continue;
+
+      const userAgentMatch = /^user-agent\s*:\s*(\S+)/i.exec(line);
+      if (userAgentMatch) {
+        inWildcardGroup = userAgentMatch[1] === '*';
+        continue;
+      }
+
+      if (!inWildcardGroup) continue;
+
+      const disallowMatch = /^disallow\s*:\s*(\S*)/i.exec(line);
+      if (disallowMatch) {
+        if (disallowMatch[1]) disallow.push(disallowMatch[1]);
+        continue;
+      }
+
+      const allowMatch = /^allow\s*:\s*(\S*)/i.exec(line);
+      if (allowMatch && allowMatch[1]) allow.push(allowMatch[1]);
+    }
+
+    return { disallow, allow };
+  }
+
+  // Longest-prefix-match wins; an Allow rule only overrides a Disallow rule when its match is at
+  // least as specific. No wildcard/`$` support — out of scope for this MVP's robots.txt handling.
+  private isPathAllowedByRules(candidateUrl: string, rules: RobotsRules): boolean {
+    let pathname: string;
+    try {
+      pathname = new URL(candidateUrl).pathname;
+    } catch {
+      return false;
+    }
+
+    const longestDisallow = this.longestMatchingPrefixLength(pathname, rules.disallow);
+    if (longestDisallow === 0) return true;
+
+    const longestAllow = this.longestMatchingPrefixLength(pathname, rules.allow);
+    return longestAllow >= longestDisallow;
+  }
+
+  private longestMatchingPrefixLength(pathname: string, patterns: string[]): number {
+    let longest = 0;
+    for (const pattern of patterns) {
+      if (pattern && pathname.startsWith(pattern) && pattern.length > longest) {
+        longest = pattern.length;
+      }
+    }
+    return longest;
+  }
+
+  private filterAllowedByRobots(urls: string[], rules: RobotsRules): string[] {
+    return urls.filter((url) => this.isPathAllowedByRules(url, rules));
   }
 
   private async parseSitemap(sitemapUrl: string, depth: number): Promise<SitemapUrlItem[]> {
@@ -321,8 +428,15 @@ export class SourceDiscoveryService {
     baseUrl: string,
     config?: Partial<WebSourceConfig> | null,
   ): Promise<DiscoveryResult> {
-    const entryUrls = config?.entryUrls?.length ? config.entryUrls : [baseUrl];
     const allowedHost = new URL(baseUrl).hostname.toLowerCase();
+    const requestedEntryUrls = config?.entryUrls?.length ? config.entryUrls : [baseUrl];
+    // Config entryUrls may originate from an AI-suggested recipe (SourceStructureAiService) as
+    // well as admin-configured ones — neither is trusted to be on the source's own host, so both
+    // go through the same allowedHost gate as links extracted from an already-fetched page below,
+    // BEFORE any fetch is issued.
+    const hostAllowedEntryUrls = this.filterToAllowedHost(requestedEntryUrls, allowedHost);
+    const robotsRules = await this.fetchRobotsRules(baseUrl);
+    const entryUrls = this.filterAllowedByRobots(hostAllowedEntryUrls, robotsRules);
 
     for (const entryUrl of entryUrls) {
       const found = await this.extractLinksFromListing(
@@ -358,6 +472,61 @@ export class SourceDiscoveryService {
       return { links: [], selector: null };
     }
 
+    return this.extractLinksFromHtml(html, entryUrl, allowedHost, preferredSelector);
+  }
+
+  // ---- Step E: Playwright-rendered link discovery (last resort) ----
+
+  // Public: also called directly by WebSourceFetcherService.fetchSourceViaBrowser (via the
+  // PlaywrightFetchProcessor queue), which forces this specific step rather than re-walking the
+  // full chain — the deterministic steps already failed before this fetch was enqueued.
+  async discoverViaPlaywright(
+    baseUrl: string,
+    config?: Partial<WebSourceConfig> | null,
+  ): Promise<DiscoveryResult> {
+    const allowedHost = new URL(baseUrl).hostname.toLowerCase();
+    const requestedEntryUrls = config?.entryUrls?.length ? config.entryUrls : [baseUrl];
+    // Same allowedHost gate as discoverViaCheerio, applied before Playwright ever navigates —
+    // an AI-suggested entryUrl on a different host must never reach page.goto(). Same for
+    // robots.txt Disallow rules: a real headless browser must never navigate to a disallowed path.
+    const hostAllowedEntryUrls = this.filterToAllowedHost(requestedEntryUrls, allowedHost);
+    const robotsRules = await this.fetchRobotsRules(baseUrl);
+    const entryUrls = this.filterAllowedByRobots(hostAllowedEntryUrls, robotsRules);
+
+    for (const entryUrl of entryUrls) {
+      const rendered = await this.playwrightFetchService.fetchRenderedHtml(
+        toValidatedFetchUrl(entryUrl),
+      );
+      if (!rendered.success || !rendered.html) continue;
+
+      const found = this.extractLinksFromHtml(
+        rendered.html,
+        entryUrl,
+        allowedHost,
+        config?.articleLinkSelector ?? null,
+      );
+      if (found.links.length > 0) {
+        return {
+          success: true,
+          method: WebDiscoveryMethod.PLAYWRIGHT,
+          entryUrls: found.links,
+          articleLinkSelector: found.selector,
+          confidence: 'medium',
+        };
+      }
+    }
+
+    return this.failure('No article links found via Playwright-rendered link discovery');
+  }
+
+  // Shared by the Cheerio step (raw fetched HTML) and the Playwright step (rendered HTML) —
+  // link-grouping/selector-inference logic only needs to differ in where the HTML came from.
+  private extractLinksFromHtml(
+    html: string,
+    entryUrl: string,
+    allowedHost: string,
+    preferredSelector: string | null,
+  ): { links: string[]; selector: string | null } {
     const $ = cheerio.load(html);
     $(NAV_LIKE_SELECTORS).remove();
 
@@ -429,10 +598,26 @@ export class SourceDiscoveryService {
     }
 
     if (!/^https?:$/.test(resolved.protocol)) return null;
-    if (resolved.hostname.toLowerCase() !== allowedHost) return null;
+    if (!this.isAllowedHost(resolved.toString(), allowedHost)) return null;
 
     const normalized = normalizeUrl(resolved.toString());
     return this.isLikelyArticleUrl(normalized) ? normalized : null;
+  }
+
+  // Single source of truth for the same-host gate — used both for links extracted from an
+  // already-fetched page (resolveCandidateLink) and for candidate entryUrls BEFORE they are ever
+  // fetched or navigated to (discoverViaCheerio/discoverViaPlaywright), including entryUrls
+  // sourced from an AI-suggested recipe (SourceStructureAiService.suggestAndValidate).
+  private isAllowedHost(rawUrl: string, allowedHost: string): boolean {
+    try {
+      return new URL(rawUrl).hostname.toLowerCase() === allowedHost;
+    } catch {
+      return false;
+    }
+  }
+
+  private filterToAllowedHost(urls: string[], allowedHost: string): string[] {
+    return urls.filter((url) => this.isAllowedHost(url, allowedHost));
   }
 
   private buildParentSelector($: CheerioAPI, el: Element): string {

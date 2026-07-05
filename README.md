@@ -80,14 +80,20 @@ Source categories: `backend_architecture_infra`, `engineering_deep_dives`, `node
 Source types: `rss`, `atom`, `github_release`, `web`.
 
 #### Web source discovery (`SourceDiscoveryService`)
-For `type: 'web'` sources, entry points and article links are found via a deterministic fallback chain (no LLM, no headless browser — that's a later phase):
+For `type: 'web'` sources, entry points and article links are found via a deterministic fallback chain, now with a bounded headless-browser step and an opt-in AI structural fallback as the last two resorts:
 
 1. **robots.txt** — fetch `/robots.txt` and parse `Sitemap:` directives.
 2. **Common sitemap paths** — `/sitemap.xml`, `/sitemap_index.xml`, `/wp-sitemap.xml`, parsed with `fast-xml-parser` (handles both a sitemap index and a plain `urlset`, recursing one level into nested sitemaps). Candidate URLs are filtered with simple heuristics (path depth, date-like/slug-like segments, and exclusion of `/tag/`, `/category/`, `/page/`, etc.) and bounded to 20.
 3. **RSS/Atom** — checks `<link rel="alternate" type="application/rss+xml|atom+xml">` in the page HTML plus common paths (`/feed`, `/rss`, `/atom.xml`), validated through the *same* `fetchAndValidateFeed` helper (`src/common/util/feed-validator.util.ts`) used by `SourcesService.create` for `rss`/`atom` sources — no duplicated fetch/parse logic.
 4. **Cheerio entry-page link discovery** — fetches the configured entry URL(s), strips nav/header/footer/aside, groups remaining links by their nearest parent selector, and picks the largest qualifying group as the article-listing container.
+5. **Playwright-rendered link discovery** (`PlaywrightFetchService`) — for listing pages whose article links only appear after JavaScript runs. Launches a bounded, plain headless Chromium context (no stealth/evasion, no header spoofing — see the constraint below), renders the same entry URL(s), and runs the *same* link-grouping logic as step 4 against the rendered DOM. Gated by `PLAYWRIGHT_ENABLED` (default `false`); bounded by `PLAYWRIGHT_TIMEOUT_MS` as a hard navigation timeout.
+6. **OpenAI structural fallback** (`SourceStructureAiService`) — only reached once steps 1–5 have all failed. Assembles a small, bounded snapshot of the entry page (title, headings, feed links found, sitemap URLs found even if filtered out, JSON-LD fragments, a few HTML fragments, candidate links + anchor text, and why the chain failed — never full page content), asks OpenAI for a suggested method (`cheerio` or `playwright`) and selector, and **re-runs that suggestion through the real deterministic/Playwright discovery path before treating it as usable**. A suggestion that doesn't survive re-validation is discarded, never persisted. Gated by `SOURCE_DISCOVERY_AI_FALLBACK_ENABLED` (default `false`) and capped by `SOURCE_DISCOVERY_AI_FALLBACK_MAX_PER_DAY` (default `10`) via a Redis-backed daily counter.
 
-Each step returns a normalized `DiscoveryResult` (method, entry URLs, confidence, and — for the Cheerio step — the inferred `articleLinkSelector`).
+**Playwright product/legal constraint:** `PlaywrightFetchService` must never be used to bypass robots.txt directives, paywalls, auth walls, or anti-bot measures. It renders exactly what a plain headless Chromium instance would see — no stealth plugins, no fingerprint evasion, no injected cookies/sessions. If a site blocks a plain headless browser, that's the correct, intended outcome.
+
+**Where Playwright runs:** source creation/validation (`POST /sources`) runs it inline, synchronously, bounded by `PLAYWRIGHT_TIMEOUT_MS` — a one-off, low-frequency admin action. The hourly re-fetch cycle (`WebSourceFetcherService`, driven by `FeedFetcherService.fetchSource`) never runs it inline: when the deterministic chain is exhausted for an existing source, it enqueues a job onto the isolated `web-source-browser-fetch` queue instead (see QueueModule below), so a slow/hung site can never stall the rest of that cycle. `PlaywrightFetchProcessor` performs the actual browser fetch there and feeds the result back into the same ingestion path (dedup, publish-date priority, self-healing) that `WebSourceFetcherService.fetchSource` already uses.
+
+Each step returns a normalized `DiscoveryResult` (method, entry URLs, confidence, and — for the Cheerio/Playwright steps — the inferred `articleLinkSelector`).
 
 Content extraction (`ContentExtractionService`) uses its own ladder per article: JSON-LD (`Article`/`BlogPosting`) → OpenGraph meta tags → Readability+JSDOM → an optionally configured `articleContentSelector`.
 
@@ -112,7 +118,7 @@ Articles are always stored on ingest. The 78 h analysis gate operates at queue t
 ### FeedFetcherModule
 Fetches RSS/Atom/GitHub release feeds using `rss-parser`. Deduplicates by `urlHash` (SHA-256 of URL). Articles with a matching `titleHash` from the last 7 days are saved as `duplicate`. New articles are dispatched to the `article-analysis` queue automatically.
 
-`FeedFetcherService.fetchSource` branches on `source.type`: `web` sources are delegated entirely to `WebSourceFetcherService` (see SourcesModule above for the discovery/extraction chain); every other type keeps the original `rss-parser` path unchanged. Both paths run on the same `feed-fetch` cadence/queue — web sources do not get their own queue in this phase. Article URLs are normalized (UTM/tracking params and fragments stripped, hostname lowercased, trailing slash removed — `src/common/util/url-normalize.util.ts`) before hashing/dedup.
+`FeedFetcherService.fetchSource` branches on `source.type`: `web` sources are delegated entirely to `WebSourceFetcherService` (see SourcesModule above for the discovery/extraction chain); every other type keeps the original `rss-parser` path unchanged. Both paths run on the same `feed-fetch` cadence/queue — except the Playwright browser-fetch fallback, which runs on its own isolated `web-source-browser-fetch` queue (see QueueModule below) so a slow/hung site can never stall the rest of the hourly cycle. Article URLs are normalized (UTM/tracking params and fragments stripped, hostname lowercased, trailing slash removed — `src/common/util/url-normalize.util.ts`) before hashing/dedup.
 
 ### AiAnalysisModule
 Two-stage pipeline to minimise token usage and prepare for multi-user relevance.
@@ -160,10 +166,11 @@ Daily digest emails omit the `whyItMatters` paragraph per article; weekly and de
 Sends digest emails via Resend SDK. Uses `DIGEST_FROM_EMAIL` and `DIGEST_TO_EMAIL` env vars.
 
 ### QueueModule
-Three BullMQ queues backed by Redis:
+Four BullMQ queues backed by Redis:
 - `feed-fetch` — `fetch-all-sources`, `fetch-source`
 - `article-analysis` — `analyze-article`
 - `digest` — `build-daily-digest`, `send-daily-digest`
+- `web-source-browser-fetch` — `browser-fetch-source`. Isolated from the other three: its own queue/worker, its own concurrency ceiling (`PLAYWRIGHT_QUEUE_CONCURRENCY`, default `1`), and its own hard job timeout derived from `PLAYWRIGHT_TIMEOUT_MS`, so a slow/hung Playwright fetch can never block `feed-fetch` or `article-analysis`. Processed by `PlaywrightFetchProcessor`.
 
 ### SchedulerModule
 Cron jobs registered dynamically from env vars:
@@ -237,6 +244,11 @@ Health check: `http://localhost:3000/health`
 | `FEEDBACK_TOKEN` | Secret token validated when feedback links in emails are clicked | — |
 | `OPENAI_API_KEY` | OpenAI API key | — |
 | `OPENAI_MODEL` | OpenAI model | `gpt-4o-mini` |
+| `PLAYWRIGHT_ENABLED` | Master kill switch for the Playwright browser-fetch fallback | `false` |
+| `PLAYWRIGHT_QUEUE_CONCURRENCY` | Concurrency for the `web-source-browser-fetch` queue worker | `1` |
+| `PLAYWRIGHT_TIMEOUT_MS` | Hard navigation timeout for Playwright, and the base for the queue job's hard timeout | `30000` |
+| `SOURCE_DISCOVERY_AI_FALLBACK_ENABLED` | Master switch for the OpenAI structural discovery fallback | `false` |
+| `SOURCE_DISCOVERY_AI_FALLBACK_MAX_PER_DAY` | Redis-backed daily cap on OpenAI calls for structural fallback | `10` |
 | `RESEND_API_KEY` | Resend API key | — |
 | `DIGEST_FROM_EMAIL` | Sender email (verified in Resend) | — |
 | `DIGEST_TO_EMAIL` | Digest recipient email | — |
@@ -301,6 +313,12 @@ codebase uses `any` deliberately in a handful of places (test mocks, third-party
 ---
 
 ## Deployment
+
+### Docker image
+
+The production image is built on `node:20-bookworm-slim` (Debian, glibc) instead of `node:20-alpine` (musl), because Playwright's Chromium needs glibc-linked system libraries alpine doesn't ship. Both the builder and production stages use the same base to avoid an alpine/glibc ABI mismatch for any native dependencies copied between stages. The production stage runs `npx playwright install --with-deps chromium`, which installs both the Chromium build matching the pinned `playwright` version and the Debian packages it needs.
+
+**Action required for `docker-stack.yml`/`docker-stack.migrate.yml`:** these files are intentionally not modified by this change (infra config requires explicit instruction). Add the five new env vars the same way the existing ones are wired (`- VAR=${VAR}` under the backend service's `environment:` block) before relying on Playwright/AI fallback in a deployed environment: `PLAYWRIGHT_ENABLED`, `PLAYWRIGHT_QUEUE_CONCURRENCY`, `PLAYWRIGHT_TIMEOUT_MS`, `SOURCE_DISCOVERY_AI_FALLBACK_ENABLED`, `SOURCE_DISCOVERY_AI_FALLBACK_MAX_PER_DAY`. Both default to disabled/off, so omitting them simply keeps this phase's fallbacks inert in that environment.
 
 ### GitHub Actions (manual trigger)
 

@@ -5,6 +5,21 @@ Each entry is tagged with the branch it was made on.
 
 ---
 
+## [dev/mvp-3] — 2026-07-05 — Phase 3: Playwright + OpenAI Structural Fallback
+
+### Added
+- Isolated `web-source-browser-fetch` BullMQ queue with its own concurrency and timeout, kept separate from the feed-fetch/article-analysis/digest queues so a slow or hung browser job never blocks them
+- `PlaywrightFetchService`/`PlaywrightFetchProcessor` — headless Chromium fetching for web sources, gated behind `PLAYWRIGHT_ENABLED` (default off); source creation runs it inline with a hard timeout, while the recurring scheduled re-fetch enqueues to the new queue instead so a slow site never stalls the hourly fetch-all-sources cycle; both paths reuse the existing ingestion logic (dedup, publish-date resolution)
+- Playwright wired into `SourceDiscoveryService` as the fallback after Cheerio link discovery fails, self-healing the persisted recipe on success the same way as the existing sitemap/Cheerio recipes
+- `SourceStructureAiService` — OpenAI-based structural-discovery fallback, gated behind `SOURCE_DISCOVERY_AI_FALLBACK_ENABLED` (default off) and capped per day via a new Redis-backed atomic counter on `RedisService`; every AI-suggested selector/URL is re-validated deterministically and enforced through a branded type before it can ever be persisted as a source's recipe, and suggested entry URLs pass through the same host-allowlist and robots.txt checks as regular discovery
+- robots.txt `Disallow`/`Allow` rule parsing and enforcement (longest-prefix-match) before any fetch or Playwright navigation, in addition to the existing `Sitemap:` directive support
+
+### Updated
+- Dockerfile base image switched from `node:20-alpine` to `node:20-bookworm-slim` (glibc required for Chromium) for both build and production stages; production stage installs Chromium via `npx playwright install --with-deps chromium`; kept as a single production image rather than a separate worker image
+- README documents the new queue, the Playwright/AI discovery fallbacks, the new env vars, and which additional env vars need to be added to `docker-stack.yml` operationally
+
+---
+
 ## [dev/mvp-3] — 2026-07-05
 
 ### Added

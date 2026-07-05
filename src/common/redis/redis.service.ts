@@ -70,6 +70,12 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     return this.client.expire(key, ttlSeconds);
   }
 
+  // Atomic increment, used for Redis-backed rate/quota counters (e.g. the daily AI-fallback cap)
+  // where a get-then-set round trip would race under concurrent callers.
+  async incr(key: string): Promise<number> {
+    return this.client.incr(key);
+  }
+
   isConnected(): boolean {
     return this.client?.status === 'ready';
   }
