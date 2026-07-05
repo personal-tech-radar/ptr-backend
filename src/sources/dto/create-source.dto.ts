@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import {
   IsBoolean,
   IsEnum,
@@ -8,8 +9,10 @@ import {
   IsUrl,
   Max,
   Min,
+  ValidateNested,
 } from 'class-validator';
 import { SourceCategory, SourceType } from '../entities/source.entity';
+import { WebConfigDto } from './web-config.dto';
 
 export class CreateSourceDto {
   @ApiProperty({ example: 'Cloudflare Blog' })
@@ -39,4 +42,16 @@ export class CreateSourceDto {
   @Max(100)
   @IsOptional()
   trustScore?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Web source discovery/extraction configuration, used only when type is "web". ' +
+      "Optional: when omitted for a web source, the source's own `url` is used as the " +
+      'sole entry point for discovery.',
+    type: WebConfigDto,
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => WebConfigDto)
+  webConfig?: WebConfigDto;
 }

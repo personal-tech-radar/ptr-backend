@@ -50,7 +50,7 @@ src/
 │   └── dto/               # PaginatedResponseDto
 ├── config/
 │   └── user-interests.yaml  # AI analysis interest profile
-├── sources/               # Source CRUD — RSS/Atom/GitHub feeds
+├── sources/               # Source CRUD — RSS/Atom/GitHub feeds + web source discovery/extraction
 ├── articles/              # Article storage and querying
 ├── feed-fetcher/          # Fetches and parses feeds, creates articles
 ├── ai-analysis/           # OpenAI article analysis, ArticleAnalysis entity
@@ -68,14 +68,32 @@ src/
 ## Domain Modules
 
 ### SourcesModule
-Manages feed sources. Admin CRUD endpoints protected by `X-API-KEY`. When a source is created (via `POST /sources` or the seed script), the URL is validated: the feed must return HTTP 200, parse as valid RSS/Atom, and contain at least one item. Sources that fail validation are rejected without being saved.
+Manages feed sources. Admin CRUD endpoints protected by `X-API-KEY`. When a source is created (via `POST /sources` or the seed script), the URL is validated: for `rss`/`atom`/`github_release` sources the feed must return HTTP 200, parse as valid RSS/Atom, and contain at least one item; for `web` sources, a deterministic discovery pass (below) must find at least one working entry point before the source and its `WebSourceConfig` are saved. Sources that fail validation are rejected without being saved.
 
 - `GET /sources` — list all active sources
-- `POST /sources` — add a source (validates feed URL before saving)
+- `POST /sources` — add a source (validates feed URL, or runs web discovery, before saving)
 - `PATCH /sources/:id` — update a source
 - `DELETE /sources/:id` — soft-delete (sets `deletedAt`)
 
 Source categories: `backend_architecture_infra`, `engineering_deep_dives`, `node_typescript_nestjs`, `ai_engineering`
+
+Source types: `rss`, `atom`, `github_release`, `web`.
+
+#### Web source discovery (`SourceDiscoveryService`)
+For `type: 'web'` sources, entry points and article links are found via a deterministic fallback chain (no LLM, no headless browser — that's a later phase):
+
+1. **robots.txt** — fetch `/robots.txt` and parse `Sitemap:` directives.
+2. **Common sitemap paths** — `/sitemap.xml`, `/sitemap_index.xml`, `/wp-sitemap.xml`, parsed with `fast-xml-parser` (handles both a sitemap index and a plain `urlset`, recursing one level into nested sitemaps). Candidate URLs are filtered with simple heuristics (path depth, date-like/slug-like segments, and exclusion of `/tag/`, `/category/`, `/page/`, etc.) and bounded to 20.
+3. **RSS/Atom** — checks `<link rel="alternate" type="application/rss+xml|atom+xml">` in the page HTML plus common paths (`/feed`, `/rss`, `/atom.xml`), validated through the *same* `fetchAndValidateFeed` helper (`src/common/util/feed-validator.util.ts`) used by `SourcesService.create` for `rss`/`atom` sources — no duplicated fetch/parse logic.
+4. **Cheerio entry-page link discovery** — fetches the configured entry URL(s), strips nav/header/footer/aside, groups remaining links by their nearest parent selector, and picks the largest qualifying group as the article-listing container.
+
+Each step returns a normalized `DiscoveryResult` (method, entry URLs, confidence, and — for the Cheerio step — the inferred `articleLinkSelector`).
+
+Content extraction (`ContentExtractionService`) uses its own ladder per article: JSON-LD (`Article`/`BlogPosting`) → OpenGraph meta tags → Readability+JSDOM → an optionally configured `articleContentSelector`.
+
+`WebSourceFetcherService` (in `FeedFetcherModule`) tries the source's stored `preferredDiscoveryMethod`/`preferredExtractionMethod` first; if that recipe no longer works, it walks the full fallback chain and — if a different method succeeds — persists the new method back onto `WebSourceConfig` along with `lastValidatedAt` (self-healing). Ingested web articles go through the same `urlHash`/`titleHash` dedup path as RSS articles. No raw HTML is archived; only extracted text and extraction metadata are stored on the `Article` row, so extraction is simply re-run from the network if needed.
+
+**Publish-date extraction:** `Article.publishedAt` for web-ingested articles is resolved in priority order — sitemap `<lastmod>` (captured during discovery) → `datePublished`/`dateCreated` from JSON-LD → OpenGraph `article:published_time` → ingestion time as a last resort. Perfect extraction isn't guaranteed for every site (a page with no structured data and a sitemap with no `<lastmod>` falls all the way through to "just discovered = just published"), but this makes the fallback the rare case rather than the default, which matters for the 24h/48h/72h digest window fallback and the 78h analysis staleness gate — both of which previously treated every web article as maximally fresh.
 
 ### ArticlesModule
 Stores articles fetched from sources.
@@ -93,6 +111,8 @@ Articles are always stored on ingest. The 78 h analysis gate operates at queue t
 
 ### FeedFetcherModule
 Fetches RSS/Atom/GitHub release feeds using `rss-parser`. Deduplicates by `urlHash` (SHA-256 of URL). Articles with a matching `titleHash` from the last 7 days are saved as `duplicate`. New articles are dispatched to the `article-analysis` queue automatically.
+
+`FeedFetcherService.fetchSource` branches on `source.type`: `web` sources are delegated entirely to `WebSourceFetcherService` (see SourcesModule above for the discovery/extraction chain); every other type keeps the original `rss-parser` path unchanged. Both paths run on the same `feed-fetch` cadence/queue — web sources do not get their own queue in this phase. Article URLs are normalized (UTM/tracking params and fragments stripped, hostname lowercased, trailing slash removed — `src/common/util/url-normalize.util.ts`) before hashing/dedup.
 
 ### AiAnalysisModule
 Two-stage pipeline to minimise token usage and prepare for multi-user relevance.

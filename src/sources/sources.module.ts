@@ -1,15 +1,29 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { HttpModule } from '../common/http/http.module';
 import { SourcesController } from './controllers/sources.controller';
 import { Source } from './entities/source.entity';
 import { UserSourcePreference } from './entities/user-source-preference.entity';
+import { WebSourceConfig } from './entities/web-source-config.entity';
+import { ContentExtractionService } from './services/content-extraction.service';
+import { SourceDiscoveryService } from './services/source-discovery.service';
 import { SourcesService } from './services/sources.service';
 import { UserSourcePreferenceService } from './services/user-source-preference.service';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Source, UserSourcePreference])],
+  imports: [TypeOrmModule.forFeature([Source, UserSourcePreference, WebSourceConfig]), HttpModule],
   controllers: [SourcesController],
-  providers: [SourcesService, UserSourcePreferenceService],
-  exports: [SourcesService, UserSourcePreferenceService],
+  providers: [
+    SourcesService,
+    UserSourcePreferenceService,
+    SourceDiscoveryService,
+    ContentExtractionService,
+  ],
+  exports: [
+    SourcesService,
+    UserSourcePreferenceService,
+    SourceDiscoveryService,
+    ContentExtractionService,
+  ],
 })
 export class SourcesModule {}

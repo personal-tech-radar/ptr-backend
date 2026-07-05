@@ -3,7 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { FindManyOptions, Repository } from 'typeorm';
 import { LoggingService } from '../../common/logging/logging.service';
 import { ArticleListQueryDto } from '../dto/article-list-query.dto';
-import { Article, ArticleStatus } from '../entities/article.entity';
+import { Article, ArticleStatus, ContentExtractionMethod } from '../entities/article.entity';
 import { PaginatedResponseDto } from '../../common/dto/paginated-response.dto';
 
 export interface CreateArticleData {
@@ -17,6 +17,9 @@ export interface CreateArticleData {
   summaryFromFeed?: string | null;
   rawContent?: string | null;
   status?: ArticleStatus;
+  contentExtractionMethod?: ContentExtractionMethod;
+  contentExtractionConfig?: Record<string, unknown> | null;
+  contentFetchedAt?: Date | null;
 }
 
 @Injectable()

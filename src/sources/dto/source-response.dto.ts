@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { SourceCategory, SourceType } from '../entities/source.entity';
+import { WebConfigResponseDto } from './web-config.dto';
 
 export class SourceResponseDto {
   @ApiProperty()
@@ -31,4 +32,10 @@ export class SourceResponseDto {
 
   @ApiProperty()
   updatedAt: Date;
+
+  @ApiPropertyOptional({
+    description: 'Discovery/extraction configuration, present only for sources of type "web"',
+    type: () => WebConfigResponseDto,
+  })
+  webConfig?: WebConfigResponseDto;
 }

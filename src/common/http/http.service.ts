@@ -24,6 +24,7 @@ export class HttpService {
       timeout = this.defaultTimeout,
       retries = this.defaultRetries,
       retryDelay = this.defaultRetryDelay,
+      responseType = 'json',
     } = options;
 
     let lastError: Error | null = null;
@@ -49,7 +50,7 @@ export class HttpService {
         const response = await fetch(url, fetchOptions);
         clearTimeout(timeoutId);
 
-        const responseData = await response.json();
+        const responseData = responseType === 'text' ? await response.text() : await response.json();
 
         const result: HttpResponse<T> = {
           status: response.status,
@@ -92,6 +93,10 @@ export class HttpService {
 
   async get<T = any>(url: string, headers?: Record<string, string>): Promise<HttpResponse<T>> {
     return this.request<T>({ method: 'GET', url, headers });
+  }
+
+  async getText(url: string, headers?: Record<string, string>): Promise<HttpResponse<string>> {
+    return this.request<string>({ method: 'GET', url, headers, responseType: 'text' });
   }
 
   async post<T = any>(url: string, body: any, headers?: Record<string, string>): Promise<HttpResponse<T>> {

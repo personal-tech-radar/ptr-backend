@@ -11,6 +11,7 @@ export enum SourceType {
   RSS = 'rss',
   ATOM = 'atom',
   GITHUB_RELEASE = 'github_release',
+  WEB = 'web',
 }
 
 export enum SourceCategory {
