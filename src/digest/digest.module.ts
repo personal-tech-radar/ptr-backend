@@ -9,6 +9,7 @@ import { SourcesModule } from '../sources/sources.module';
 import { ArticleAnalysis } from '../ai-analysis/entities/article-analysis.entity';
 import { ArticleRelevance } from '../ai-analysis/entities/article-relevance.entity';
 import { Article } from '../articles/entities/article.entity';
+import { SourceCandidate } from '../sources/entities/source-candidate.entity';
 import { Source } from '../sources/entities/source.entity';
 import { DigestController } from './controllers/digest.controller';
 import { DigestItem } from './entities/digest-item.entity';
@@ -29,6 +30,7 @@ import { EmailTemplateService } from './services/email-template.service';
       ArticleRelevance,
       Article,
       Source,
+      SourceCandidate,
     ]),
     MailModule,
     QueueModule,

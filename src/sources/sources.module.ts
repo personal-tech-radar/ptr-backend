@@ -15,6 +15,7 @@ import { SourceCandidatesQueryService } from './services/source-candidates-query
 import { SourceCandidatesService } from './services/source-candidates.service';
 import { SourceDiscoveryService } from './services/source-discovery.service';
 import { SourceStructureAiService } from './services/source-structure-ai.service';
+import { SourceSyncService } from './services/source-sync.service';
 import { SourcesService } from './services/sources.service';
 import { UserSourcePreferenceService } from './services/user-source-preference.service';
 
@@ -43,6 +44,7 @@ import { UserSourcePreferenceService } from './services/user-source-preference.s
     SourceStructureAiService,
     SourceCandidatesService,
     SourceCandidatesQueryService,
+    SourceSyncService,
   ],
   exports: [
     SourcesService,
@@ -50,6 +52,7 @@ import { UserSourcePreferenceService } from './services/user-source-preference.s
     SourceDiscoveryService,
     ContentExtractionService,
     PlaywrightFetchService,
+    SourceSyncService,
   ],
 })
 export class SourcesModule {}

@@ -25,7 +25,7 @@
     "migration:revert:prod": "typeorm migration:revert -d dist/common/database/data-source-prod.js",
     "migration:show": "typeorm-ts-node-commonjs migration:show -d src/common/database/data-source.ts",
     "migration:show:prod": "typeorm migration:show -d dist/common/database/data-source-prod.js",
-    "seed:sources": "ts-node -r tsconfig-paths/register src/seeds/seed.ts"
+    "seed:sources:sync": "ts-node -r tsconfig-paths/register src/seeds/sync-sources.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.955.0",

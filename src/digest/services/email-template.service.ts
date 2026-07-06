@@ -110,6 +110,7 @@ export class EmailTemplateService {
         `── Pipeline · ${label} ──`,
         `${stats.articlesIngested} ingested · ${stats.articlesPassedPreanalysis} passed pre-analysis · ${stats.articlesAnalyzed} fully analyzed`,
         `DB: ${stats.totalArticlesInDb} total articles · ${stats.totalSourcesActive} active sources`,
+        `Sources: ${stats.feedSourcesActive} feed active · ${stats.webSourcesActive} web active · ${stats.sourceCandidatesPending} candidates pending`,
         '',
       );
     }
@@ -157,6 +158,11 @@ export class EmailTemplateService {
     <p style="${STYLES.statsRow}">
       DB: <span style="${STYLES.statsNum}">${stats.totalArticlesInDb}</span> total articles &nbsp;·&nbsp;
       <span style="${STYLES.statsNum}">${stats.totalSourcesActive}</span> active sources
+    </p>
+    <p style="${STYLES.statsRow}">
+      Sources: <span style="${STYLES.statsNum}">${stats.feedSourcesActive}</span> feed active &nbsp;·&nbsp;
+      <span style="${STYLES.statsNum}">${stats.webSourcesActive}</span> web active &nbsp;·&nbsp;
+      <span style="${STYLES.statsNum}">${stats.sourceCandidatesPending}</span> candidates pending
     </p>
   </div>`;
   }

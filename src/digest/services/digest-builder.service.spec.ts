@@ -3,7 +3,11 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { ArticleAnalysis } from '../../ai-analysis/entities/article-analysis.entity';
 import { ArticleRelevance } from '../../ai-analysis/entities/article-relevance.entity';
 import { Article, ArticleStatus } from '../../articles/entities/article.entity';
-import { Source, SourceCategory } from '../../sources/entities/source.entity';
+import {
+  SourceCandidate,
+  SourceCandidateStatus,
+} from '../../sources/entities/source-candidate.entity';
+import { Source, SourceCategory, SourceType } from '../../sources/entities/source.entity';
 import { UserSourcePreferenceService } from '../../sources/services/user-source-preference.service';
 import { DigestItem } from '../entities/digest-item.entity';
 import { Digest, DigestStatus, DigestType } from '../entities/digest.entity';
@@ -60,6 +64,10 @@ const mockArticleRepo = {
 };
 
 const mockSourceRepo = {
+  count: jest.fn().mockResolvedValue(0),
+};
+
+const mockSourceCandidateRepo = {
   count: jest.fn().mockResolvedValue(0),
 };
 
@@ -131,6 +139,8 @@ describe('DigestBuilderService', () => {
     jest.clearAllMocks();
     mockDigestItemRepo.getRawMany.mockResolvedValue([]);
     mockAnalysisRepo.getCount.mockResolvedValue(0);
+    mockSourceRepo.count.mockResolvedValue(0);
+    mockSourceCandidateRepo.count.mockResolvedValue(0);
     mockUserSourcePreferenceService.getAdjustmentsForSources.mockResolvedValue(new Map());
 
     const module: TestingModule = await Test.createTestingModule({
@@ -142,6 +152,7 @@ describe('DigestBuilderService', () => {
         { provide: getRepositoryToken(ArticleRelevance), useValue: mockRelevanceRepo },
         { provide: getRepositoryToken(Article), useValue: mockArticleRepo },
         { provide: getRepositoryToken(Source), useValue: mockSourceRepo },
+        { provide: getRepositoryToken(SourceCandidate), useValue: mockSourceCandidateRepo },
         {
           provide: UserSourcePreferenceService,
           useValue: mockUserSourcePreferenceService,
@@ -422,6 +433,60 @@ describe('DigestBuilderService', () => {
         (call: string) => typeof call === 'string' && call.includes('NOT IN'),
       );
       expect(hasExcludeClause).toBe(true);
+    });
+  });
+
+  describe('gatherStats (footer statistics)', () => {
+    it('reports feed vs web active source counts and pending candidates separately from the email template', async () => {
+      mockAnalysisRepo.getMany.mockResolvedValue([makeAnalysis()]);
+      mockAnalysisRepo.getCount.mockResolvedValue(1);
+
+      mockSourceRepo.count.mockImplementation((options: any) => {
+        const type = options?.where?.type;
+        if (type?.value?.includes?.(SourceType.RSS)) return Promise.resolve(20);
+        if (type === SourceType.WEB) return Promise.resolve(3);
+        return Promise.resolve(23);
+      });
+      mockSourceCandidateRepo.count.mockResolvedValue(4);
+
+      await service.buildDailyDigest();
+
+      const statsArg = mockEmailTemplateService.renderHtml.mock.calls[0][3];
+      expect(statsArg.totalSourcesActive).toBe(23);
+      expect(statsArg.feedSourcesActive).toBe(20);
+      expect(statsArg.webSourcesActive).toBe(3);
+      expect(statsArg.sourceCandidatesPending).toBe(4);
+      expect(mockEmailTemplateService.renderText.mock.calls[0][3]).toEqual(statsArg);
+    });
+
+    it('queries feedSourcesActive across rss/atom/github_release only, excluding web', async () => {
+      mockAnalysisRepo.getMany.mockResolvedValue([makeAnalysis()]);
+      mockAnalysisRepo.getCount.mockResolvedValue(1);
+
+      await service.buildDailyDigest();
+
+      const feedCountCall = mockSourceRepo.count.mock.calls.find((c: any[]) =>
+        c[0]?.where?.type?.value?.includes?.(SourceType.RSS),
+      );
+      expect(feedCountCall[0].where.type.value).toEqual(
+        expect.arrayContaining([SourceType.RSS, SourceType.ATOM, SourceType.GITHUB_RELEASE]),
+      );
+      expect(feedCountCall[0].where.type.value).not.toContain(SourceType.WEB);
+      expect(feedCountCall[0].where.enabled).toBe(true);
+    });
+
+    it('queries sourceCandidatesPending across pending/needs_review only, excluding rejected/promoted', async () => {
+      mockAnalysisRepo.getMany.mockResolvedValue([makeAnalysis()]);
+      mockAnalysisRepo.getCount.mockResolvedValue(1);
+
+      await service.buildDailyDigest();
+
+      const candidateCountArgs = mockSourceCandidateRepo.count.mock.calls[0][0];
+      expect(candidateCountArgs.where.status.value).toEqual(
+        expect.arrayContaining([SourceCandidateStatus.PENDING, SourceCandidateStatus.NEEDS_REVIEW]),
+      );
+      expect(candidateCountArgs.where.status.value).not.toContain(SourceCandidateStatus.REJECTED);
+      expect(candidateCountArgs.where.status.value).not.toContain(SourceCandidateStatus.PROMOTED);
     });
   });
 

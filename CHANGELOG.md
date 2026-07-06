@@ -5,6 +5,22 @@ Each entry is tagged with the branch it was made on.
 
 ---
 
+## [dev/mvp-3] — 2026-07-06 — Phase 5: Seed Manifest v2 + Sync Command + Footer Statistics
+
+### Added
+- `config/sources.manifest.json` — versioned (v2) seed manifest replacing the old bare-array seed file; all 24 existing sources migrated into the new shape (`seedKey`, `seedUrl`, `discovery.mode`, etc.)
+- `src/seeds/sync-sources.ts` / `npm run seed:sources:sync` (`--force` flag), backed by a new `SourceSyncService`: matches existing sources by normalized URL, always syncs declarative fields (name/category/discovery config), and only syncs operational fields (enabled/trustScore) with `--force`; runs discovery per entry's mode (auto/rss/web) through the existing `SourceDiscoveryService` chain; creates/updates a `SourceCandidate` (`needs_review`) instead of failing the run when discovery doesn't resolve cleanly, and continues past a single entry's failure; reads a legacy bare-array manifest as a fallback during the transition; validates each manifest entry's shape before use
+- Digest email footer statistics — `feedSourcesActive`, `webSourcesActive`, `sourceCandidatesPending` (excluding rejected/promoted candidates) — alongside the existing pipeline-ingested/passed/analyzed stats block, in both HTML and plain-text email variants
+
+### Updated
+- README documents the sync command as the required post-deploy step, replacing implicit seeding, and flags that a fresh database now has zero sources until the sync command is run
+
+### Removed
+- `DigestBootstrapService.seedSourcesIfEmpty()` and its call sites in all three digest-build methods — sources are no longer implicitly created when the sources table is empty; the service's fetch-all + analyze-pending responsibilities for `/digests/trigger` are unchanged
+- `config/sources.seed.json` and `src/seeds/seed.ts`/`npm run seed:sources` — fully replaced by the v2 manifest and sync command, not kept as a deprecated alias
+
+---
+
 ## [dev/mvp-3] — 2026-07-06 — Phase 4: Source Candidates + Promotion
 
 ### Added

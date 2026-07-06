@@ -1,12 +1,16 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { MoreThanOrEqual, Repository } from 'typeorm';
+import { In, MoreThanOrEqual, Repository } from 'typeorm';
 import { LoggingService } from '../../common/logging/logging.service';
 import { ArticleAnalysis } from '../../ai-analysis/entities/article-analysis.entity';
 import { ArticleRelevance } from '../../ai-analysis/entities/article-relevance.entity';
 import { DEFAULT_USER_ID } from '../../ai-analysis/services/ai-analysis.service';
 import { Article, ArticleStatus } from '../../articles/entities/article.entity';
-import { Source } from '../../sources/entities/source.entity';
+import {
+  SourceCandidate,
+  SourceCandidateStatus,
+} from '../../sources/entities/source-candidate.entity';
+import { Source, SourceType } from '../../sources/entities/source.entity';
 import { UserSourcePreferenceService } from '../../sources/services/user-source-preference.service';
 import { Digest, DigestStatus, DigestType } from '../entities/digest.entity';
 import { DigestItem } from '../entities/digest-item.entity';
@@ -72,6 +76,8 @@ export class DigestBuilderService {
     private readonly articleRepo: Repository<Article>,
     @InjectRepository(Source)
     private readonly sourceRepo: Repository<Source>,
+    @InjectRepository(SourceCandidate)
+    private readonly sourceCandidateRepo: Repository<SourceCandidate>,
     private readonly userSourcePreferenceService: UserSourcePreferenceService,
     private readonly aiDigestService: AiDigestService,
     private readonly emailTemplateService: EmailTemplateService,
@@ -350,6 +356,9 @@ export class DigestBuilderService {
       articlesAnalyzed,
       totalArticlesInDb,
       totalSourcesActive,
+      feedSourcesActive,
+      webSourcesActive,
+      sourceCandidatesPending,
     ] = await Promise.all([
       this.articleRepo.count({ where: { createdAt: MoreThanOrEqual(windowStart) } }),
       this.relevanceRepo.count({
@@ -358,6 +367,16 @@ export class DigestBuilderService {
       this.analysisRepo.count({ where: { createdAt: MoreThanOrEqual(windowStart) } }),
       this.articleRepo.count(),
       this.sourceRepo.count({ where: { enabled: true } }),
+      this.sourceRepo.count({
+        where: {
+          type: In([SourceType.RSS, SourceType.ATOM, SourceType.GITHUB_RELEASE]),
+          enabled: true,
+        },
+      }),
+      this.sourceRepo.count({ where: { type: SourceType.WEB, enabled: true } }),
+      this.sourceCandidateRepo.count({
+        where: { status: In([SourceCandidateStatus.PENDING, SourceCandidateStatus.NEEDS_REVIEW]) },
+      }),
     ]);
 
     return {
@@ -367,6 +386,9 @@ export class DigestBuilderService {
       articlesAnalyzed,
       totalArticlesInDb,
       totalSourcesActive,
+      feedSourcesActive,
+      webSourcesActive,
+      sourceCandidatesPending,
     };
   }
 

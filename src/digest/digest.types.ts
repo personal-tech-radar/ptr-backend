@@ -41,6 +41,10 @@ export interface DigestStats {
   articlesAnalyzed: number;
   totalArticlesInDb: number;
   totalSourcesActive: number;
+  // MVP3 phase 5 footer block — sits alongside the pipeline stats above, not replacing them.
+  feedSourcesActive: number;
+  webSourcesActive: number;
+  sourceCandidatesPending: number;
 }
 
 export interface DigestItemScoreBreakdown {

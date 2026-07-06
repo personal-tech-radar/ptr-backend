@@ -1,0 +1,341 @@
+{
+  "version": 2,
+  "sources": [
+    {
+      "seedKey": "infoq-architecture",
+      "name": "InfoQ Architecture",
+      "seedUrl": "https://feed.infoq.com/architecture",
+      "sourceType": "rss",
+      "category": "backend_architecture_infra",
+      "trustScore": 82,
+      "enabled": true,
+      "discovery": {
+        "mode": "rss",
+        "entryUrls": ["https://feed.infoq.com/architecture"],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "martin-fowler",
+      "name": "Martin Fowler",
+      "seedUrl": "https://martinfowler.com/feed.atom",
+      "sourceType": "atom",
+      "category": "backend_architecture_infra",
+      "trustScore": 95,
+      "enabled": true,
+      "discovery": {
+        "mode": "rss",
+        "entryUrls": ["https://martinfowler.com/feed.atom"],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "cloudflare-blog",
+      "name": "Cloudflare Blog",
+      "seedUrl": "https://blog.cloudflare.com/rss/",
+      "sourceType": "rss",
+      "category": "backend_architecture_infra",
+      "trustScore": 92,
+      "enabled": true,
+      "discovery": {
+        "mode": "rss",
+        "entryUrls": ["https://blog.cloudflare.com/rss/"],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "github-engineering",
+      "name": "GitHub Engineering",
+      "seedUrl": "https://github.blog/category/engineering/feed/",
+      "sourceType": "rss",
+      "category": "backend_architecture_infra",
+      "trustScore": 90,
+      "enabled": true,
+      "discovery": {
+        "mode": "rss",
+        "entryUrls": ["https://github.blog/category/engineering/feed/"],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "cncf-blog",
+      "name": "CNCF Blog",
+      "seedUrl": "https://www.cncf.io/feed/",
+      "sourceType": "rss",
+      "category": "backend_architecture_infra",
+      "trustScore": 80,
+      "enabled": true,
+      "discovery": {
+        "mode": "rss",
+        "entryUrls": ["https://www.cncf.io/feed/"],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "netflix-techblog",
+      "name": "Netflix TechBlog",
+      "seedUrl": "https://netflixtechblog.com/feed",
+      "sourceType": "rss",
+      "category": "engineering_deep_dives",
+      "trustScore": 93,
+      "enabled": true,
+      "discovery": {
+        "mode": "rss",
+        "entryUrls": ["https://netflixtechblog.com/feed"],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "meta-engineering",
+      "name": "Meta Engineering",
+      "seedUrl": "https://engineering.fb.com/feed/",
+      "sourceType": "rss",
+      "category": "engineering_deep_dives",
+      "trustScore": 90,
+      "enabled": true,
+      "discovery": {
+        "mode": "rss",
+        "entryUrls": ["https://engineering.fb.com/feed/"],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "bytebytego",
+      "name": "ByteByteGo",
+      "seedUrl": "https://blog.bytebytego.com/feed",
+      "sourceType": "rss",
+      "category": "engineering_deep_dives",
+      "trustScore": 85,
+      "enabled": true,
+      "discovery": {
+        "mode": "rss",
+        "entryUrls": ["https://blog.bytebytego.com/feed"],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "discord-blog",
+      "name": "Discord Blog",
+      "seedUrl": "https://discord.com/blog/rss.xml",
+      "sourceType": "rss",
+      "category": "engineering_deep_dives",
+      "trustScore": 82,
+      "enabled": true,
+      "discovery": {
+        "mode": "rss",
+        "entryUrls": ["https://discord.com/blog/rss.xml"],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "dropbox-engineering",
+      "name": "Dropbox Engineering",
+      "seedUrl": "https://dropbox.tech/feed",
+      "sourceType": "rss",
+      "category": "engineering_deep_dives",
+      "trustScore": 80,
+      "enabled": true,
+      "discovery": {
+        "mode": "rss",
+        "entryUrls": ["https://dropbox.tech/feed"],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "nodejs-releases",
+      "name": "Node.js Releases",
+      "seedUrl": "https://nodejs.org/en/feed/releases.xml",
+      "sourceType": "rss",
+      "category": "node_typescript_nestjs",
+      "trustScore": 88,
+      "enabled": true,
+      "discovery": {
+        "mode": "rss",
+        "entryUrls": ["https://nodejs.org/en/feed/releases.xml"],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "typescript-blog",
+      "name": "TypeScript Blog",
+      "seedUrl": "https://devblogs.microsoft.com/typescript/feed/",
+      "sourceType": "rss",
+      "category": "node_typescript_nestjs",
+      "trustScore": 90,
+      "enabled": true,
+      "discovery": {
+        "mode": "rss",
+        "entryUrls": ["https://devblogs.microsoft.com/typescript/feed/"],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "nestjs-releases",
+      "name": "NestJS Releases",
+      "seedUrl": "https://github.com/nestjs/nest/releases.atom",
+      "sourceType": "github_release",
+      "category": "node_typescript_nestjs",
+      "trustScore": 75,
+      "enabled": true,
+      "discovery": {
+        "mode": "rss",
+        "entryUrls": ["https://github.com/nestjs/nest/releases.atom"],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "typeorm-releases",
+      "name": "TypeORM Releases",
+      "seedUrl": "https://github.com/typeorm/typeorm/releases.atom",
+      "sourceType": "github_release",
+      "category": "node_typescript_nestjs",
+      "trustScore": 72,
+      "enabled": true,
+      "discovery": {
+        "mode": "rss",
+        "entryUrls": ["https://github.com/typeorm/typeorm/releases.atom"],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "prisma-releases",
+      "name": "Prisma Releases",
+      "seedUrl": "https://github.com/prisma/prisma/releases.atom",
+      "sourceType": "github_release",
+      "category": "node_typescript_nestjs",
+      "trustScore": 72,
+      "enabled": true,
+      "discovery": {
+        "mode": "rss",
+        "entryUrls": ["https://github.com/prisma/prisma/releases.atom"],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "simon-willison",
+      "name": "Simon Willison",
+      "seedUrl": "https://simonwillison.net/atom/everything/",
+      "sourceType": "atom",
+      "category": "ai_engineering",
+      "trustScore": 60,
+      "enabled": true,
+      "discovery": {
+        "mode": "rss",
+        "entryUrls": ["https://simonwillison.net/atom/everything/"],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "hugging-face-blog",
+      "name": "Hugging Face Blog",
+      "seedUrl": "https://huggingface.co/blog/feed.xml",
+      "sourceType": "rss",
+      "category": "ai_engineering",
+      "trustScore": 82,
+      "enabled": true,
+      "discovery": {
+        "mode": "rss",
+        "entryUrls": ["https://huggingface.co/blog/feed.xml"],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "openai-blog",
+      "name": "OpenAI Blog",
+      "seedUrl": "https://openai.com/blog/rss.xml",
+      "sourceType": "rss",
+      "category": "ai_engineering",
+      "trustScore": 88,
+      "enabled": true,
+      "discovery": {
+        "mode": "rss",
+        "entryUrls": ["https://openai.com/blog/rss.xml"],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "microservices-io",
+      "name": "Microservices.io",
+      "seedUrl": "https://microservices.io/feed.xml",
+      "sourceType": "rss",
+      "category": "backend_architecture_infra",
+      "trustScore": 85,
+      "enabled": true,
+      "discovery": {
+        "mode": "rss",
+        "entryUrls": ["https://microservices.io/feed.xml"],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "slack-engineering",
+      "name": "Slack Engineering",
+      "seedUrl": "https://slack.engineering/feed/",
+      "sourceType": "rss",
+      "category": "engineering_deep_dives",
+      "trustScore": 80,
+      "enabled": true,
+      "discovery": {
+        "mode": "rss",
+        "entryUrls": ["https://slack.engineering/feed/"],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "grab-engineering",
+      "name": "Grab Engineering",
+      "seedUrl": "https://engineering.grab.com/feed.xml",
+      "sourceType": "rss",
+      "category": "engineering_deep_dives",
+      "trustScore": 75,
+      "enabled": true,
+      "discovery": {
+        "mode": "rss",
+        "entryUrls": ["https://engineering.grab.com/feed.xml"],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "confluent-blog",
+      "name": "Confluent Blog",
+      "seedUrl": "https://www.confluent.io/rss.xml",
+      "sourceType": "rss",
+      "category": "backend_architecture_infra",
+      "trustScore": 75,
+      "enabled": true,
+      "discovery": {
+        "mode": "rss",
+        "entryUrls": ["https://www.confluent.io/rss.xml"],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "elastic-blog",
+      "name": "Elastic Blog",
+      "seedUrl": "https://www.elastic.co/blog/feed",
+      "sourceType": "rss",
+      "category": "backend_architecture_infra",
+      "trustScore": 75,
+      "enabled": true,
+      "discovery": {
+        "mode": "rss",
+        "entryUrls": ["https://www.elastic.co/blog/feed"],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "stripe-engineering",
+      "name": "Stripe Engineering",
+      "seedUrl": "https://stripe.com/blog/feed.rss",
+      "sourceType": "rss",
+      "category": "engineering_deep_dives",
+      "trustScore": 85,
+      "enabled": true,
+      "discovery": {
+        "mode": "rss",
+        "entryUrls": ["https://stripe.com/blog/feed.rss"],
+        "allowAiFallback": false
+      }
+    }
+  ]
+}
