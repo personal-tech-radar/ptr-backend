@@ -5,6 +5,24 @@ Each entry is tagged with the branch it was made on.
 
 ---
 
+## [dev/mvp-3] — 2026-07-06 — Phase 4: Source Candidates + Promotion
+
+### Added
+- `SourceCandidate` entity + migration: unique `normalizedUrl`, `domain`, nullable FK to the discovering `Article`, `status` (`pending`/`validated`/`rejected`/`promoted`/`needs_review`), `detectedType` (`rss`/`atom`/`web`), `proposedConfig` jsonb, `validationError`, `lastValidatedAt`
+- `SourceCandidatesService` (idempotent create/upsert by normalized URL, promote, reject) and `SourceCandidatesQueryService` (paginated list with status filter, findOne)
+- Promotion logic: reuses `SourceDiscoveryService` to discover structure, samples the entry URLs it found, runs pre-analysis only (never full analysis) via a new `AiAnalysisService.preAnalyzeArticle`, and promotes to a real enabled `Source` only when at least 2 sampled articles come back relevant; otherwise marks the candidate `needs_review`/`rejected` with a reason instead of silently discarding it. Creates a genuine `rss`/`atom` `Source` when the discovered feed URL was captured, falling back to a `web`-type `Source` (with `WebSourceConfig`) otherwise
+- Admin endpoints `GET /source-candidates` (paginated, filterable by status), `GET /source-candidates/:id`, `POST /source-candidates/:id/promote`, `POST /source-candidates/:id/reject`, all `ApiKeyGuard`-protected
+- `src/app.module.spec.ts` — minimal DI-graph bootstrap test catching module-wiring regressions, added because this phase introduced the codebase's first `forwardRef()` usage to break a new `SourcesModule` <-> `ArticlesModule`/`AiAnalysisModule` cycle
+
+### Updated
+- README documents source candidates, the promotion flow, and the new endpoints
+
+### Fixed
+- A promoted web-type source's `WebSourceConfig.entryUrls` was initially set to discovery's output (individual article permalinks) instead of the seed/listing URL, which would have permanently broken future re-discovery cycles for Cheerio/Playwright-promoted sources; corrected to seed with the candidate's own URL, matching the existing source-creation pattern
+- Controller returned raw entities where response DTOs were declared; added a small mapper to close the gap
+
+---
+
 ## [dev/mvp-3] — 2026-07-05 — Phase 3: Playwright + OpenAI Structural Fallback
 
 ### Added

@@ -19,6 +19,11 @@ export interface DiscoveryResult {
   entryDates?: Record<string, string>;
   articleLinkSelector?: string | null;
   sitemapUrl?: string | null;
+  // The actual feed URL that succeeded — only populated by discoverViaFeed on success. Lets a
+  // caller that wants a genuine rss/atom Source (rather than routing through WebSourceConfig)
+  // know exactly which URL to store as `source.url`, since it isn't necessarily `baseUrl` itself
+  // (it may be a declared <link rel="alternate"> or one of the common feed path guesses).
+  feedUrl?: string | null;
   confidence: 'high' | 'medium' | 'low';
   reason?: string;
   // Set only on a failed result when the deterministic chain (sitemap/RSS/Cheerio) is exhausted
@@ -390,6 +395,7 @@ export class SourceDiscoveryService {
             .map((item) => item.link)
             .filter((link): link is string => !!link)
             .slice(0, SITEMAP_SAMPLE_SIZE),
+          feedUrl: candidate,
           confidence: 'high',
         };
       }
