@@ -11,7 +11,9 @@
       "enabled": true,
       "discovery": {
         "mode": "rss",
-        "entryUrls": ["https://feed.infoq.com/architecture"],
+        "entryUrls": [
+          "https://feed.infoq.com/architecture"
+        ],
         "allowAiFallback": false
       }
     },
@@ -25,7 +27,9 @@
       "enabled": true,
       "discovery": {
         "mode": "rss",
-        "entryUrls": ["https://martinfowler.com/feed.atom"],
+        "entryUrls": [
+          "https://martinfowler.com/feed.atom"
+        ],
         "allowAiFallback": false
       }
     },
@@ -39,7 +43,9 @@
       "enabled": true,
       "discovery": {
         "mode": "rss",
-        "entryUrls": ["https://blog.cloudflare.com/rss/"],
+        "entryUrls": [
+          "https://blog.cloudflare.com/rss/"
+        ],
         "allowAiFallback": false
       }
     },
@@ -53,7 +59,9 @@
       "enabled": true,
       "discovery": {
         "mode": "rss",
-        "entryUrls": ["https://github.blog/category/engineering/feed/"],
+        "entryUrls": [
+          "https://github.blog/category/engineering/feed/"
+        ],
         "allowAiFallback": false
       }
     },
@@ -67,7 +75,9 @@
       "enabled": true,
       "discovery": {
         "mode": "rss",
-        "entryUrls": ["https://www.cncf.io/feed/"],
+        "entryUrls": [
+          "https://www.cncf.io/feed/"
+        ],
         "allowAiFallback": false
       }
     },
@@ -81,7 +91,9 @@
       "enabled": true,
       "discovery": {
         "mode": "rss",
-        "entryUrls": ["https://netflixtechblog.com/feed"],
+        "entryUrls": [
+          "https://netflixtechblog.com/feed"
+        ],
         "allowAiFallback": false
       }
     },
@@ -95,7 +107,9 @@
       "enabled": true,
       "discovery": {
         "mode": "rss",
-        "entryUrls": ["https://engineering.fb.com/feed/"],
+        "entryUrls": [
+          "https://engineering.fb.com/feed/"
+        ],
         "allowAiFallback": false
       }
     },
@@ -109,7 +123,9 @@
       "enabled": true,
       "discovery": {
         "mode": "rss",
-        "entryUrls": ["https://blog.bytebytego.com/feed"],
+        "entryUrls": [
+          "https://blog.bytebytego.com/feed"
+        ],
         "allowAiFallback": false
       }
     },
@@ -123,7 +139,9 @@
       "enabled": true,
       "discovery": {
         "mode": "rss",
-        "entryUrls": ["https://discord.com/blog/rss.xml"],
+        "entryUrls": [
+          "https://discord.com/blog/rss.xml"
+        ],
         "allowAiFallback": false
       }
     },
@@ -137,7 +155,9 @@
       "enabled": true,
       "discovery": {
         "mode": "rss",
-        "entryUrls": ["https://dropbox.tech/feed"],
+        "entryUrls": [
+          "https://dropbox.tech/feed"
+        ],
         "allowAiFallback": false
       }
     },
@@ -151,7 +171,9 @@
       "enabled": true,
       "discovery": {
         "mode": "rss",
-        "entryUrls": ["https://nodejs.org/en/feed/releases.xml"],
+        "entryUrls": [
+          "https://nodejs.org/en/feed/releases.xml"
+        ],
         "allowAiFallback": false
       }
     },
@@ -165,7 +187,9 @@
       "enabled": true,
       "discovery": {
         "mode": "rss",
-        "entryUrls": ["https://devblogs.microsoft.com/typescript/feed/"],
+        "entryUrls": [
+          "https://devblogs.microsoft.com/typescript/feed/"
+        ],
         "allowAiFallback": false
       }
     },
@@ -179,7 +203,9 @@
       "enabled": true,
       "discovery": {
         "mode": "rss",
-        "entryUrls": ["https://github.com/nestjs/nest/releases.atom"],
+        "entryUrls": [
+          "https://github.com/nestjs/nest/releases.atom"
+        ],
         "allowAiFallback": false
       }
     },
@@ -193,7 +219,9 @@
       "enabled": true,
       "discovery": {
         "mode": "rss",
-        "entryUrls": ["https://github.com/typeorm/typeorm/releases.atom"],
+        "entryUrls": [
+          "https://github.com/typeorm/typeorm/releases.atom"
+        ],
         "allowAiFallback": false
       }
     },
@@ -207,7 +235,9 @@
       "enabled": true,
       "discovery": {
         "mode": "rss",
-        "entryUrls": ["https://github.com/prisma/prisma/releases.atom"],
+        "entryUrls": [
+          "https://github.com/prisma/prisma/releases.atom"
+        ],
         "allowAiFallback": false
       }
     },
@@ -221,7 +251,9 @@
       "enabled": true,
       "discovery": {
         "mode": "rss",
-        "entryUrls": ["https://simonwillison.net/atom/everything/"],
+        "entryUrls": [
+          "https://simonwillison.net/atom/everything/"
+        ],
         "allowAiFallback": false
       }
     },
@@ -235,7 +267,9 @@
       "enabled": true,
       "discovery": {
         "mode": "rss",
-        "entryUrls": ["https://huggingface.co/blog/feed.xml"],
+        "entryUrls": [
+          "https://huggingface.co/blog/feed.xml"
+        ],
         "allowAiFallback": false
       }
     },
@@ -249,7 +283,9 @@
       "enabled": true,
       "discovery": {
         "mode": "rss",
-        "entryUrls": ["https://openai.com/blog/rss.xml"],
+        "entryUrls": [
+          "https://openai.com/blog/rss.xml"
+        ],
         "allowAiFallback": false
       }
     },
@@ -263,7 +299,9 @@
       "enabled": true,
       "discovery": {
         "mode": "rss",
-        "entryUrls": ["https://microservices.io/feed.xml"],
+        "entryUrls": [
+          "https://microservices.io/feed.xml"
+        ],
         "allowAiFallback": false
       }
     },
@@ -277,7 +315,9 @@
       "enabled": true,
       "discovery": {
         "mode": "rss",
-        "entryUrls": ["https://slack.engineering/feed/"],
+        "entryUrls": [
+          "https://slack.engineering/feed/"
+        ],
         "allowAiFallback": false
       }
     },
@@ -291,7 +331,9 @@
       "enabled": true,
       "discovery": {
         "mode": "rss",
-        "entryUrls": ["https://engineering.grab.com/feed.xml"],
+        "entryUrls": [
+          "https://engineering.grab.com/feed.xml"
+        ],
         "allowAiFallback": false
       }
     },
@@ -305,7 +347,9 @@
       "enabled": true,
       "discovery": {
         "mode": "rss",
-        "entryUrls": ["https://www.confluent.io/rss.xml"],
+        "entryUrls": [
+          "https://www.confluent.io/rss.xml"
+        ],
         "allowAiFallback": false
       }
     },
@@ -319,7 +363,9 @@
       "enabled": true,
       "discovery": {
         "mode": "rss",
-        "entryUrls": ["https://www.elastic.co/blog/feed"],
+        "entryUrls": [
+          "https://www.elastic.co/blog/feed"
+        ],
         "allowAiFallback": false
       }
     },
@@ -333,7 +379,339 @@
       "enabled": true,
       "discovery": {
         "mode": "rss",
-        "entryUrls": ["https://stripe.com/blog/feed.rss"],
+        "entryUrls": [
+          "https://stripe.com/blog/feed.rss"
+        ],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "thoughtworks-radar",
+      "name": "Thoughtworks Radar",
+      "seedUrl": "https://www.thoughtworks.com/radar",
+      "category": "backend_architecture_infra",
+      "trustScore": 85,
+      "enabled": true,
+      "discovery": {
+        "mode": "web",
+        "entryUrls": [
+          "https://www.thoughtworks.com/radar"
+        ],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "pragmatic-engineer",
+      "name": "The Pragmatic Engineer",
+      "seedUrl": "https://newsletter.pragmaticengineer.com/",
+      "category": "engineering_deep_dives",
+      "trustScore": 88,
+      "enabled": true,
+      "discovery": {
+        "mode": "web",
+        "entryUrls": [
+          "https://newsletter.pragmaticengineer.com/"
+        ],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "high-scalability",
+      "name": "High Scalability",
+      "seedUrl": "https://highscalability.com/",
+      "category": "backend_architecture_infra",
+      "trustScore": 78,
+      "enabled": true,
+      "discovery": {
+        "mode": "web",
+        "entryUrls": [
+          "https://highscalability.com/"
+        ],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "aws-architecture-blog",
+      "name": "AWS Architecture Blog",
+      "seedUrl": "https://aws.amazon.com/blogs/architecture/",
+      "category": "backend_architecture_infra",
+      "trustScore": 85,
+      "enabled": true,
+      "discovery": {
+        "mode": "web",
+        "entryUrls": [
+          "https://aws.amazon.com/blogs/architecture/"
+        ],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "google-sre",
+      "name": "Google SRE",
+      "seedUrl": "https://sre.google/",
+      "category": "backend_architecture_infra",
+      "trustScore": 88,
+      "enabled": true,
+      "discovery": {
+        "mode": "web",
+        "entryUrls": [
+          "https://sre.google/"
+        ],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "uber-engineering",
+      "name": "Uber Engineering",
+      "seedUrl": "https://www.uber.com/blog/engineering/",
+      "category": "engineering_deep_dives",
+      "trustScore": 85,
+      "enabled": true,
+      "discovery": {
+        "mode": "web",
+        "entryUrls": [
+          "https://www.uber.com/blog/engineering/"
+        ],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "shopify-engineering",
+      "name": "Shopify Engineering",
+      "seedUrl": "https://shopify.engineering/",
+      "category": "engineering_deep_dives",
+      "trustScore": 83,
+      "enabled": true,
+      "discovery": {
+        "mode": "web",
+        "entryUrls": [
+          "https://shopify.engineering/"
+        ],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "anthropic-engineering",
+      "name": "Anthropic Engineering",
+      "seedUrl": "https://www.anthropic.com/engineering",
+      "category": "ai_engineering",
+      "trustScore": 90,
+      "enabled": true,
+      "discovery": {
+        "mode": "web",
+        "entryUrls": [
+          "https://www.anthropic.com/engineering"
+        ],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "openai-research-news",
+      "name": "OpenAI Research News",
+      "seedUrl": "https://openai.com/news/research/",
+      "category": "ai_engineering",
+      "trustScore": 88,
+      "enabled": true,
+      "discovery": {
+        "mode": "web",
+        "entryUrls": [
+          "https://openai.com/news/research/"
+        ],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "huyen-chip",
+      "name": "Huyen Chip",
+      "seedUrl": "https://huyenchip.com/blog/",
+      "category": "ai_engineering",
+      "trustScore": 85,
+      "enabled": true,
+      "discovery": {
+        "mode": "web",
+        "entryUrls": [
+          "https://huyenchip.com/blog/"
+        ],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "eugene-yan",
+      "name": "Eugene Yan",
+      "seedUrl": "https://eugeneyan.com/writing/",
+      "category": "ai_engineering",
+      "trustScore": 85,
+      "enabled": true,
+      "discovery": {
+        "mode": "web",
+        "entryUrls": [
+          "https://eugeneyan.com/writing/"
+        ],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "langchain-blog",
+      "name": "LangChain Blog",
+      "seedUrl": "https://blog.langchain.com/",
+      "category": "ai_engineering",
+      "trustScore": 80,
+      "enabled": true,
+      "discovery": {
+        "mode": "web",
+        "entryUrls": [
+          "https://blog.langchain.com/"
+        ],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "llamaindex-blog",
+      "name": "LlamaIndex Blog",
+      "seedUrl": "https://www.llamaindex.ai/blog",
+      "category": "ai_engineering",
+      "trustScore": 78,
+      "enabled": true,
+      "discovery": {
+        "mode": "web",
+        "entryUrls": [
+          "https://www.llamaindex.ai/blog"
+        ],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "databricks-blog",
+      "name": "Databricks Blog",
+      "seedUrl": "https://www.databricks.com/blog",
+      "category": "ai_engineering",
+      "trustScore": 82,
+      "enabled": true,
+      "discovery": {
+        "mode": "web",
+        "entryUrls": [
+          "https://www.databricks.com/blog"
+        ],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "spotify-engineering",
+      "name": "Spotify Engineering",
+      "seedUrl": "https://engineering.atspotify.com/",
+      "category": "engineering_deep_dives",
+      "trustScore": 83,
+      "enabled": true,
+      "discovery": {
+        "mode": "web",
+        "entryUrls": [
+          "https://engineering.atspotify.com/"
+        ],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "figma-engineering",
+      "name": "Figma Engineering",
+      "seedUrl": "https://www.figma.com/blog/engineering/",
+      "category": "engineering_deep_dives",
+      "trustScore": 80,
+      "enabled": true,
+      "discovery": {
+        "mode": "web",
+        "entryUrls": [
+          "https://www.figma.com/blog/engineering/"
+        ],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "reddit-engineering",
+      "name": "Reddit Engineering",
+      "seedUrl": "https://www.redditinc.com/blog/topic/engineering",
+      "category": "engineering_deep_dives",
+      "trustScore": 75,
+      "enabled": true,
+      "discovery": {
+        "mode": "web",
+        "entryUrls": [
+          "https://www.redditinc.com/blog/topic/engineering"
+        ],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "salesforce-engineering",
+      "name": "Salesforce Engineering",
+      "seedUrl": "https://engineering.salesforce.com/",
+      "category": "engineering_deep_dives",
+      "trustScore": 75,
+      "enabled": true,
+      "discovery": {
+        "mode": "web",
+        "entryUrls": [
+          "https://engineering.salesforce.com/"
+        ],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "mongodb-engineering",
+      "name": "MongoDB Engineering",
+      "seedUrl": "https://engineering.mongodb.com/",
+      "category": "backend_architecture_infra",
+      "trustScore": 80,
+      "enabled": true,
+      "discovery": {
+        "mode": "web",
+        "entryUrls": [
+          "https://engineering.mongodb.com/"
+        ],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "zalando-engineering",
+      "name": "Zalando Engineering",
+      "seedUrl": "https://engineering.zalando.com/",
+      "category": "engineering_deep_dives",
+      "trustScore": 75,
+      "enabled": true,
+      "discovery": {
+        "mode": "web",
+        "entryUrls": [
+          "https://engineering.zalando.com/"
+        ],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "airbnb-engineering",
+      "name": "Airbnb Engineering",
+      "seedUrl": "https://medium.com/airbnb-engineering",
+      "category": "engineering_deep_dives",
+      "trustScore": 85,
+      "enabled": true,
+      "discovery": {
+        "mode": "web",
+        "entryUrls": [
+          "https://medium.com/airbnb-engineering"
+        ],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "pinterest-engineering",
+      "name": "Pinterest Engineering",
+      "seedUrl": "https://engineering.pinterest.com/",
+      "category": "engineering_deep_dives",
+      "trustScore": 75,
+      "enabled": true,
+      "discovery": {
+        "mode": "web",
+        "entryUrls": [
+          "https://engineering.pinterest.com/"
+        ],
         "allowAiFallback": false
       }
     }
