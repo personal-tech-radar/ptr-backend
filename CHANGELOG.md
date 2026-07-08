@@ -5,6 +5,13 @@ Each entry is tagged with the branch it was made on.
 
 ---
 
+## [fix/seed-sync-prod-script] — 2026-07-09
+
+### Fixed
+- `npm run seed:sources:sync` has never been runnable in production: it requires `ts-node` against the raw `src/seeds/sync-sources.ts`, but the production Docker image only ships compiled `dist/`, never `src/` — confirmed directly from a real production log (`Cannot find module './sync-sources.ts'`) after the first post-MVP3 deploy. Added `seed:sources:sync:prod`, mirroring the existing `migration:run`/`migration:run:prod` split: it runs the already-compiled `dist/seeds/sync-sources.js` directly with plain `node`, no `ts-node` or `src/` needed. Verified against a real Postgres instance (`created`/`updated`/`failed` counts matched the dev-script run exactly). README's post-deploy instructions updated to use the new `:prod` script.
+
+---
+
 ## [fix/ci-mailservice-di-test] — 2026-07-08
 
 ### Fixed

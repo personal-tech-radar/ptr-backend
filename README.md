@@ -385,7 +385,7 @@ Or as a separate one-off container using the same image.
 ### Post-deploy: sync sources
 
 ```bash
-npm run seed:sources:sync
+npm run seed:sources:sync:prod
 ```
 
 **This is now an explicit, required post-deploy step — run it once after `migration:run:prod` on any environment whose `sources` table is empty** (a brand-new deployment, or a restored/reset database). There is no more implicit auto-seed: `DigestBootstrapService` used to seed from the manifest itself the first time a digest was built against an empty `sources` table, but that implicit path was removed in MVP3 phase 5. A fresh/empty database now has **zero** sources until this command is run — this is an intentional operational behavior change, not a regression: `DigestBuilderService.buildDailyDigest` already returns `null` gracefully when there are no candidates, and `DigestProcessor` already logs-and-skips a `null` digest, so nothing crashes; digests are simply empty (and no email is sent) until sources are synced. See "Syncing Sources" above for the full manifest/sync semantics.
