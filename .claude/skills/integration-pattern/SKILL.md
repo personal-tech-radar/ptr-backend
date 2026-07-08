@@ -123,6 +123,18 @@ async fetchItem(id: string): Promise<ExternalItemDto> {
 
 ---
 
+## Escalating Fallback Chains (Multi-Strategy Integrations)
+
+Some integrations have more than one way to get the same result, at different cost/reliability tradeoffs (a cheap declared feed vs. scraping a page; a plain HTTP fetch vs. a headless browser). When that's the case:
+
+- **Order strategies cheap/fast/reliable → expensive/slow/risky.** Try each in turn and stop at the first success. Never start with the expensive option "just in case" — escalate only when everything cheaper has actually failed.
+- **Persist whichever strategy actually worked** as the preferred method for that integration target, so the next call skips straight to it instead of re-walking the whole chain. If the preferred method starts failing, fall back through the full chain again and re-persist on a new success — this is self-healing, not a one-time choice.
+- **Treat an LLM-suggested strategy as unvalidated input, never as a result.** Before it can be persisted or acted on, re-run the suggestion through the same real, deterministic path used to validate every other strategy — same success criteria, no special-casing. Discard silently on failed re-validation; never surface an unvalidated AI suggestion to a caller as if it were confirmed.
+
+See `src/sources/services/source-discovery.service.ts`, `src/feed-fetcher/services/web-source-fetcher.service.ts`, and `src/sources/services/source-structure-ai.service.ts` for a full worked example of this chain: sitemap → RSS/Atom → Cheerio → headless browser → AI-suggested-then-revalidated recipe.
+
+---
+
 ## Environment Variable Convention
 
 New integrations must add their base URL and credentials to `.env.example`:

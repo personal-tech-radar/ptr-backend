@@ -5,6 +5,28 @@ Each entry is tagged with the branch it was made on.
 
 ---
 
+## [dev/mvp-3] — 2026-07-06 — Phase 6: Whole-Branch Integration Pass (final)
+
+Closing entry for the 6-phase MVP3 effort ("Web Sources and Source Growth"); see the five phase entries below for the full substance.
+
+### Fixed
+- Critical cross-phase bug: `SourceCandidatesService.promote()` (Phase 4) left its sample `Article` rows — including the ones that justified promotion — permanently stuck at `NEW` status after promotion, because both fetchers dedup on `urlHash` and silently skip URLs that already have an `Article` row. The newly-enabled source could never actually get those articles into a digest. Fixed by hard-deleting the sample articles on successful promotion so the next real fetch cycle cleanly re-ingests them through the normal pending-analysis path
+- `source-structure-ai.service.ts` (Phase 3): `JSON.parse` on the OpenAI response was implicitly `any`; narrowed to `unknown` through a `Record<string, unknown>` guard, no behavior change
+
+### Verified
+- Whole-branch `npm run build` and `npm run test` pass (19 suites, 187 tests) across all 5 phases combined
+- `npm run lint --fix` reformatted ~40 pre-existing files unrelated to any MVP3 phase (including committed migrations); discarded rather than committed, per this repo's migration policy and since it was unrelated cosmetic drift
+
+### Added (template-level)
+- `seed-data-sync-pattern` skill generalizing Phase 5's versioned-manifest + idempotent-sync-command pattern for any domain needing reference/seed data
+
+### Updated (template-level)
+- `integration-pattern` skill gained an "Escalating Fallback Chains" section generalizing the deterministic-first/self-healing/AI-suggestion-requires-revalidation pattern from Phases 2-3
+- `CLAUDE.md` gained a BullMQ stack entry, a rule to isolate slow background work in its own bounded queue (generalizing Phase 3's Playwright queue), and a "Seed / Reference Data" section
+- `backend-architect` agent's stale manual-uuid/bigint-timestamp entity guidance corrected to match this codebase's actual `@PrimaryGeneratedColumn('uuid')`/`@CreateDateColumn`/`@UpdateDateColumn` convention (in use since Phase 1)
+
+---
+
 ## [dev/mvp-3] — 2026-07-06 — Phase 5: Seed Manifest v2 + Sync Command + Footer Statistics
 
 ### Added

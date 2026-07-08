@@ -52,6 +52,7 @@ describe('SourceCandidatesService', () => {
     create: jest.fn((data: unknown) =>
       Promise.resolve({ id: `article-${Math.random()}`, ...(data as object) }),
     ),
+    deleteByIds: jest.fn().mockResolvedValue(undefined),
   };
 
   const mockAiAnalysisService = {
@@ -217,6 +218,43 @@ describe('SourceCandidatesService', () => {
       expect(result.status).toBe(SourceCandidateStatus.PROMOTED);
       expect(result.detectedType).toBe(SourceCandidateDetectedType.WEB);
       expect(result.validationError).toBeNull();
+    });
+
+    it('hard-deletes the sample articles used as promotion evidence once promoted, so they are never stranded at NEW', async () => {
+      mockSuccessfulDiscovery();
+      mockExtractionAndHttpForEachUrl();
+      mockAiAnalysisService.preAnalyzeArticle.mockResolvedValue({ preAnalysisIsRelevant: true });
+
+      const createdArticleIds: string[] = [];
+      mockArticlesService.create.mockImplementation((data: unknown) => {
+        const id = `article-${createdArticleIds.length + 1}`;
+        createdArticleIds.push(id);
+        return Promise.resolve({ id, ...(data as object) });
+      });
+
+      const result = await service.promote(validId);
+
+      expect(createdArticleIds).toHaveLength(2);
+      // The sample Articles created solely to evaluate promotion are hard-deleted (not the
+      // soft-delete `remove`) once the candidate is actually promoted — never left behind at
+      // ArticleStatus.NEW with no path to full analysis or a digest. Cascade-deleting their
+      // ArticleRelevance rows (FK ON DELETE CASCADE) means gatherStats' window counts can't be
+      // inflated by this scratch work either.
+      expect(mockArticlesService.deleteByIds).toHaveBeenCalledTimes(1);
+      expect(mockArticlesService.deleteByIds).toHaveBeenCalledWith(
+        expect.arrayContaining(createdArticleIds),
+      );
+      expect(result.status).toBe(SourceCandidateStatus.PROMOTED);
+    });
+
+    it('does not delete sample articles when promotion is rejected (needs_review roll-back cascades instead)', async () => {
+      mockSuccessfulDiscovery();
+      mockExtractionAndHttpForEachUrl();
+      mockAiAnalysisService.preAnalyzeArticle.mockResolvedValue({ preAnalysisIsRelevant: false });
+
+      await service.promote(validId);
+
+      expect(mockArticlesService.deleteByIds).not.toHaveBeenCalled();
     });
 
     it('creates a WebSourceConfig alongside the Source when the detected type is web', async () => {

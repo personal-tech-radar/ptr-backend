@@ -488,6 +488,25 @@ describe('DigestBuilderService', () => {
       expect(candidateCountArgs.where.status.value).not.toContain(SourceCandidateStatus.REJECTED);
       expect(candidateCountArgs.where.status.value).not.toContain(SourceCandidateStatus.PROMOTED);
     });
+
+    it('reports articlesIngested/articlesPassedPreanalysis straight from the window-scoped repo counts', async () => {
+      mockAnalysisRepo.getMany.mockResolvedValue([makeAnalysis()]);
+      mockAnalysisRepo.getCount.mockResolvedValue(1);
+      mockArticleRepo.count.mockResolvedValue(7);
+      mockRelevanceRepo.count.mockResolvedValue(4);
+
+      await service.buildDailyDigest();
+
+      const statsArg = mockEmailTemplateService.renderHtml.mock.calls[0][3];
+      expect(statsArg.articlesIngested).toBe(7);
+      expect(statsArg.articlesPassedPreanalysis).toBe(4);
+      // gatherStats has no scratch-row carve-out of its own — it trusts whatever physically
+      // exists in the articles/article_relevances tables for the window. That's only correct
+      // because SourceCandidatesService.promote() hard-deletes its sample Article rows (and
+      // their cascade-linked ArticleRelevance rows) once a candidate is promoted, before any
+      // digest window could ever count them — see source-candidates.service.spec.ts's
+      // 'hard-deletes the sample articles ...' test.
+    });
   });
 
   describe('buildWeeklyDigest', () => {

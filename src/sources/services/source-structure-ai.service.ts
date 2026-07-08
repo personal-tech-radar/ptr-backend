@@ -270,17 +270,21 @@ export class SourceStructureAiService implements OnModuleInit {
     });
 
     const raw = response.choices[0]?.message?.content ?? '{}';
-    const parsed = JSON.parse(raw);
+    // `JSON.parse` is inherently untyped — treat the result as `unknown` and narrow every
+    // field with an explicit runtime guard below, rather than trusting OpenAI's shape.
+    const parsed: unknown = JSON.parse(raw);
+    const record =
+      typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : {};
 
     return {
       method:
-        parsed.method === 'playwright' ? WebDiscoveryMethod.PLAYWRIGHT : WebDiscoveryMethod.CHEERIO,
+        record.method === 'playwright' ? WebDiscoveryMethod.PLAYWRIGHT : WebDiscoveryMethod.CHEERIO,
       articleLinkSelector:
-        typeof parsed.articleLinkSelector === 'string' ? parsed.articleLinkSelector : undefined,
-      entryUrls: Array.isArray(parsed.entryUrls)
-        ? parsed.entryUrls.filter((url: unknown): url is string => typeof url === 'string')
+        typeof record.articleLinkSelector === 'string' ? record.articleLinkSelector : undefined,
+      entryUrls: Array.isArray(record.entryUrls)
+        ? record.entryUrls.filter((url: unknown): url is string => typeof url === 'string')
         : undefined,
-      reasoning: typeof parsed.reasoning === 'string' ? parsed.reasoning : undefined,
+      reasoning: typeof record.reasoning === 'string' ? record.reasoning : undefined,
     };
   }
 }

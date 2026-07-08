@@ -96,4 +96,14 @@ export class ArticlesService {
   async findPendingAnalysis(): Promise<Article[]> {
     return this.articleRepo.find({ where: { status: ArticleStatus.PENDING_ANALYSIS } });
   }
+
+  // Genuine hard delete — bypasses the soft-delete `deletedAt` column entirely, unlike a CRUD
+  // `remove`. Reserved for scratch rows that were never real ingestion (e.g.
+  // SourceCandidatesService's promotion-sampling articles): a soft delete would leave the row's
+  // unique urlHash still occupying the table, blocking that URL from ever being re-ingested
+  // through the normal pipeline.
+  async deleteByIds(ids: string[]): Promise<void> {
+    if (ids.length === 0) return;
+    await this.articleRepo.delete(ids);
+  }
 }
