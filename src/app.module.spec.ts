@@ -29,6 +29,20 @@ import {
 // invoking onModuleDestroy hooks (e.g. RedisService.onModuleDestroy) against clients that were
 // never connected.
 describe('AppModule', () => {
+  // MailService's constructor eagerly instantiates the Resend SDK, which throws if
+  // RESEND_API_KEY is unset. This test resolves the full graph including MailService, so it
+  // needs a placeholder value regardless of whether a real key is configured in the environment
+  // (CI sets none). This is only about proving the DI graph wires up, not a real API call.
+  const originalResendApiKey = process.env.RESEND_API_KEY;
+
+  beforeAll(() => {
+    process.env.RESEND_API_KEY = 're_test_dummy_key';
+  });
+
+  afterAll(() => {
+    process.env.RESEND_API_KEY = originalResendApiKey;
+  });
+
   it('resolves the full DI graph without throwing', async () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(DataSource)

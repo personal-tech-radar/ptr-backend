@@ -5,6 +5,11 @@ Each entry is tagged with the branch it was made on.
 
 ---
 
+## [fix/ci-mailservice-di-test] — 2026-07-08
+
+### Fixed
+- Production deploy CI's "Run Tests" job, which failed because `app.module.spec.ts`'s full DI-graph compile eagerly instantiates `MailService`, whose constructor throws when `RESEND_API_KEY` is unset — true in CI (no env vars set) but masked locally by a real key in `.env`. The test now sets a scoped dummy placeholder for that var around its own DI-graph assertion, mirroring the existing save/restore `process.env` pattern used elsewhere in the test suite, without touching `MailService`'s production behavior or the CI workflow config.
+
 ## [dev/claude-template-sync-2] — 2026-07-08
 
 ### Added
