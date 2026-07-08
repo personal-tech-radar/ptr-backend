@@ -714,6 +714,141 @@
         ],
         "allowAiFallback": false
       }
+    },
+    {
+      "seedKey": "hashicorp-blog",
+      "name": "HashiCorp Blog",
+      "seedUrl": "https://www.hashicorp.com/blog",
+      "category": "backend_architecture_infra",
+      "trustScore": 85,
+      "enabled": true,
+      "discovery": {
+        "mode": "web",
+        "entryUrls": [
+          "https://www.hashicorp.com/blog"
+        ],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "datadog-engineering",
+      "name": "Datadog Engineering",
+      "seedUrl": "https://www.datadoghq.com/blog/engineering/",
+      "category": "backend_architecture_infra",
+      "trustScore": 85,
+      "enabled": true,
+      "discovery": {
+        "mode": "web",
+        "entryUrls": [
+          "https://www.datadoghq.com/blog/engineering/"
+        ],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "planetscale-blog",
+      "name": "PlanetScale Blog",
+      "seedUrl": "https://planetscale.com/blog",
+      "category": "backend_architecture_infra",
+      "trustScore": 80,
+      "enabled": true,
+      "discovery": {
+        "mode": "web",
+        "entryUrls": [
+          "https://planetscale.com/blog"
+        ],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "vercel-blog",
+      "name": "Vercel Blog",
+      "seedUrl": "https://vercel.com/blog",
+      "category": "node_typescript_nestjs",
+      "trustScore": 85,
+      "enabled": true,
+      "discovery": {
+        "mode": "web",
+        "entryUrls": [
+          "https://vercel.com/blog"
+        ],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "deno-blog",
+      "name": "Deno Blog",
+      "seedUrl": "https://deno.com/blog",
+      "category": "node_typescript_nestjs",
+      "trustScore": 82,
+      "enabled": true,
+      "discovery": {
+        "mode": "web",
+        "entryUrls": [
+          "https://deno.com/blog"
+        ],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "sentry-blog",
+      "name": "Sentry Blog",
+      "seedUrl": "https://blog.sentry.io/",
+      "category": "engineering_deep_dives",
+      "trustScore": 82,
+      "enabled": true,
+      "discovery": {
+        "mode": "web",
+        "entryUrls": [
+          "https://blog.sentry.io/"
+        ],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "canva-engineering",
+      "name": "Canva Engineering",
+      "seedUrl": "https://www.canva.dev/blog/engineering/",
+      "category": "engineering_deep_dives",
+      "trustScore": 80,
+      "enabled": true,
+      "discovery": {
+        "mode": "web",
+        "entryUrls": [
+          "https://www.canva.dev/blog/engineering/"
+        ],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "pinecone-blog",
+      "name": "Pinecone Blog",
+      "seedUrl": "https://www.pinecone.io/blog/",
+      "category": "ai_engineering",
+      "trustScore": 78,
+      "enabled": true,
+      "discovery": {
+        "mode": "web",
+        "entryUrls": [
+          "https://www.pinecone.io/blog/"
+        ],
+        "allowAiFallback": false
+      }
+    },
+    {
+      "seedKey": "weights-and-biases-blog",
+      "name": "Weights and Biases Blog",
+      "seedUrl": "https://wandb.ai/site/blog",
+      "category": "ai_engineering",
+      "trustScore": 82,
+      "enabled": true,
+      "discovery": {
+        "mode": "web",
+        "entryUrls": [
+          "https://wandb.ai/site/blog"
+        ],
+        "allowAiFallback": false
+      }
     }
   ]
 }
