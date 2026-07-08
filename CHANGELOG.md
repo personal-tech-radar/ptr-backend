@@ -5,6 +5,15 @@ Each entry is tagged with the branch it was made on.
 
 ---
 
+## [fix/ci-mailservice-di-test] — 2026-07-08
+
+### Fixed
+- Production deploy CI's "Run Tests" job, which failed because `app.module.spec.ts`'s full DI-graph compile eagerly instantiates `MailService`, whose constructor throws when `RESEND_API_KEY` is unset — true in CI (no env vars set) but masked locally by a real key in `.env`. The test now sets a scoped dummy placeholder for that var around its own DI-graph assertion, mirroring the existing save/restore `process.env` pattern used elsewhere in the test suite, without touching `MailService`'s production behavior or the CI workflow config.
+
+### Updated
+- `feature-implementation-workflow.puml`/`.png` moved from the repo root into `diagram/workflow/`, alongside the existing `diagram/context/` C4 diagram; README link updated to match
+- `diagram/context/c4-context.puml`/`.png` (C4 container view) updated to reflect the MVP2 and MVP3 architecture: two-stage `AiAnalysis` (pre-analysis relevance gate + full analysis), `WebSourceFetcher`/`SourceDiscovery` (sitemap/RSS/Cheerio/Playwright/AI-suggestion fallback chain, self-healing recipe), the isolated `web-source-browser-fetch` Playwright queue, per-user feedback-driven digest ranking, and the expanded Postgres schema
+
 ## [dev/claude-template-sync-2] — 2026-07-08
 
 ### Added

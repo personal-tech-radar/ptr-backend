@@ -408,9 +408,9 @@ This repo uses a role-based set of Claude Code agents under `.claude/agents/`. `
 
 Delegation always flows `team-lead → system-analyst → team-lead → specialists → code-reviewer → qa-runner → team-lead → repo-publisher` (or `team-lead → template-maintainer → team-lead → ...` for template sync). A session-start hook prompts `team-lead` to run one `template-maintainer` audit per session. See `CLAUDE.md` for the full orchestration rules.
 
-The full block scheme (source: `feature-implementation-workflow.puml`):
+The full block scheme (source: `diagram/workflow/feature-implementation-workflow.puml`):
 
-![New feature implementation workflow](feature_implementation_workflow.png)
+![New feature implementation workflow](diagram/workflow/feature-implementation-workflow.png)
 
 ## Local Verification (Docker)
 
