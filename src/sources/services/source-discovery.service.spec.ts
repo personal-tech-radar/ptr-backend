@@ -169,6 +169,107 @@ describe('SourceDiscoveryService', () => {
       expect(result.success).toBe(false);
       expect(result.method).toBeNull();
     });
+
+    it('filters out non-article site sections mixed in with genuine articles (real sitemap regression)', async () => {
+      mockHttpService.getText.mockImplementation((url: string) => {
+        if (url === 'https://example.com/robots.txt') return textResponse(404, '');
+        if (url === 'https://example.com/sitemap.xml') {
+          return textResponse(
+            200,
+            `<?xml version="1.0"?><urlset>
+              <url><loc>https://example.com/chronicles/some-great-article-title</loc></url>
+              <url><loc>https://example.com/chronicles/another-nice-post-here</loc></url>
+              <url><loc>https://example.com/clients/2u</loc></url>
+              <url><loc>https://example.com/careers/frontend-engineer</loc></url>
+              <url><loc>https://example.com/martians/albert-pazderin</loc></url>
+              <url><loc>https://example.com/products/layered-design-book</loc></url>
+              <url><loc>https://example.com/services/advisory</loc></url>
+            </urlset>`,
+          );
+        }
+        return textResponse(404, '');
+      });
+
+      const result = await service.runDiscoveryMethod(
+        WebDiscoveryMethod.SITEMAP,
+        'https://example.com',
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.entryUrls).toEqual([
+        'https://example.com/chronicles/some-great-article-title',
+        'https://example.com/chronicles/another-nice-post-here',
+      ]);
+    });
+
+    it('rejects a 2-segment URL whose last segment is short and non-dashed (proves the bare segments.length >= 2 fallback is gone)', async () => {
+      mockHttpService.getText.mockImplementation((url: string) => {
+        if (url === 'https://example.com/robots.txt') return textResponse(404, '');
+        if (url === 'https://example.com/sitemap.xml') {
+          return textResponse(
+            200,
+            `<?xml version="1.0"?><urlset>
+              <url><loc>https://example.com/updates/q1</loc></url>
+            </urlset>`,
+          );
+        }
+        return textResponse(404, '');
+      });
+
+      const result = await service.runDiscoveryMethod(
+        WebDiscoveryMethod.SITEMAP,
+        'https://example.com',
+      );
+
+      // No usable articles survive filtering, so the sitemap step reports failure.
+      expect(result.success).toBe(false);
+    });
+
+    it('catches a denylisted section even when its slug has 3+ words (denylist is load-bearing on its own)', async () => {
+      mockHttpService.getText.mockImplementation((url: string) => {
+        if (url === 'https://example.com/robots.txt') return textResponse(404, '');
+        if (url === 'https://example.com/sitemap.xml') {
+          return textResponse(
+            200,
+            `<?xml version="1.0"?><urlset>
+              <url><loc>https://example.com/products/layered-design-book</loc></url>
+              <url><loc>https://example.com/products/another-great-toolkit</loc></url>
+            </urlset>`,
+          );
+        }
+        return textResponse(404, '');
+      });
+
+      const result = await service.runDiscoveryMethod(
+        WebDiscoveryMethod.SITEMAP,
+        'https://example.com',
+      );
+
+      expect(result.success).toBe(false);
+    });
+
+    it('catches a 2-word slug under a non-denylisted section (tightened slug heuristic is load-bearing on its own)', async () => {
+      mockHttpService.getText.mockImplementation((url: string) => {
+        if (url === 'https://example.com/robots.txt') return textResponse(404, '');
+        if (url === 'https://example.com/sitemap.xml') {
+          return textResponse(
+            200,
+            `<?xml version="1.0"?><urlset>
+              <url><loc>https://example.com/martians/albert-pazderin</loc></url>
+              <url><loc>https://example.com/martians/irina-nazarova</loc></url>
+            </urlset>`,
+          );
+        }
+        return textResponse(404, '');
+      });
+
+      const result = await service.runDiscoveryMethod(
+        WebDiscoveryMethod.SITEMAP,
+        'https://example.com',
+      );
+
+      expect(result.success).toBe(false);
+    });
   });
 
   describe('RSS/Atom discovery (Step C, shared with SourcesService.create)', () => {
@@ -337,6 +438,32 @@ describe('SourceDiscoveryService', () => {
 
       expect(result.success).toBe(false);
       expect(mockHttpService.getText).not.toHaveBeenCalledWith(maliciousUrl);
+    });
+
+    it('filters out a denylisted-section link mixed in with genuine article links on a listing page', async () => {
+      const html = `
+        <html><body>
+          <div class="listing">
+            <a href="/chronicles/some-great-article-title">One</a>
+            <a href="/chronicles/another-nice-post-here">Two</a>
+            <a href="/careers/some-role">Careers</a>
+          </div>
+        </body></html>`;
+
+      mockHttpService.getText.mockResolvedValue(textResponse(200, html));
+
+      const result = await service.runDiscoveryMethod(
+        WebDiscoveryMethod.CHEERIO,
+        'https://example.com',
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.entryUrls.sort()).toEqual(
+        [
+          'https://example.com/chronicles/some-great-article-title',
+          'https://example.com/chronicles/another-nice-post-here',
+        ].sort(),
+      );
     });
   });
 

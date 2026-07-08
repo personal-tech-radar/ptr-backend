@@ -5,6 +5,14 @@ Each entry is tagged with the branch it was made on.
 
 ---
 
+## [dev/mvp-3] — 2026-07-08
+
+### Fixed
+- `SourceDiscoveryService.isLikelyArticleUrl()` — a bare `segments.length >= 2` fallback let almost any URL through regardless of its other heuristics, misclassifying non-article site sections (careers pages, product pages, client pages, team bio pages, generic service pages) as candidate articles during sitemap and Cheerio-link-based discovery. Found via real QA against a live site. Fixed by removing the bare fallback entirely, tightening the slug heuristic to require a 3+-word (not just long) last path segment, and adding a denylist of common non-article top-level site-section names (careers, clients, products, services, team, pricing, jobs) matched exactly against the first path segment. Added test coverage modeled on the real false positives, including a regression test for the removed bare-fallback bug and tests proving the denylist and tightened slug heuristic are each independently necessary
+- README's description of the sitemap candidate-URL filter corrected to match — no longer describes "path depth" as a filtering signal
+
+---
+
 ## [dev/mvp-3] — 2026-07-06 — Phase 6: Whole-Branch Integration Pass (final)
 
 Closing entry for the 6-phase MVP3 effort ("Web Sources and Source Growth"); see the five phase entries below for the full substance.

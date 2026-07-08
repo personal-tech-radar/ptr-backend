@@ -77,6 +77,20 @@ const JUNK_PATH_FRAGMENTS = [
   '/subscribe',
 ];
 
+// Unlike JUNK_PATH_FRAGMENTS (generic CMS/blog-engine junk like /tag/, /category/), this targets
+// legitimate non-blog site sections that a real sitemap will include alongside articles. Matched
+// against segments[0] exactly (not substring/includes), so an article slug that merely mentions
+// one of these words isn't wrongly rejected.
+const NON_ARTICLE_SECTION_SEGMENTS = [
+  'careers',
+  'clients',
+  'products',
+  'services',
+  'team',
+  'pricing',
+  'jobs',
+];
+
 const NAV_LIKE_SELECTORS = 'nav, footer, header, aside';
 
 interface SitemapEntry {
@@ -366,11 +380,16 @@ export class SourceDiscoveryService {
     const segments = path.split('/').filter(Boolean);
     if (segments.length === 0) return false;
 
+    if (NON_ARTICLE_SECTION_SEGMENTS.includes(segments[0])) return false;
+
     const hasDateSegment = /\/\d{4}\/\d{2}(\/\d{2})?\//.test(path);
     const lastSegment = segments[segments.length - 1];
-    const hasSlugSegment = lastSegment.includes('-') && lastSegment.length > 8;
+    // Require 3+ words (2+ dashes), not just any dash: distinguishes genuine multi-word article
+    // slugs from 2-word job-title/person-name/product-name slugs (e.g. "frontend-engineer",
+    // "albert-pazderin") that a bare dash-and-length check let through.
+    const hasSlugSegment = lastSegment.split('-').length >= 3;
 
-    return hasDateSegment || hasSlugSegment || segments.length >= 2;
+    return hasDateSegment || hasSlugSegment;
   }
 
   // ---- Step C: RSS/Atom discovery (shared feed validator with SourcesService.create) ----
