@@ -3,7 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { FindManyOptions, Repository } from 'typeorm';
 import { LoggingService } from '../../common/logging/logging.service';
 import { ArticleListQueryDto } from '../dto/article-list-query.dto';
-import { Article, ArticleStatus } from '../entities/article.entity';
+import { Article, ArticleStatus, ContentExtractionMethod } from '../entities/article.entity';
 import { PaginatedResponseDto } from '../../common/dto/paginated-response.dto';
 
 export interface CreateArticleData {
@@ -17,6 +17,9 @@ export interface CreateArticleData {
   summaryFromFeed?: string | null;
   rawContent?: string | null;
   status?: ArticleStatus;
+  contentExtractionMethod?: ContentExtractionMethod;
+  contentExtractionConfig?: Record<string, unknown> | null;
+  contentFetchedAt?: Date | null;
 }
 
 @Injectable()
@@ -92,5 +95,15 @@ export class ArticlesService {
 
   async findPendingAnalysis(): Promise<Article[]> {
     return this.articleRepo.find({ where: { status: ArticleStatus.PENDING_ANALYSIS } });
+  }
+
+  // Genuine hard delete — bypasses the soft-delete `deletedAt` column entirely, unlike a CRUD
+  // `remove`. Reserved for scratch rows that were never real ingestion (e.g.
+  // SourceCandidatesService's promotion-sampling articles): a soft delete would leave the row's
+  // unique urlHash still occupying the table, blocking that URL from ever being re-ingested
+  // through the normal pipeline.
+  async deleteByIds(ids: string[]): Promise<void> {
+    if (ids.length === 0) return;
+    await this.articleRepo.delete(ids);
   }
 }

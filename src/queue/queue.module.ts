@@ -4,6 +4,7 @@ import {
   QUEUE_ARTICLE_ANALYSIS,
   QUEUE_DIGEST,
   QUEUE_FEED_FETCH,
+  QUEUE_WEB_SOURCE_BROWSER_FETCH,
   QueueService,
 } from './queue.service';
 
@@ -20,6 +21,7 @@ import {
       { name: QUEUE_FEED_FETCH },
       { name: QUEUE_ARTICLE_ANALYSIS },
       { name: QUEUE_DIGEST },
+      { name: QUEUE_WEB_SOURCE_BROWSER_FETCH },
     ),
   ],
   providers: [QueueService],

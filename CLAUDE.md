@@ -13,6 +13,7 @@ This repository is a production-ready NestJS backend template. Services built fr
 | Database | PostgreSQL + TypeORM 0.3 |
 | Cache | Redis (ioredis) |
 | Object Storage | S3-compatible (AWS SDK v3) |
+| Background jobs | BullMQ (Redis-backed queues) |
 | HTTP client | Native `fetch` wrapper (`HttpService`) |
 | Validation | class-validator + class-transformer |
 | Documentation | Swagger / OpenAPI (`/docs`) |
@@ -55,6 +56,7 @@ Domain modules live at `src/<domain>/` and contain `controllers/`, `services/`, 
 - **`synchronize: false`** always. Schema changes via migrations only.
 - For complex domains, split services into `command`, `query`, and `domain` services.
 - Prefer existing patterns over new abstractions. Prefer minimal and local changes.
+- **Isolate slow, resource-heavy, or hang-prone background work in its own BullMQ queue** — separate from the domain's regular processing queue(s) — with an explicit concurrency limit. A single stuck job (headless browser automation, a long-running third-party call) must never be able to block unrelated work. See `src/queue/queue.service.ts` (`web-source-browser-fetch` queue) for a worked example.
 
 ---
 
@@ -65,6 +67,14 @@ Migrations are generated exclusively via the TypeORM CLI. Do not handwrite or ma
 Dev commands use `src/common/database/data-source.ts`. Prod commands use `dist/common/database/data-source-prod.js`.
 
 For the full workflow, use the `typeorm-migration-workflow` skill.
+
+---
+
+## Seed / Reference Data
+
+If a domain needs reference or seed data (lookup lists, initial records an operator curates over time), ship it as a versioned manifest and sync it via an explicit, idempotent CLI command — never as an implicit "seed if the table is empty" check in application bootstrap.
+
+For the full pattern (manifest shape, matching strategy, declarative-vs-operational field handling, CLI structure), use the `seed-data-sync-pattern` skill.
 
 ---
 

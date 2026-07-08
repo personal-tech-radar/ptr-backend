@@ -3,7 +3,12 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { ArticleAnalysis } from '../../ai-analysis/entities/article-analysis.entity';
 import { ArticleRelevance } from '../../ai-analysis/entities/article-relevance.entity';
 import { Article, ArticleStatus } from '../../articles/entities/article.entity';
-import { Source, SourceCategory } from '../../sources/entities/source.entity';
+import {
+  SourceCandidate,
+  SourceCandidateStatus,
+} from '../../sources/entities/source-candidate.entity';
+import { Source, SourceCategory, SourceType } from '../../sources/entities/source.entity';
+import { UserSourcePreferenceService } from '../../sources/services/user-source-preference.service';
 import { DigestItem } from '../entities/digest-item.entity';
 import { Digest, DigestStatus, DigestType } from '../entities/digest.entity';
 import { DigestBuildConfig } from '../digest.types';
@@ -60,6 +65,14 @@ const mockArticleRepo = {
 
 const mockSourceRepo = {
   count: jest.fn().mockResolvedValue(0),
+};
+
+const mockSourceCandidateRepo = {
+  count: jest.fn().mockResolvedValue(0),
+};
+
+const mockUserSourcePreferenceService = {
+  getAdjustmentsForSources: jest.fn().mockResolvedValue(new Map()),
 };
 
 const mockAiDigestService = {
@@ -126,6 +139,9 @@ describe('DigestBuilderService', () => {
     jest.clearAllMocks();
     mockDigestItemRepo.getRawMany.mockResolvedValue([]);
     mockAnalysisRepo.getCount.mockResolvedValue(0);
+    mockSourceRepo.count.mockResolvedValue(0);
+    mockSourceCandidateRepo.count.mockResolvedValue(0);
+    mockUserSourcePreferenceService.getAdjustmentsForSources.mockResolvedValue(new Map());
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -136,6 +152,11 @@ describe('DigestBuilderService', () => {
         { provide: getRepositoryToken(ArticleRelevance), useValue: mockRelevanceRepo },
         { provide: getRepositoryToken(Article), useValue: mockArticleRepo },
         { provide: getRepositoryToken(Source), useValue: mockSourceRepo },
+        { provide: getRepositoryToken(SourceCandidate), useValue: mockSourceCandidateRepo },
+        {
+          provide: UserSourcePreferenceService,
+          useValue: mockUserSourcePreferenceService,
+        },
         { provide: AiDigestService, useValue: mockAiDigestService },
         { provide: EmailTemplateService, useValue: mockEmailTemplateService },
       ],
@@ -190,6 +211,17 @@ describe('DigestBuilderService', () => {
         50 * 0.15 +
         50 * 0.1;
       expect(score).toBeCloseTo(expected, 5);
+    });
+
+    it('adds the feedback adjustment additively on top of the base score', () => {
+      const analysis = makeAnalysis({ relevanceScore: 80, qualityScore: 70 });
+      analysis.article.source.trustScore = 90;
+      analysis.article.publishedAt = new Date(Date.now() - 6 * 60 * 60 * 1000);
+
+      const baseScore = service.computeFinalScore(analysis, DAILY_CONFIG);
+      const withAdjustment = service.computeFinalScore(analysis, DAILY_CONFIG, 4.5);
+
+      expect(withAdjustment).toBeCloseTo(baseScore + 4.5, 5);
     });
   });
 
@@ -355,6 +387,40 @@ describe('DigestBuilderService', () => {
       expect(mockDigestItemRepo.save).toHaveBeenCalledTimes(3);
     });
 
+    it('persists a scoreBreakdown with no feedback adjustment when no preference row exists', async () => {
+      const analysis = makeAnalysis();
+      mockAnalysisRepo.getMany.mockResolvedValue([analysis]);
+      mockAnalysisRepo.getCount.mockResolvedValue(1);
+      mockUserSourcePreferenceService.getAdjustmentsForSources.mockResolvedValue(new Map());
+
+      await service.buildDailyDigest();
+
+      const itemSaveCall = mockDigestItemRepo.save.mock.calls[0][0];
+      const expectedBaseScore = service.computeFinalScore(analysis, DAILY_CONFIG);
+      expect(itemSaveCall.scoreBreakdown).toEqual({
+        baseScore: expectedBaseScore,
+        feedbackAdjustment: 0,
+        finalScore: expectedBaseScore,
+      });
+    });
+
+    it('persists a scoreBreakdown with the feedback adjustment applied additively', async () => {
+      const analysis = makeAnalysis();
+      mockAnalysisRepo.getMany.mockResolvedValue([analysis]);
+      mockAnalysisRepo.getCount.mockResolvedValue(1);
+      mockUserSourcePreferenceService.getAdjustmentsForSources.mockResolvedValue(
+        new Map([['src-1', 3.5]]),
+      );
+
+      await service.buildDailyDigest();
+
+      const itemSaveCall = mockDigestItemRepo.save.mock.calls[0][0];
+      const expectedBaseScore = service.computeFinalScore(analysis, DAILY_CONFIG);
+      expect(itemSaveCall.scoreBreakdown.baseScore).toBeCloseTo(expectedBaseScore, 5);
+      expect(itemSaveCall.scoreBreakdown.feedbackAdjustment).toBe(3.5);
+      expect(itemSaveCall.scoreBreakdown.finalScore).toBeCloseTo(expectedBaseScore + 3.5, 5);
+    });
+
     it('excludes articles already in prior digests', async () => {
       mockDigestItemRepo.getRawMany.mockResolvedValue([{ articleId: 'used-article-id' }]);
       mockAnalysisRepo.getMany.mockResolvedValue([makeAnalysis()]);
@@ -367,6 +433,79 @@ describe('DigestBuilderService', () => {
         (call: string) => typeof call === 'string' && call.includes('NOT IN'),
       );
       expect(hasExcludeClause).toBe(true);
+    });
+  });
+
+  describe('gatherStats (footer statistics)', () => {
+    it('reports feed vs web active source counts and pending candidates separately from the email template', async () => {
+      mockAnalysisRepo.getMany.mockResolvedValue([makeAnalysis()]);
+      mockAnalysisRepo.getCount.mockResolvedValue(1);
+
+      mockSourceRepo.count.mockImplementation((options: any) => {
+        const type = options?.where?.type;
+        if (type?.value?.includes?.(SourceType.RSS)) return Promise.resolve(20);
+        if (type === SourceType.WEB) return Promise.resolve(3);
+        return Promise.resolve(23);
+      });
+      mockSourceCandidateRepo.count.mockResolvedValue(4);
+
+      await service.buildDailyDigest();
+
+      const statsArg = mockEmailTemplateService.renderHtml.mock.calls[0][3];
+      expect(statsArg.totalSourcesActive).toBe(23);
+      expect(statsArg.feedSourcesActive).toBe(20);
+      expect(statsArg.webSourcesActive).toBe(3);
+      expect(statsArg.sourceCandidatesPending).toBe(4);
+      expect(mockEmailTemplateService.renderText.mock.calls[0][3]).toEqual(statsArg);
+    });
+
+    it('queries feedSourcesActive across rss/atom/github_release only, excluding web', async () => {
+      mockAnalysisRepo.getMany.mockResolvedValue([makeAnalysis()]);
+      mockAnalysisRepo.getCount.mockResolvedValue(1);
+
+      await service.buildDailyDigest();
+
+      const feedCountCall = mockSourceRepo.count.mock.calls.find((c: any[]) =>
+        c[0]?.where?.type?.value?.includes?.(SourceType.RSS),
+      );
+      expect(feedCountCall[0].where.type.value).toEqual(
+        expect.arrayContaining([SourceType.RSS, SourceType.ATOM, SourceType.GITHUB_RELEASE]),
+      );
+      expect(feedCountCall[0].where.type.value).not.toContain(SourceType.WEB);
+      expect(feedCountCall[0].where.enabled).toBe(true);
+    });
+
+    it('queries sourceCandidatesPending across pending/needs_review only, excluding rejected/promoted', async () => {
+      mockAnalysisRepo.getMany.mockResolvedValue([makeAnalysis()]);
+      mockAnalysisRepo.getCount.mockResolvedValue(1);
+
+      await service.buildDailyDigest();
+
+      const candidateCountArgs = mockSourceCandidateRepo.count.mock.calls[0][0];
+      expect(candidateCountArgs.where.status.value).toEqual(
+        expect.arrayContaining([SourceCandidateStatus.PENDING, SourceCandidateStatus.NEEDS_REVIEW]),
+      );
+      expect(candidateCountArgs.where.status.value).not.toContain(SourceCandidateStatus.REJECTED);
+      expect(candidateCountArgs.where.status.value).not.toContain(SourceCandidateStatus.PROMOTED);
+    });
+
+    it('reports articlesIngested/articlesPassedPreanalysis straight from the window-scoped repo counts', async () => {
+      mockAnalysisRepo.getMany.mockResolvedValue([makeAnalysis()]);
+      mockAnalysisRepo.getCount.mockResolvedValue(1);
+      mockArticleRepo.count.mockResolvedValue(7);
+      mockRelevanceRepo.count.mockResolvedValue(4);
+
+      await service.buildDailyDigest();
+
+      const statsArg = mockEmailTemplateService.renderHtml.mock.calls[0][3];
+      expect(statsArg.articlesIngested).toBe(7);
+      expect(statsArg.articlesPassedPreanalysis).toBe(4);
+      // gatherStats has no scratch-row carve-out of its own — it trusts whatever physically
+      // exists in the articles/article_relevances tables for the window. That's only correct
+      // because SourceCandidatesService.promote() hard-deletes its sample Article rows (and
+      // their cascade-linked ArticleRelevance rows) once a candidate is promoted, before any
+      // digest window could ever count them — see source-candidates.service.spec.ts's
+      // 'hard-deletes the sample articles ...' test.
     });
   });
 

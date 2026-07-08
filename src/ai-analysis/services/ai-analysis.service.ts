@@ -157,6 +157,45 @@ export class AiAnalysisService implements OnModuleInit {
     }
   }
 
+  // Pre-analysis stage only, deliberately isolated from `analyzeArticle`'s chain into full
+  // analysis. Used by SourceCandidatesService to sample a bounded set of candidate articles
+  // during promotion without spending full-analysis tokens on URLs that may never become a
+  // real source. Idempotent: returns the existing relevance row if one is already there.
+  async preAnalyzeArticle(
+    articleId: string,
+    userId: string = DEFAULT_USER_ID,
+  ): Promise<ArticleRelevance> {
+    const existing = await this.relevanceRepo.findOne({ where: { articleId, userId } });
+    if (existing) return existing;
+
+    const article = await this.articlesService.findOne(articleId);
+    const preResult = await this.callOpenAIPreAnalysis(article.title, article.summaryFromFeed);
+
+    try {
+      const saved = await this.relevanceRepo.save(
+        this.relevanceRepo.create({
+          articleId,
+          userId,
+          preAnalysisIsRelevant: preResult.isPotentiallyRelevant,
+          preAnalysisReason: preResult.shortReason,
+          preAnalysisAt: new Date(),
+          fullAnalysisId: null,
+        }),
+      );
+      this.logger.info('Pre-analysis-only complete (candidate sampling)', {
+        articleId,
+        relevant: preResult.isPotentiallyRelevant,
+      });
+      return saved;
+    } catch (err) {
+      if ((err as any)?.code === '23505') {
+        const raced = await this.relevanceRepo.findOne({ where: { articleId, userId } });
+        if (raced) return raced;
+      }
+      throw err;
+    }
+  }
+
   private async runFullAnalysis(
     article: { id: string; title: string; url: string; author?: string | null; summaryFromFeed?: string | null },
     relevance: ArticleRelevance,

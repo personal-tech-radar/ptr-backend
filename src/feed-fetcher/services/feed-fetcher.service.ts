@@ -4,8 +4,10 @@ import RssParser = require('rss-parser');
 import { LoggingService } from '../../common/logging/logging.service';
 import { ArticleStatus } from '../../articles/entities/article.entity';
 import { ArticlesService } from '../../articles/services/articles.service';
+import { SourceType } from '../../sources/entities/source.entity';
 import { SourcesService } from '../../sources/services/sources.service';
 import { QueueService } from '../../queue/queue.service';
+import { WebSourceFetcherService } from './web-source-fetcher.service';
 
 type FeedItem = RssParser.Item & {
   'content:encoded'?: string;
@@ -35,6 +37,7 @@ export class FeedFetcherService {
     private readonly sourcesService: SourcesService,
     private readonly articlesService: ArticlesService,
     private readonly queueService: QueueService,
+    private readonly webSourceFetcherService: WebSourceFetcherService,
   ) {}
 
   async fetchAllSources(): Promise<void> {
@@ -46,6 +49,10 @@ export class FeedFetcherService {
   async fetchSource(sourceId: string): Promise<void> {
     const source = await this.sourcesService.findOne(sourceId);
     this.logger.info(`Fetching source: ${source.name}`, { url: source.url });
+
+    if (source.type === SourceType.WEB) {
+      return this.webSourceFetcherService.fetchSource(source);
+    }
 
     try {
       const feed = await this.parser.parseURL(source.url);

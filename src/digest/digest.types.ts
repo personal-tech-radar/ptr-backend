@@ -3,6 +3,8 @@ import { ArticleAnalysis } from '../ai-analysis/entities/article-analysis.entity
 export interface ScoredCandidate {
   analysis: ArticleAnalysis;
   computedFinalScore: number;
+  baseScore?: number;
+  feedbackAdjustment?: number;
 }
 
 export interface DigestBuildConfig {
@@ -12,7 +14,10 @@ export interface DigestBuildConfig {
   subjectSuffix: string;
   recencyFreshHours: number;
   recencyRecentHours: number;
-  includeFlag: 'shouldIncludeInDailyDigest' | 'shouldIncludeInWeeklyDigest' | 'shouldIncludeInDeepDiveDigest';
+  includeFlag:
+    | 'shouldIncludeInDailyDigest'
+    | 'shouldIncludeInWeeklyDigest'
+    | 'shouldIncludeInDeepDiveDigest';
 }
 
 export interface DigestBuildAttempt {
@@ -36,4 +41,14 @@ export interface DigestStats {
   articlesAnalyzed: number;
   totalArticlesInDb: number;
   totalSourcesActive: number;
+  // MVP3 phase 5 footer block — sits alongside the pipeline stats above, not replacing them.
+  feedSourcesActive: number;
+  webSourcesActive: number;
+  sourceCandidatesPending: number;
+}
+
+export interface DigestItemScoreBreakdown {
+  baseScore: number;
+  feedbackAdjustment: number;
+  finalScore: number;
 }
