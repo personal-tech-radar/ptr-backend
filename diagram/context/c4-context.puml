@@ -5,51 +5,64 @@ HIDE_STEREOTYPE()
 
 title Personal Tech Radar — Container View
 
-Person(user, "Backend Architect", "Receives daily\ndigest email")
+Person(user, "Backend Architect", "Receives daily,\nweekly, and deep-dive\ndigest emails")
 
-System_Ext(feeds, "RSS / Atom / GitHub Feeds", "Engineering blogs and\nGitHub release pages")
+System_Ext(feeds, "RSS / Atom / GitHub Feeds", "Engineering blogs and\nGitHub release pages\nwith a working feed")
+System_Ext(websites, "Websites Without a Feed", "Engineering blogs crawled via\nsitemap, entry-page links,\nor a headless browser")
 System_Ext(openai, "OpenAI API", "Chat completions\nwith JSON mode")
 System_Ext(resend, "Resend", "Transactional\nemail delivery")
 
 System_Boundary(ptr, "Personal Tech Radar Backend") {
 
-    Container(scheduler, "Scheduler", "NestJS Schedule · cron", "Fires fetch-all-sources\nevery hour.\nFires build-daily-digest daily\nat configured UTC time.")
+    Container(scheduler, "Scheduler", "NestJS Schedule · cron", "Fires fetch-all-sources hourly.\nFires build-daily-digest,\nbuild-weekly-digest, and\nbuild-deep-dive-weekly-digest\non their configured schedules.")
 
-    Container(queue, "Queue Broker", "BullMQ", "Three named queues:\nfeed-fetch · article-analysis · digest.\nJobs are persisted in Redis so they\nsurvive restarts. Workers pick up\njobs concurrently and retry on failure.")
+    Container(queue, "Queue Broker", "BullMQ", "Four named queues:\nfeed-fetch · article-analysis ·\ndigest · web-source-browser-fetch,\nthe last isolated with its own\nconcurrency limit so a slow/hung\nbrowser job never blocks the rest.")
 
     Container(fetcher, "FeedFetcher", "rss-parser", "Downloads and parses\nRSS / Atom / GitHub release feeds.\nDeduplicates by URL hash.\nSkips near-duplicates by title hash\nwithin a 7-day window.")
 
-    Container(analysis, "AiAnalysis", "OpenAI SDK", "Loads user interests from config.\nScores each article for relevance\nand quality. Decides whether\nthe article belongs in the digest.")
+    Container(webSource, "WebSourceFetcher +\nSourceDiscovery", "Cheerio · Readability · JSDOM", "Deterministic chain for feed-less sites:\nsitemap -> RSS/Atom -> Cheerio links,\nfalling back to Playwright or an AI-suggested\nrecipe. Extracts content via JSON-LD ->\nOpenGraph -> Readability -> CSS selector.\nSelf-heals: persists whichever method\nactually worked as the new preferred recipe.")
 
-    Container(digest, "Digest Builder", "NestJS", "Queries analyzed articles\nfrom the last 24 hours.\nRanks by weighted score:\nrelevance 45 · quality 30\ntrust 15 · recency 10.\nApplies source and category\ndiversification. Selects top 5.\nRenders HTML and plain-text email.")
+    Container(playwright, "Playwright Worker", "Playwright · isolated queue", "Headless-browser fallback, used only\nwhen the deterministic chain finds no\nusable article links. Feature-flagged,\noff by default.")
+
+    Container(analysis, "AiAnalysis", "OpenAI SDK", "Two-stage pipeline. Pre-analysis: cheap\ntitle+description relevance gate per user.\nFull analysis: runs only when relevant;\nscores relevance/quality, whyItMatters, tags.")
+
+    Container(digest, "Digest Builder", "NestJS", "Selects analyzed articles within a\n24h -> 48h -> 72h fallback window.\nRanks by weighted score plus a bounded\nper-user feedback adjustment. Applies\nsource/category diversification. Renders\nHTML and plain-text email with a\nlive source-count footer.")
 
     Container(mail, "Mail", "Resend SDK", "Delivers the rendered\ndigest email via Resend.\nExposes POST /digests/daily/resend-latest\nto re-send without rebuilding.")
 
-    ContainerDb(postgres, "PostgreSQL", "TypeORM", "sources\narticles\narticle_analyses\ndigests\ndigest_items")
+    ContainerDb(postgres, "PostgreSQL", "TypeORM", "sources · web_source_configs · articles\narticle_relevances · article_analyses\narticle_feedbacks · user_source_preferences\ndigests · digest_items")
 
     ContainerDb(redis, "Redis", "BullMQ store", "Persists queued jobs\nand worker state")
 }
 
-Rel(scheduler, queue, "Dispatches", "fetch-all-sources\nbuild-daily-digest")
+Rel(scheduler, queue, "Dispatches", "fetch-all-sources\nbuild-*-digest")
 
-Rel(queue, redis, "Persists and reads jobs", "TCP · BullMQ protocol")
+Rel(queue, redis, "Persists and reads jobs")
 
-Rel(queue, fetcher, "Triggers worker", "fetch-all-sources\nfetch-source")
+Rel(queue, fetcher, "Triggers worker")
+Rel(queue, webSource, "Triggers worker\nfor web sources")
+Rel(queue, playwright, "Triggers isolated worker\non a deterministic-chain miss")
 Rel(queue, analysis, "Triggers worker", "analyze-article")
-Rel(queue, digest, "Triggers worker", "build-daily-digest")
+Rel(queue, digest, "Triggers worker")
 
-Rel(fetcher, feeds, "Fetches feeds", "HTTP")
-Rel(fetcher, postgres, "Saves new articles", "INSERT articles")
-Rel(fetcher, queue, "Enqueues per new article", "analyze-article")
+Rel(fetcher, feeds, "Fetches feeds")
+Rel(fetcher, postgres, "Saves articles,\nenqueues analysis")
 
-Rel(analysis, openai, "Sends title, summary,\nuser interests", "HTTPS · JSON")
-Rel(openai, analysis, "Returns relevanceScore, qualityScore,\nwhyItMatters, tags, shouldInclude", "HTTPS · JSON")
-Rel(analysis, postgres, "Stores analysis result", "INSERT article_analyses")
+Rel(webSource, websites, "Discovers and\nfetches articles")
+Rel(webSource, playwright, "Falls back to")
+Rel(webSource, analysis, "Requests a source-structure\nsuggestion, as a last resort")
+Rel(webSource, postgres, "Saves articles, self-heals\nrecipe, enqueues analysis")
 
-Rel(digest, postgres, "Reads analyzed articles,\nwrites digest and items", "SELECT · INSERT")
+Rel(playwright, websites, "Renders JS-heavy pages")
+
+Rel(analysis, openai, "Exchanges article context\nfor relevance/quality scores,\nor a discovery-recipe suggestion")
+Rel(analysis, postgres, "Stores relevance and\nanalysis results")
+
+Rel(digest, postgres, "Reads analyzed articles\nand preferences, writes digest")
 Rel(digest, mail, "Passes built digest")
 
-Rel(mail, resend, "Sends email", "HTTPS · Resend API")
-Rel(resend, user, "Delivers daily digest", "Email")
+Rel(mail, resend, "Sends email")
+Rel(resend, user, "Delivers digest")
+Rel(user, postgres, "Feedback updates\nranking preference")
 
 @enduml
