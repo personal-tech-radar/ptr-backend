@@ -6,4 +6,6 @@ export interface HttpRequestOptions {
   timeout?: number;
   retries?: number;
   retryDelay?: number;
+  /** Defaults to 'json'. Set to 'text' for non-JSON bodies (HTML, XML, plain text). */
+  responseType?: 'json' | 'text';
 }

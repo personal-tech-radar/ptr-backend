@@ -1,18 +1,24 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { MoreThanOrEqual, Repository } from 'typeorm';
+import { In, MoreThanOrEqual, Repository } from 'typeorm';
 import { LoggingService } from '../../common/logging/logging.service';
 import { ArticleAnalysis } from '../../ai-analysis/entities/article-analysis.entity';
 import { ArticleRelevance } from '../../ai-analysis/entities/article-relevance.entity';
 import { DEFAULT_USER_ID } from '../../ai-analysis/services/ai-analysis.service';
 import { Article, ArticleStatus } from '../../articles/entities/article.entity';
-import { Source } from '../../sources/entities/source.entity';
+import {
+  SourceCandidate,
+  SourceCandidateStatus,
+} from '../../sources/entities/source-candidate.entity';
+import { Source, SourceType } from '../../sources/entities/source.entity';
+import { UserSourcePreferenceService } from '../../sources/services/user-source-preference.service';
 import { Digest, DigestStatus, DigestType } from '../entities/digest.entity';
 import { DigestItem } from '../entities/digest-item.entity';
 import {
   DigestBuildAttempt,
   DigestBuildConfig,
   DigestBuildDebug,
+  DigestItemScoreBreakdown,
   DigestStats,
   ScoredCandidate,
 } from '../digest.types';
@@ -70,6 +76,9 @@ export class DigestBuilderService {
     private readonly articleRepo: Repository<Article>,
     @InjectRepository(Source)
     private readonly sourceRepo: Repository<Source>,
+    @InjectRepository(SourceCandidate)
+    private readonly sourceCandidateRepo: Repository<SourceCandidate>,
+    private readonly userSourcePreferenceService: UserSourcePreferenceService,
     private readonly aiDigestService: AiDigestService,
     private readonly emailTemplateService: EmailTemplateService,
   ) {}
@@ -99,10 +108,7 @@ export class DigestBuilderService {
       return null;
     }
 
-    const scored: ScoredCandidate[] = candidates.map((analysis) => ({
-      analysis,
-      computedFinalScore: this.computeFinalScore(analysis, config),
-    }));
+    const scored = await this.scoreCandidates(candidates, config);
     scored.sort((a, b) => b.computedFinalScore - a.computedFinalScore);
 
     const selected = this.selectWithDiversification(scored, config.maxItems);
@@ -113,7 +119,7 @@ export class DigestBuilderService {
     const intro = await this.aiDigestService.generateIntro(DigestType.DAILY, selected);
 
     const stats = await this.gatherStats(finalWindowHours);
-    const emailItems = this.toEmailItems(selected);
+    const emailItems = this.toEmailItems(selected, false);
     const htmlBody = this.emailTemplateService.renderHtml(subject, intro, emailItems, stats);
     const textBody = this.emailTemplateService.renderText(subject, intro, emailItems, stats);
 
@@ -148,6 +154,7 @@ export class DigestBuilderService {
           digestId: digest.id,
           articleId: selected[i].analysis.articleId,
           position: i + 1,
+          scoreBreakdown: this.toScoreBreakdown(selected[i]),
         }),
       );
     }
@@ -188,10 +195,7 @@ export class DigestBuilderService {
       return null;
     }
 
-    const scored: ScoredCandidate[] = candidates.map((analysis) => ({
-      analysis,
-      computedFinalScore: this.computeFinalScore(analysis, config),
-    }));
+    const scored = await this.scoreCandidates(candidates, config);
     scored.sort((a, b) => b.computedFinalScore - a.computedFinalScore);
 
     const selected = this.selectWithDiversification(scored, config.maxItems);
@@ -202,7 +206,7 @@ export class DigestBuilderService {
     const intro = await this.aiDigestService.generateIntro(type, selected);
 
     const stats = await this.gatherStats(config.lookbackHours);
-    const emailItems = this.toEmailItems(selected);
+    const emailItems = this.toEmailItems(selected, true);
     const htmlBody = this.emailTemplateService.renderHtml(subject, intro, emailItems, stats);
     const textBody = this.emailTemplateService.renderText(subject, intro, emailItems, stats);
 
@@ -226,6 +230,7 @@ export class DigestBuilderService {
           digestId: digest.id,
           articleId: selected[i].analysis.articleId,
           position: i + 1,
+          scoreBreakdown: this.toScoreBreakdown(selected[i]),
         }),
       );
     }
@@ -237,12 +242,52 @@ export class DigestBuilderService {
     return digest;
   }
 
-  computeFinalScore(analysis: ArticleAnalysis, config: DigestBuildConfig): number {
+  computeBaseScore(analysis: ArticleAnalysis, config: DigestBuildConfig): number {
     const relevance = Number(analysis.relevanceScore);
     const quality = Number(analysis.qualityScore);
     const trust = Number(analysis.article?.source?.trustScore ?? 50);
     const recency = this.getRecencyScore(analysis.article?.publishedAt ?? null, config);
     return relevance * 0.45 + quality * 0.3 + trust * 0.15 + recency * 0.1;
+  }
+
+  computeFinalScore(
+    analysis: ArticleAnalysis,
+    config: DigestBuildConfig,
+    feedbackAdjustment = 0,
+  ): number {
+    return this.computeBaseScore(analysis, config) + feedbackAdjustment;
+  }
+
+  private async scoreCandidates(
+    candidates: ArticleAnalysis[],
+    config: DigestBuildConfig,
+  ): Promise<ScoredCandidate[]> {
+    const feedbackAdjustments = await this.getFeedbackAdjustments(
+      candidates.map((c) => c.article?.sourceId ?? ''),
+    );
+
+    return candidates.map((analysis) => {
+      const baseScore = this.computeBaseScore(analysis, config);
+      const feedbackAdjustment = feedbackAdjustments.get(analysis.article?.sourceId ?? '') ?? 0;
+      return {
+        analysis,
+        baseScore,
+        feedbackAdjustment,
+        computedFinalScore: baseScore + feedbackAdjustment,
+      };
+    });
+  }
+
+  private async getFeedbackAdjustments(sourceIds: string[]): Promise<Map<string, number>> {
+    return this.userSourcePreferenceService.getAdjustmentsForSources(DEFAULT_USER_ID, sourceIds);
+  }
+
+  private toScoreBreakdown(candidate: ScoredCandidate): DigestItemScoreBreakdown {
+    return {
+      baseScore: candidate.baseScore ?? candidate.computedFinalScore,
+      feedbackAdjustment: candidate.feedbackAdjustment ?? 0,
+      finalScore: candidate.computedFinalScore,
+    };
   }
 
   getRecencyScore(publishedAt: Date | null, config: DigestBuildConfig): number {
@@ -286,13 +331,16 @@ export class DigestBuilderService {
     return selected;
   }
 
-  private toEmailItems(selected: ScoredCandidate[]): DigestEmailItem[] {
+  private toEmailItems(
+    selected: ScoredCandidate[],
+    includeWhyItMatters: boolean,
+  ): DigestEmailItem[] {
     return selected.map((c, i) => ({
       position: i + 1,
       title: c.analysis.article.title,
       sourceName: c.analysis.article.source?.name ?? '',
       shortSummary: c.analysis.shortSummary,
-      whyItMatters: c.analysis.whyItMatters,
+      whyItMatters: includeWhyItMatters ? c.analysis.whyItMatters : undefined,
       url: c.analysis.article.url,
       matchedInterests: c.analysis.matchedInterests,
       articleId: c.analysis.articleId,
@@ -302,16 +350,34 @@ export class DigestBuilderService {
   private async gatherStats(windowHours: number): Promise<DigestStats> {
     const windowStart = new Date(Date.now() - windowHours * 60 * 60 * 1000);
 
-    const [articlesIngested, articlesPassedPreanalysis, articlesAnalyzed, totalArticlesInDb, totalSourcesActive] =
-      await Promise.all([
-        this.articleRepo.count({ where: { createdAt: MoreThanOrEqual(windowStart) } }),
-        this.relevanceRepo.count({
-          where: { preAnalysisIsRelevant: true, createdAt: MoreThanOrEqual(windowStart) },
-        }),
-        this.analysisRepo.count({ where: { createdAt: MoreThanOrEqual(windowStart) } }),
-        this.articleRepo.count(),
-        this.sourceRepo.count({ where: { enabled: true } }),
-      ]);
+    const [
+      articlesIngested,
+      articlesPassedPreanalysis,
+      articlesAnalyzed,
+      totalArticlesInDb,
+      totalSourcesActive,
+      feedSourcesActive,
+      webSourcesActive,
+      sourceCandidatesPending,
+    ] = await Promise.all([
+      this.articleRepo.count({ where: { createdAt: MoreThanOrEqual(windowStart) } }),
+      this.relevanceRepo.count({
+        where: { preAnalysisIsRelevant: true, createdAt: MoreThanOrEqual(windowStart) },
+      }),
+      this.analysisRepo.count({ where: { createdAt: MoreThanOrEqual(windowStart) } }),
+      this.articleRepo.count(),
+      this.sourceRepo.count({ where: { enabled: true } }),
+      this.sourceRepo.count({
+        where: {
+          type: In([SourceType.RSS, SourceType.ATOM, SourceType.GITHUB_RELEASE]),
+          enabled: true,
+        },
+      }),
+      this.sourceRepo.count({ where: { type: SourceType.WEB, enabled: true } }),
+      this.sourceCandidateRepo.count({
+        where: { status: In([SourceCandidateStatus.PENDING, SourceCandidateStatus.NEEDS_REVIEW]) },
+      }),
+    ]);
 
     return {
       windowHours,
@@ -320,6 +386,9 @@ export class DigestBuilderService {
       articlesAnalyzed,
       totalArticlesInDb,
       totalSourcesActive,
+      feedSourcesActive,
+      webSourcesActive,
+      sourceCandidatesPending,
     };
   }
 

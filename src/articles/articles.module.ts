@@ -1,15 +1,18 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ArticlesController } from './controllers/articles.controller';
 import { FeedbackClickController } from './controllers/feedback-click.controller';
 import { Article } from './entities/article.entity';
 import { ArticleFeedback } from './entities/article-feedback.entity';
-import { Source } from '../sources/entities/source.entity';
+import { SourcesModule } from '../sources/sources.module';
 import { ArticleFeedbackService } from './services/article-feedback.service';
 import { ArticlesService } from './services/articles.service';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Article, ArticleFeedback, Source])],
+  // SourcesModule needs ArticlesService (SourceCandidatesService, for candidate promotion
+  // sampling), so this import is circular — forwardRef here + on SourcesModule's side defers
+  // resolution until both modules have finished registering.
+  imports: [TypeOrmModule.forFeature([Article, ArticleFeedback]), forwardRef(() => SourcesModule)],
   controllers: [ArticlesController, FeedbackClickController],
   providers: [ArticlesService, ArticleFeedbackService],
   exports: [ArticlesService, ArticleFeedbackService],

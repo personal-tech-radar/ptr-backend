@@ -18,11 +18,13 @@ Every domain module lives at `src/<domain>/` with subdirectories: `controllers/`
 ## Entity Conventions
 
 - Place entities in `src/<domain>/entities/<domain>.entity.ts`.
-- Use `@PrimaryColumn('uuid')` with the UUID assigned in the constructor via `uuidv4()`.
-- Use explicit TypeORM column types (`varchar`, `boolean`, `bigint`, `jsonb`).
-- Timestamps as Unix milliseconds (`bigint` column, `number` in TypeScript). Do not use `Date` objects or `@CreateDateColumn`/`@UpdateDateColumn`.
-- Soft deletes: `deletedAt: number | null`. Always filter `deletedAt IS NULL` in queries.
+- Use `@PrimaryGeneratedColumn('uuid')` for the primary key. Do not assign UUIDs manually in the constructor.
+- Use explicit TypeORM column types (`varchar`, `boolean`, `decimal`, `jsonb`, `enum`) for everything else.
+- Timestamps are `Date` columns via `@CreateDateColumn()` / `@UpdateDateColumn()`. Do not use Unix-millisecond `bigint` timestamps.
+- Soft deletes: `@DeleteDateColumn({ type: 'timestamp', nullable: true }) deletedAt: Date | null`. Repository queries automatically exclude soft-deleted rows (TypeORM's default `find`/`findOne` behavior with `@DeleteDateColumn`) — use `withDeleted: true` only when a deleted row must be visible.
 - `synchronize: false` always. Generate a migration after every entity change.
+
+See `src/sources/entities/source.entity.ts` or any entity from `Source` onward for the canonical shape.
 
 ---
 

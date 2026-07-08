@@ -20,6 +20,13 @@ export enum ArticleStatus {
   SKIPPED = 'skipped',
 }
 
+export enum ContentExtractionMethod {
+  RSS = 'rss',
+  READABILITY = 'readability',
+  CHEERIO_SELECTOR = 'cheerio_selector',
+  PLAYWRIGHT = 'playwright',
+}
+
 @Entity('articles')
 export class Article {
   @PrimaryGeneratedColumn('uuid')
@@ -58,6 +65,19 @@ export class Article {
 
   @Column({ type: 'enum', enum: ArticleStatus, default: ArticleStatus.NEW })
   status: ArticleStatus;
+
+  @Column({
+    type: 'enum',
+    enum: ContentExtractionMethod,
+    default: ContentExtractionMethod.RSS,
+  })
+  contentExtractionMethod: ContentExtractionMethod;
+
+  @Column({ type: 'jsonb', nullable: true })
+  contentExtractionConfig: Record<string, unknown> | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  contentFetchedAt: Date | null;
 
   @DeleteDateColumn({ type: 'timestamp', nullable: true })
   deletedAt: Date | null;
