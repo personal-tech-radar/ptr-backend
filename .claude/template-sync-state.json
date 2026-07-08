@@ -1,19 +1,38 @@
 {
   "upstreamRepo": "https://github.com/mitersidorov/nestjs-project-template",
   "upstreamBranch": "main",
-  "lastReviewedCommit": "ead953ad3f65b5073cffaa9074393aa149827b6a",
-  "lastAppliedCommit": "ead953ad3f65b5073cffaa9074393aa149827b6a",
+  "lastReviewedCommit": "2078ad61bc6efea36cbcefb371072ca979e92760",
+  "lastAppliedCommit": "2078ad61bc6efea36cbcefb371072ca979e92760",
   "files": {
-    ".claude/agents/team-lead.md": { "status": "adopted", "note": "copied verbatim from upstream" },
-    ".claude/agents/system-analyst.md": { "status": "adopted", "note": "copied verbatim from upstream" },
-    ".claude/agents/template-maintainer.md": { "status": "adopted", "note": "copied verbatim from upstream" },
-    ".claude/agents/changelog.md": { "status": "adopted", "note": "copied verbatim from upstream" },
-    ".claude/agents/repo-publisher.md": { "status": "adopted", "note": "synced to add changelog-first step" },
-    ".claude/agents/template-curator.md": { "status": "adopted", "note": "no functional diff, trailing newline only" },
-    ".claude/settings.json": { "status": "adopted", "note": "SessionStart hook copied verbatim" },
-    "CLAUDE.md": { "status": "adopted", "note": "Delivery Workflow section added verbatim" },
-    "README.md": { "status": "adopted", "note": "Claude Agent Workflow section added, adapted to this project's actual specialist agents" },
+    ".claude/agents/team-lead.md": { "status": "adopted", "note": "copied verbatim from upstream; now owns CHANGELOG.md directly and requires explicit commit/push approval before repo-publisher" },
+    ".claude/agents/system-analyst.md": { "status": "adopted", "note": "copied verbatim from upstream; tools frontmatter added" },
+    ".claude/agents/template-maintainer.md": { "status": "adopted", "note": "copied verbatim from upstream; now owns both pull (sync) and push (curation via GitHub issue) directions, absorbing former template-curator responsibilities" },
+    ".claude/agents/repo-publisher.md": { "status": "adopted", "note": "synced to upstream's human commit/push approval gate; changelog-first-step language updated since team-lead now writes CHANGELOG.md itself" },
+    ".claude/agents/code-reviewer.md": { "status": "adopted", "note": "copied verbatim from upstream; adds Plan Conformance review responsibility and coder contract-review note" },
+    ".claude/agents/coder.md": {
+      "status": "adopted-with-correction",
+      "note": "merges former backend-architect+api-contracts+migrations per upstream. Upstream's Entity Conventions section still had the old generic guidance (manual uuidv4() constructor assignment, bigint Unix-millisecond timestamps) as of commit 2078ad6 — corrected on adoption to this project's actual, verified convention (@PrimaryGeneratedColumn('uuid'), @CreateDateColumn/@UpdateDateColumn/@DeleteDateColumn), matching src/sources/entities/source.entity.ts and every other entity in this codebase. This is an intentional, permanent divergence from upstream's coder.md until upstream fixes its own generic guidance."
+    },
+    ".claude/agents/qa-runner.md": {
+      "status": "adopted-with-correction",
+      "note": "upstream's generic version describes a Postgres/Redis/MinIO stack on node:22 with no migration:run step. Corrected on adoption (per code-reviewer finding) so 'The Stack' and 'Triage' sections match this project's actual, verified docker-compose.test.yml: no MinIO/S3 (unused here), node:20-alpine (matches this project's real Dockerfile), required migration:run step before start:prod. Cross-references the new docker-local-verification skill for full detail. Intentional, permanent divergence from upstream until upstream's own qa-runner.md becomes more project-aware or this project starts needing S3."
+    },
+    ".claude/agents/backend-architect.md": { "status": "removed", "note": "replaced by coder.md" },
+    ".claude/agents/api-contracts.md": { "status": "removed", "note": "replaced by coder.md" },
+    ".claude/agents/migrations.md": { "status": "removed", "note": "replaced by coder.md" },
+    ".claude/agents/changelog.md": { "status": "removed", "note": "folded into team-lead.md, which now writes CHANGELOG.md itself immediately before publish" },
+    ".claude/agents/template-curator.md": { "status": "removed", "note": "folded into template-maintainer.md's new curation (push) direction" },
+    ".claude/settings.json": { "status": "adopted", "note": "existing project SessionStart hook preserved; added upstream's PostToolUse auto-lint hook, PreToolUse migration-edit confirmation guard, force-push/amend block, and pre-push build+test verification gate, plus the read-only command permission allowlist" },
+    ".claude/skills/backend-review-checklist/SKILL.md": { "status": "adopted", "note": "added upstream's Plan Conformance section" },
+    "CLAUDE.md": { "status": "adopted", "note": "Delivery Workflow updated for coder/qa-runner/team-lead-owned-changelog; Never Touch Without Explicit Request gained the docker-compose.test.yml / qa-runner carve-out" },
+    "README.md": { "status": "adopted", "note": "agent table and delegation flow updated for the new agent set; new Local Verification (Docker) section added and corrected to describe this project's actual no-MinIO stack; embedded workflow diagram" },
+    "feature-implementation-workflow.puml": { "status": "adopted", "note": "copied verbatim from upstream repo root" },
+    "feature_implementation_workflow.png": { "status": "adopted", "note": "copied verbatim from upstream repo root, rendered from the .puml" },
+    "docker-compose.test.yml": { "status": "diverged", "note": "project-specific, not a verbatim copy of upstream's generic template: omits MinIO/S3 (unused by any domain module here), uses node:20-alpine (matches this project's real Dockerfile, not upstream's node:22), publishes no host port for postgres/redis, publishes the app on 3300 not 3000 to avoid local port conflicts. Actually built and boot-verified end-to-end (migrations ran, /health returned 200) before being committed." },
+    ".claude/skills/docker-local-verification/SKILL.md": { "status": "diverged", "note": "new project-specific skill, not present upstream; captures real findings from an actual docker-compose.test.yml boot verification (required env vars, port conflicts, MinIO omission rationale, dotenv/bind-mount gotcha) so the run skill's project-skill lookup has something concrete to find" },
     ".claude/skills/typeorm-migration-workflow/SKILL.md": { "status": "diverged", "note": "local addition documents a dist/ vs dist/src/ build fix specific to this project's tsconfig; not present upstream, kept intentionally" }
   },
-  "unresolvedNotes": []
+  "unresolvedNotes": [
+    "coder.md's entity-convention correction (see coder.md entry above) should ideally be upstreamed via template-maintainer's curation/push direction at some point, since upstream's own coder.md is still wrong, not just this project's copy of it."
+  ]
 }

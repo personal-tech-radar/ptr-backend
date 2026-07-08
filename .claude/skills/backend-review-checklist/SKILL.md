@@ -86,6 +86,18 @@ Use this skill as the review checklist when running the `code-reviewer` agent. W
 
 ---
 
+## Plan Conformance
+
+Only applies when a `system-analyst` plan was provided for this change. If none was provided (e.g. a tiny isolated edit `team-lead` made directly), skip this section entirely — do not report it as a gap.
+
+- [ ] Every item the plan marked **Required** is actually implemented.
+- [ ] **Related consistency work** the plan called out is either done, or explicitly deferred with a stated reason — not silently dropped.
+- [ ] Nothing the plan marked **Out of scope** was touched.
+- [ ] The plan's **Definition of Done** conditions are all actually met.
+- [ ] The implementation follows the plan's **Recommended approach** — if it diverged, the diversion is visible and justified, not silent.
+
+---
+
 ## Output Format
 
 ```

@@ -97,8 +97,8 @@ For test structure and implementation detail, use the `minimal-test-strategy` sk
 Allowed delegation direction only:
 
 ```
-team-lead → system-analyst → team-lead → specialist agents → code-reviewer → changelog → repo-publisher
-team-lead → template-maintainer → team-lead → code-reviewer → changelog → repo-publisher
+team-lead → system-analyst → team-lead → specialist agents → code-reviewer → qa-runner (if runtime-relevant) → team-lead (commit approval, then changelog) → repo-publisher
+team-lead → template-maintainer → team-lead → code-reviewer → team-lead (commit approval, then changelog) → repo-publisher
 ```
 
 Rules:
@@ -107,7 +107,8 @@ Rules:
 - **No implementation before approval.** `team-lead` waits for explicit user approval of the `system-analyst` plan before invoking any implementation agent.
 - **`template-maintainer` owns upstream sync analysis** against `https://github.com/mitersidorov/nestjs-project-template` — proposal mode (inspect/report only) unless `team-lead` invokes it in apply mode after explicit user approval. It never invokes `team-lead`, `system-analyst`, `repo-publisher`, or itself.
 - **`repo-publisher` is always terminal** — last agent in any chain, never invokes another agent, never merges a pull request.
-- **`changelog` runs immediately before `repo-publisher`** for every significant change.
+- **`team-lead` updates `CHANGELOG.md` itself**, after the user approves the change and immediately before publish, for every significant change — there is no separate changelog agent; documentation (including the changelog) is a team-lead responsibility.
+- **Two human checkpoints before anything ships:** `team-lead` asks the user to approve the change *before* writing the changelog entry or invoking `repo-publisher`, and `repo-publisher` separately confirms with the user again right before it commits and pushes.
 - **No recursion:** an agent must not invoke itself or its own parent, and a completed workflow stage is not re-run without a concrete unresolved finding.
 - **Session start:** `team-lead` triggers exactly one `template-maintainer` proposal-mode audit per session (see the `SessionStart` hook in `.claude/settings.json`), before the first substantive request. The audit inspects and reports only — it never triggers implementation, review, changelog, commit, push, or PR creation on its own.
 
@@ -120,7 +121,7 @@ See `.claude/agents/team-lead.md`, `system-analyst.md`, and `template-maintainer
 When you change the project in ways that affect behavior or structure:
 - **`README.md`** — update when adding domains, changing behavior, or adding env variables.
 - **`.env.example`** — add every new env variable with a description and a safe default.
-- **Instruction files** — update `CLAUDE.md` and the relevant `.claude/agents/` or `.claude/skills/` file when a new pattern or convention is established. Use the `template-curator` agent to judge whether a new pattern is specific to this service or belongs in the shared template instructions for every project built from it.
+- **Instruction files** — update `CLAUDE.md` and the relevant `.claude/agents/` or `.claude/skills/` file when a new pattern or convention is established. Use the `template-maintainer` agent (curation direction) to judge whether a new pattern is specific to this service or belongs in the shared template instructions for every project built from it.
 
 ---
 
@@ -145,8 +146,10 @@ When you change the project in ways that affect behavior or structure:
 ## Never Touch Without Explicit Request
 
 - `.env` files and secrets
-- Deployment configuration (Dockerfile, Docker Compose, CI pipelines)
+- Deployment configuration (Dockerfile, production Docker Compose, CI pipelines)
 - Infrastructure-critical settings (CORS origins, throttler limits, production data sources)
+
+**Exception:** `docker-compose.test.yml` is a local verification harness owned exclusively by `qa-runner`. It may create, run, and maintain this file and only this file — it is not deployment configuration and must never be confused with or promoted to a production compose file.
 
 ---
 

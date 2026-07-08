@@ -1,0 +1,74 @@
+# Local verification stack for the `qa-runner` agent. Not for production use —
+# see CLAUDE.md's "Never Touch Without Explicit Request" carve-out.
+#
+# ptr-backend does not use S3/MinIO at runtime: `S3StorageService` degrades to a no-op when
+# S3_ENDPOINT/credentials are absent, and no domain module (sources/articles/digest/ai-analysis/
+# feed-fetcher/mail/queue/scheduler) calls it — only app.module.ts registers the global module
+# from the base template. MinIO is intentionally omitted here; see the
+# `docker-local-verification` skill for the full reasoning and what was actually verified.
+#
+# Usage:
+#   docker compose -f docker-compose.test.yml up -d --wait
+#   docker compose -f docker-compose.test.yml logs -f app
+#   docker compose -f docker-compose.test.yml down -v
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ptr
+    # No host port published: the app reaches this over the compose network by service name.
+    # Avoids colliding with a developer's own local Postgres on 5432.
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres']
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+  redis:
+    image: redis:7-alpine
+    # No host port published — same reasoning as postgres above (avoids colliding with a
+    # developer's own local Redis on 6379).
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+  app:
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - .:/app
+    command: sh -c "npm ci && npm run build && npm run migration:run && npm run start:prod"
+    environment:
+      APP_NAME: ptr-backend
+      NODE_ENV: development
+      PORT: 3000
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_NAME: ptr
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ''
+      API_KEY: local-test-api-key
+      APP_URL: http://localhost:3000
+      FEEDBACK_TOKEN: local-test-feedback-token
+      OPENAI_API_KEY: sk-local-test-placeholder
+      OPENAI_MODEL: gpt-4o-mini
+      RESEND_API_KEY: re_local_test_placeholder
+      DIGEST_FROM_EMAIL: digest@example.com
+      DIGEST_TO_EMAIL: test@example.com
+    ports:
+      # Published to a non-default host port: 3000 is already bound locally on this machine
+      # (another running stack). Poll http://localhost:3300/health, not :3000, from the host.
+      - '3300:3000'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy

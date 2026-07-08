@@ -1,0 +1,82 @@
+@startuml feature-implementation-workflow
+title New Feature — Implementation Workflow (team-lead delivery chain)
+
+start
+
+:<&person> **Human**\nSubmits a feature request;<<#90EE90>>
+
+:<&cog> **team-lead**\nClassifies the request;<<#D6EAF8>>
+if (Substantive change?) then (no)
+  :<&cog> **team-lead**\nAnswers directly or makes the isolated edit;<<#D6EAF8>>
+  stop
+endif
+
+if (First substantive request this session?) then (yes)
+  :<&cog> **team-lead**\nTriggers the session-start audit;<<#D6EAF8>>
+  :<&cog> **template-maintainer**\nPulls the latest upstream template state and\nreports what changed (proposal mode — read-only,\nat most once per session);<<#D6EAF8>>
+endif
+
+:<&cog> **team-lead**\nDelegates to system-analyst;<<#D6EAF8>>
+
+repeat
+  :<&cog> **system-analyst**\nInspects the codebase (CLAUDE.md, README, modules, DTOs,\ntests, CHANGELOG, git history)\nChecks conflicts against architecture and project conventions\nApplies scope guard (Required / Related / Optional / Out of scope);<<#D6EAF8>>
+  if (Blocking questions?) then (yes)
+    :<&cog> **system-analyst**\nRaises blocking questions;<<#D6EAF8>>
+    :<&cog> **team-lead**\nRelays the question to the user;<<#D6EAF8>>
+    :<&person> **Human**\nAnswers the question;<<#90EE90>>
+  endif
+repeat while (Questions still open?) is (yes) not (no)
+:<&cog> **system-analyst**\nReturns a plan (approach, scope, steps, impact,\nvalidation, delivery chain, Definition of Done);<<#D6EAF8>>
+
+:<&cog> **team-lead**\nRelays the plan to the user;<<#D6EAF8>>
+
+repeat
+  :<&person> **Human**\nReviews the plan;<<#90EE90>>
+repeat while (Plan approved?) is (no) not (yes)
+
+:<&cog> **team-lead**\nAssembles the delivery chain from the plan's Recommended Delivery Chain;<<#D6EAF8>>
+
+repeat
+  :<&cog> **coder**\nImplements (modules, entities, DTOs, migrations, tests);<<#D6EAF8>>
+  note right
+    PostToolUse hook auto-lints every .ts on save.
+    PreToolUse hook requires confirmation before
+    hand-editing src/migrations/*.ts.
+  end note
+  :<&cog> **code-reviewer**\nReviews (architecture, contracts, plan conformance,\ndocs freshness, test coverage);<<#D6EAF8>>
+  if (Violations found?) then (no)
+    :<&cog> **qa-runner**\nBoots the app against a real Docker-based\nPostgres/Redis/MinIO stack (docker-compose.test.yml)\nand verifies it actually runs;<<#D6EAF8>>
+    note right
+      Fixes environment-wiring issues itself.
+      Reports genuine app bugs back to team-lead,
+      which routes them back to coder.
+    end note
+  endif
+repeat while (Violations or runtime issues found?) is (yes) not (no)
+
+if (Established a reusable template convention?) then (yes)
+  :<&cog> **team-lead**\nInvokes template-maintainer to curate it;<<#D6EAF8>>
+  :<&cog> **template-maintainer**\nFiles a GitHub issue suggesting the template update\n(no file written, no branch, no PR — a human decides);<<#D6EAF8>>
+endif
+
+repeat
+  :<&person> **Human**\nReviews the change;<<#90EE90>>
+repeat while (Approved to commit and push?) is (no) not (yes)
+
+if (Change is significant?) then (yes)
+  :<&cog> **team-lead**\nAdds a dated, branch-tagged CHANGELOG.md entry;<<#D6EAF8>>
+endif
+
+:<&cog> **repo-publisher**\nCommits, pushes, and opens a pull request;<<#D6EAF8>>
+note right
+  PreToolUse hook blocks git push --force and
+  git commit --amend outright.
+  PreToolUse hook runs build + test before any
+  git push and denies the push on failure.
+end note
+
+:<&person> **Human**\nReviews and merges the PR;<<#90EE90>>
+
+stop
+
+@enduml

@@ -398,13 +398,27 @@ This repo uses a role-based set of Claude Code agents under `.claude/agents/`. `
 
 | Agent | Role |
 |---|---|
-| `team-lead` | Entry point and workflow owner. Classifies requests and orchestrates the rest. |
+| `team-lead` | Entry point and workflow owner. Classifies requests, orchestrates the rest, updates `CHANGELOG.md` itself, and asks the user to approve the change before it ships. |
 | `system-analyst` | Planning-only: discovery, conflict/risk analysis, scope, and an implementation plan. No code, no commits. |
-| `template-maintainer` | Compares this project's agents/skills/instructions against the upstream template and proposes (or, once approved, applies) updates. |
-| `backend-architect`, `api-contracts`, `migrations` | Implementation specialists for modules, contracts, and schema. |
+| `template-maintainer` | Owns both directions of template alignment: compares this project's agents/skills/instructions against the upstream template and proposes (or, once approved, applies) updates, and judges whether a new convention this project just built belongs in the shared template instructions. |
+| `coder` | Implementation specialist for modules, entities, API contracts, and migrations. |
 | `code-reviewer` | Reviews changes against template architecture. |
-| `changelog` | Records significant changes in `CHANGELOG.md` before publishing. |
-| `template-curator` | Judges whether a new convention belongs in the shared template instructions. |
-| `repo-publisher` | Terminal step: commits, pushes, opens a PR. Never merges. |
+| `qa-runner` | Boots the app against a real Docker-based Postgres/Redis stack (`docker-compose.test.yml`) to catch runtime issues static review can't. |
+| `repo-publisher` | Terminal step: confirms with the user, then commits, pushes, and opens a PR. Never merges. |
 
-Delegation always flows `team-lead → system-analyst → team-lead → specialists → code-reviewer → changelog → repo-publisher` (or `team-lead → template-maintainer → team-lead → ...` for template sync). A session-start hook prompts `team-lead` to run one `template-maintainer` audit per session. See `CLAUDE.md` for the full orchestration rules.
+Delegation always flows `team-lead → system-analyst → team-lead → specialists → code-reviewer → qa-runner → team-lead → repo-publisher` (or `team-lead → template-maintainer → team-lead → ...` for template sync). A session-start hook prompts `team-lead` to run one `template-maintainer` audit per session. See `CLAUDE.md` for the full orchestration rules.
+
+The full block scheme (source: `feature-implementation-workflow.puml`):
+
+![New feature implementation workflow](feature_implementation_workflow.png)
+
+## Local Verification (Docker)
+
+`docker-compose.test.yml` at the repo root spins up Postgres and Redis plus the app itself for real runtime verification before a change ships — owned by the `qa-runner` agent, separate from the mock-based unit tests in `minimal-test-strategy`. This project's stack intentionally omits MinIO/S3 (not used by any domain module) and publishes the app on host port `3300` instead of `3000` to avoid colliding with other local stacks. See the `docker-local-verification` skill for the full reasoning, required env vars, and gotchas found while verifying this end-to-end.
+
+```bash
+docker compose -f docker-compose.test.yml up -d --wait
+curl http://localhost:3300/health
+docker compose -f docker-compose.test.yml logs app
+docker compose -f docker-compose.test.yml down -v
+```

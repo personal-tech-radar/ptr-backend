@@ -1,4 +1,13 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(npm test)",
+      "Bash(npm run build)",
+      "Bash(npx jest *)",
+      "Bash(npm run test)",
+      "Bash(npx tsc *)"
+    ]
+  },
   "hooks": {
     "SessionStart": [
       {
@@ -16,6 +25,47 @@
           {
             "type": "command",
             "command": "cat <<'JSONEOF'\n{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"Team Lead: before handling the first substantive or template-synchronization request this session, invoke template-maintainer once in proposal mode for a startup synchronization audit (inspect and report only; never modify files; never trigger implementation, review, changelog, commit, push, or PR creation from this audit). Skip it entirely for informational requests and tiny isolated edits. Run it at most once per session — do not repeat it later even if this hook fires again.\"}}\nJSONEOF"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "statusMessage": "Linting...",
+            "command": "jq -r '.tool_input.file_path // .tool_response.filePath // empty' | { read -r f; case \"$f\" in *.ts) npx eslint --fix \"$f\" ;; esac; } 2>/dev/null || true"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Edit(src/migrations/*)",
+            "command": "jq -r '.tool_input.file_path // empty' | { read -r f; case \"$f\" in */src/migrations/*.ts) echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"ask\",\"permissionDecisionReason\":\"Migrations are generated via the TypeORM CLI, not hand-edited. Confirm this edit was explicitly requested before proceeding.\"}}' ;; esac; }"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Bash(git *)",
+            "command": "jq -r '.tool_input.command // empty' | { read -r c; if echo \"$c\" | grep -qE 'git +push[^|;&]*--force|git +commit[^|;&]*--amend'; then echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Force-push and amend are blocked by project policy (see repo-publisher.md). Tell the user directly if this is genuinely needed.\"}}'; fi; }"
+          },
+          {
+            "type": "command",
+            "if": "Bash(git push:*)",
+            "timeout": 180,
+            "statusMessage": "Verifying build and tests before push...",
+            "command": "jq -r '.tool_input.command // empty' | { read -r c; case \"$c\" in *\"git push\"*) if npm run build >/tmp/qa-verify.log 2>&1 && npx jest --passWithNoTests >>/tmp/qa-verify.log 2>&1; then :; else echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Build or test failed before push — see /tmp/qa-verify.log. Fix before pushing.\"}}'; fi ;; esac; }"
           }
         ]
       }
