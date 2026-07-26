@@ -200,6 +200,44 @@ Fully global, two-stage pipeline against a single `ArticleAnalysis` row per arti
 
 `DEFAULT_USER_ID` lives at `src/articles/constants/default-user.constant.ts` (relocated out of this module, since analysis is no longer user-scoped) and is still used by `ArticleFeedbackService`/`UserSourcePreferenceService`/digest recipient personalization until later multi-tenant phases.
 
+### ScoringModule
+Services-only module (no controller, no HTTP endpoint, no schema change) implementing deterministic, no-LLM personal relevance scoring against the global `ArticleAnalysis`/taxonomy data. Consumed by later phases (Personal Feed, Public Preview) that don't exist yet.
+
+`RelevanceScoringService.computeScore(article, profile, config = DEFAULT_SCORING_CONFIG)` is pure and stateless (no repository injection). Formula:
+
+```
+eligible = article's streams (mainStreamId + secondary ArticleStream ids) intersect the user's selected content streams
+if !eligible: score = 0, all breakdown fields zero
+
+techInterestOverlap: 0 matches (article has tags but none overlap) -> 0
+                     0 matches (article has no tags at all)        -> 50 (neutral)
+                     1 match -> 60 | 2 matches -> 80 | 3+ matches -> 100
+complexityMatch = COMPLEXITY_MATCH_TABLE[user.level][article.complexityLevel] (either side null -> 50)
+qualityScore = ArticleAnalysis.qualityScore, or 50 if null
+recencyScore = shared bucketed recency score (100 fresh / 80 recent / 50 older-or-unknown), same bucketing DigestModule uses (DEFAULT_SCORING_CONFIG specifically uses the daily digest's 12h/24h window, not weekly's 24h/72h or deep-dive's 48h/96h)
+
+coreScore = techInterestOverlap × 0.45 + complexityMatch × 0.20 + qualityScore × 0.25 + recencyScore × 0.10
+score = coreScore + sourcePreferenceAdjustment + directFeedbackAdjustment   // additive, not re-clamped after summing
+```
+
+Complexity-match table (row = user level, column = article complexity):
+
+| User level ↓ / Article complexity → | beginner | intermediate | advanced | architect |
+|---|---|---|---|---|
+| **junior** | 100 | 70 | 30 | 10 |
+| **middle** | 60 | 100 | 70 | 30 |
+| **senior** | 20 | 50 | 100 | 90 |
+
+**Content-stream mismatch is the only hard exclusion.** If none of the article's streams (main or secondary) are among the user's selected content streams, the article is `eligible: false` and scored 0 — it is filtered out upstream of ranking, not merely down-ranked.
+
+**Per-article feedback is a soft adjustment, not a hard exclusion — this is a deliberate product decision, not an oversight.** A `not_useful` vote on the exact article applies a `-8` penalty; a `useful` vote applies a `+8` bonus; no vote applies `0`. Either way the article remains eligible and is still scored and ranked — mirroring the existing source-level `UserSourcePreference.feedbackAdjustment` treatment in `DigestModule`, which is also additive rather than gating.
+
+`sourcePreferenceAdjustment` reuses `UserSourcePreferenceService.getAdjustmentsForSources(userId, sourceIds)` (the same ±8-clamped, additively-smoothed value `DigestModule` uses). `directFeedbackAdjustment` reads the user's own `ArticleFeedback` row for that exact article (`useful`/`not_useful`). **Both `UserSourcePreference` and `ArticleFeedback` are keyed by a `varchar` `userId` (not yet a real FK)** — calling either with a real user id is expected to return empty/neutral results until Phases 5/10/11 populate real per-user feedback data. That's expected behavior for this phase, not a gap.
+
+`UserScoringProfileService.buildProfile(userId, candidateSourceIds, candidateArticleIds)` batch-assembles a `ScoringProfile` for a user: selected technology/interest ids and content-stream ids (via `TechnologyInterestQueryService.findSelectedByUser`/`ContentStreamQueryService.findSelectedByUser`), `level` (via `UserQueryService.findById`), `sourcePreferenceAdjustments` (via `UserSourcePreferenceService.getAdjustmentsForSources`), and `articleFeedback` (a batched `ArticleFeedback` repository query). Empty candidate ID arrays return empty maps without erroring.
+
+The bucketed recency scoring itself (`getRecencyScore(publishedAt, freshHours, recentHours)`) was extracted out of `DigestBuilderService` into a shared pure utility at `src/common/util/recency-score.util.ts`, reused by both `DigestModule` and `ScoringModule`. `DigestBuilderService.getRecencyScore`'s own public signature is unchanged and now just delegates to the shared util.
+
 ### DigestModule
 Selects the best `DAILY_DIGEST_ARTICLES_LIMIT` articles (default 3) for the daily digest, and 5 articles each for the weekly and deep-dive digests, using a time-window fallback (24 h → 48 h → 72 h for daily; a relaxed-threshold fallback for weekly/deep-dive). Articles already present in any digest with status `draft` or `sent` are excluded. Ranking formula:
 
