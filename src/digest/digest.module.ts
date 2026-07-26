@@ -6,8 +6,9 @@ import { FeedFetcherModule } from '../feed-fetcher/feed-fetcher.module';
 import { MailModule } from '../mail/mail.module';
 import { QueueModule } from '../queue/queue.module';
 import { SourcesModule } from '../sources/sources.module';
+import { TaxonomyModule } from '../taxonomy/taxonomy.module';
 import { ArticleAnalysis } from '../ai-analysis/entities/article-analysis.entity';
-import { ArticleRelevance } from '../ai-analysis/entities/article-relevance.entity';
+import { ArticleTechnologyInterest } from '../ai-analysis/entities/article-technology-interest.entity';
 import { Article } from '../articles/entities/article.entity';
 import { SourceCandidate } from '../sources/entities/source-candidate.entity';
 import { Source } from '../sources/entities/source.entity';
@@ -27,7 +28,7 @@ import { EmailTemplateService } from './services/email-template.service';
       Digest,
       DigestItem,
       ArticleAnalysis,
-      ArticleRelevance,
+      ArticleTechnologyInterest,
       Article,
       Source,
       SourceCandidate,
@@ -38,6 +39,7 @@ import { EmailTemplateService } from './services/email-template.service';
     ArticlesModule,
     FeedFetcherModule,
     SourcesModule,
+    TaxonomyModule,
   ],
   controllers: [DigestController],
   providers: [

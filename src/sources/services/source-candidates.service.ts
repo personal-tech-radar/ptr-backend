@@ -160,19 +160,19 @@ export class SourceCandidatesService {
     let relevantCount = 0;
     for (const article of sampledArticles) {
       const relevance = await this.aiAnalysisService.preAnalyzeArticle(article.id);
-      if (relevance.preAnalysisIsRelevant) relevantCount++;
+      if (relevance.preScreenIsRelevant) relevantCount++;
     }
 
     if (relevantCount >= PROMOTION_RELEVANCE_THRESHOLD) {
       await this.sourceRepo.update(source.id, { enabled: true });
 
-      // These sample Articles (and their cascade-linked ArticleRelevance rows — FK ON DELETE
-      // CASCADE, see AddArticleRelevanceTable migration) were scratch work to evaluate
-      // promotion, not real ingestion. Hard-delete them so findByUrlHash finds nothing for these
-      // URLs on the now-enabled source's next fetch cycle: they get freshly re-ingested through
-      // the normal PENDING_ANALYSIS -> QueueService.addAnalyzeArticleJob path instead of being
-      // stranded at NEW forever (neither fetcher re-processes a URL with an existing Article row,
-      // regardless of status).
+      // These sample Articles (and their cascade-linked ArticleAnalysis/ArticleTechnologyInterest/
+      // ArticleStream rows — FK ON DELETE CASCADE, see the GlobalArticleAnalysisRework migration)
+      // were scratch work to evaluate promotion, not real ingestion. Hard-delete them so
+      // findByUrlHash finds nothing for these URLs on the now-enabled source's next fetch cycle:
+      // they get freshly re-ingested through the normal PENDING_ANALYSIS ->
+      // QueueService.addAnalyzeArticleJob path instead of being stranded at NEW forever (neither
+      // fetcher re-processes a URL with an existing Article row, regardless of status).
       await this.articlesService.deleteByIds(sampledArticles.map((article) => article.id));
 
       candidate.status = SourceCandidateStatus.PROMOTED;

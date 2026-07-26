@@ -8,10 +8,10 @@ A NestJS service that automatically curates a daily engineering digest. It fetch
 
 1. A cron job fires every hour and dispatches a `fetch-all-sources` BullMQ job.
 2. The feed fetcher downloads each enabled source, parses RSS/Atom/GitHub releases, and saves all new articles to PostgreSQL. Duplicates are detected by URL hash; near-duplicates by title hash within 7 days. Articles older than 78 hours are stored but not queued for analysis.
-3. Each fresh article (≤ 78 h old, not a duplicate) triggers an `analyze-article` job. Analysis runs in two stages:
-   - **Pre-analysis** — a lightweight OpenAI call using only the article title and feed description. Returns `isPotentiallyRelevant` + a one-sentence reason. The result is saved as an `ArticleRelevance` record (per user). This stage acts as a cheap relevance gate and avoids spending tokens on full analysis for clearly irrelevant content.
-   - **Full analysis** — runs only when `preAnalysisIsRelevant = true`. Calls OpenAI with the full article context, produces `relevanceScore`, `qualityScore`, scoring flags, and a digest summary. Stored in `ArticleAnalysis` (shared across users). The `ArticleRelevance` record is updated with a `fullAnalysisId` link. Full analysis is reused if it already exists for the article.
-4. A second cron job fires daily (default 07:00 UTC) and dispatches `build-daily-digest`. The digest builder selects only articles with a relevant `ArticleRelevance` record (`preAnalysisIsRelevant = true`) and attempts to find at least `DAILY_DIGEST_ARTICLES_LIMIT` (default 3) using a time-window fallback: 24 h → 48 h → 72 h. Articles already included in any previously built or sent digest are excluded. Ranking: relevance × 0.45 + quality × 0.30 + source trust × 0.15 + recency × 0.10. Source/category diversification is applied and up to `DAILY_DIGEST_ARTICLES_LIMIT` items are selected. Build metadata is stored in `buildDebug`.
+3. Each fresh article (≤ 78 h old, not a duplicate) triggers an `analyze-article` job. Analysis is global (no per-user dimension) and runs in two stages against a single `ArticleAnalysis` row per article:
+   - **Pre-screen (Stage 1)** — a lightweight OpenAI call using only the article title and feed description. Returns `preScreenIsRelevant` + `preScreenReason`. This stage acts as a cheap relevance gate and avoids spending tokens on full analysis for clearly irrelevant content.
+   - **Full analysis (Stage 2)** — runs only when `preScreenIsRelevant = true`. Calls OpenAI with the full article context, produces `relevanceScore`, `qualityScore`, scoring flags, taxonomy signals, and a digest summary, and stamps `fullAnalysisAt`. Full analysis is skipped (idempotent resume) if it already ran for the article.
+4. A second cron job fires daily (default 07:00 UTC) and dispatches `build-daily-digest`. The digest builder selects only fully-analyzed, pre-screen-relevant articles (`ArticleAnalysis.preScreenIsRelevant = true` and `fullAnalysisAt IS NOT NULL`) and attempts to find at least `DAILY_DIGEST_ARTICLES_LIMIT` (default 3) using a time-window fallback: 24 h → 48 h → 72 h. Articles already included in any previously built or sent digest are excluded. Ranking: relevance × 0.45 + quality × 0.30 + source trust × 0.15 + recency × 0.10. Source/category diversification is applied and up to `DAILY_DIGEST_ARTICLES_LIMIT` items are selected. Build metadata is stored in `buildDebug`.
 5. The digest is saved as a draft, then the email is rendered and sent through Resend. The digest status is updated to `sent`.
 6. At any time, `POST /digests/daily/resend-latest` re-sends the most recently built digest without rebuilding it.
 
@@ -101,6 +101,8 @@ Personalization taxonomy, separate from `Source.category` (which classifies wher
 
 `TechnologyInterestCommandService.createOrReuse(userId, kind, name)` wraps the resolver: links the resolved/created row to the calling user (upsert-ignore — never errors if already linked), and — only when a genuinely new row was created — enqueues a job on the isolated `taxonomy-source-discovery` queue (see QueueModule below).
 
+`TechnologyInterestResolverService.resolveExisting(kind, rawName)` and `ContentStreamQueryService.findByKey(key)` are read-only lookups (exact + alias match only for the former, no similarity search, no create-on-miss) consumed by `AiAnalysisModule`'s Stage 2 full analysis to resolve an article's LLM-suggested technology/interest/stream signals against the existing catalog — an article's analysis output must never grow the taxonomy, so only `resolve()` (called exclusively from onboarding) ever creates a new `TechnologyInterest` row.
+
 **Endpoints:**
 - `GET /technology-interests?kind=&q=&page=&limit=` — paginated typeahead search, `JwtAuthGuard`.
 - `GET /content-streams` — the 5 enabled streams, `JwtAuthGuard`.
@@ -148,7 +150,7 @@ A `SourceCandidate` (`source_candidates` table) is a not-yet-vetted URL — crea
 2. On success, creates a **provisional** `Source` with `enabled: false` (so the normal fetch cycle's `findAllEnabled` never picks it up mid-evaluation). When `detectedType` is `rss`/`atom` and discovery captured the actual working feed URL, a genuine `rss`/`atom` `Source` is created (no `WebSourceConfig`) — the same lean shape a real feed source would get. Otherwise (web-detected, or a feed URL wasn't captured) it creates `type: 'web'` plus a `WebSourceConfig` recipe, seeded with the candidate's own URL as the entry point (not discovery's output — using discovered article permalinks as the recurring crawl seed would break future re-discovery cycles). `SourceCandidate.detectedType` always records the real underlying mechanism as metadata regardless of which path was taken.
 3. Samples up to 5 of the entry URLs discovery already found (no separate crawl), fetches and extracts each via `ContentExtractionService`, and creates a minimal `Article` row per sample tied to the provisional source.
 4. Runs **pre-analysis only** (`AiAnalysisService.preAnalyzeArticle`) on each sampled article — never full analysis, preserving the token-economy pattern above.
-5. If ≥ 2 sampled articles come back `preAnalysisIsRelevant`, the provisional `Source` is flipped to `enabled: true` and the candidate is marked `promoted`. Otherwise the provisional `Source` is deleted (`ON DELETE CASCADE` removes its `WebSourceConfig` and sample `Article` rows with it) and the candidate is marked `needs_review` with a `validationError` explaining the relevant/sampled count — a candidate is never silently discarded.
+5. If ≥ 2 sampled articles come back `preScreenIsRelevant`, the provisional `Source` is flipped to `enabled: true` and the candidate is marked `promoted`. Otherwise the provisional `Source` is deleted (`ON DELETE CASCADE` removes its `WebSourceConfig` and sample `Article` rows with it) and the candidate is marked `needs_review` with a `validationError` explaining the relevant/sampled count — a candidate is never silently discarded.
 
 A candidate's `proposedConfig` (jsonb) can carry a `name`/`category` hint for the eventual `Source`; absent that, the domain is used as the name and a generic default category is applied.
 
@@ -176,23 +178,27 @@ Fetches RSS/Atom/GitHub release feeds using `rss-parser`. Deduplicates by `urlHa
 `FeedFetcherService.fetchSource` branches on `source.type`: `web` sources are delegated entirely to `WebSourceFetcherService` (see SourcesModule above for the discovery/extraction chain); every other type keeps the original `rss-parser` path unchanged. Both paths run on the same `feed-fetch` cadence/queue — except the Playwright browser-fetch fallback, which runs on its own isolated `web-source-browser-fetch` queue (see QueueModule below) so a slow/hung site can never stall the rest of the hourly cycle. Article URLs are normalized (UTM/tracking params and fragments stripped, hostname lowercased, trailing slash removed — `src/common/util/url-normalize.util.ts`) before hashing/dedup.
 
 ### AiAnalysisModule
-Two-stage pipeline to minimise token usage and prepare for multi-user relevance.
+Fully global, two-stage pipeline against a single `ArticleAnalysis` row per article — no per-user dimension (the old per-user `ArticleRelevance` pre-screen gate was removed; `article_relevances` no longer exists). The row is created at Stage 1 and completed in place by Stage 2; `fullAnalysisAt` is the single source of truth for "has Stage 2 run".
 
-**Stage 1 — Pre-analysis** (`ArticleRelevance` table, per user):
+**Stage 1 — Pre-screen** (`ArticleAnalysis.preScreenIsRelevant`/`preScreenReason`/`preScreenAt`):
 - Input: article title + feed description only (no full content, no URL)
-- Output: `isPotentiallyRelevant` (boolean) + `shortReason` (one sentence)
-- Prompt: `config/ai-analysis/instructions/pre-analyze-article.txt`
-- If `false`: article marked `ANALYZED`, pipeline stops for this user
+- Output: `preScreenIsRelevant` (boolean) + `preScreenReason` (one sentence)
+- Prompt: `src/ai-analysis/instructions/pre-analyze-article.txt`
+- Creates the `ArticleAnalysis` row if none exists yet. If `false`: article marked `ANALYZED`, pipeline stops.
+- `AiAnalysisService.preAnalyzeArticle(articleId)` runs this stage in isolation (used by `SourceCandidatesService` to sample candidate articles without spending full-analysis tokens) and is idempotent — returns the existing row if one is already there.
 
-**Stage 2 — Full analysis** (`ArticleAnalysis` table, shared across users):
-- Runs only when `preAnalysisIsRelevant = true`
+**Stage 2 — Full analysis** (fills in the same `ArticleAnalysis` row, stamps `fullAnalysisAt`):
+- Runs only when `preScreenIsRelevant = true` and `fullAnalysisAt` is still null (idempotent — a row that already completed Stage 2 is never recomputed)
 - Input: title, URL, author, feed summary
-- Output: `relevanceScore`, `qualityScore`, `shouldIncludeInDailyDigest`, `shortSummary`, tags, etc.
-- Prompt: `config/ai-analysis/instructions/analyze-article.txt`
-- If `ArticleAnalysis` already exists for this article, it is reused (not recomputed)
-- `ArticleRelevance.fullAnalysisId` is set after full analysis completes
+- Prompt: `src/ai-analysis/instructions/analyze-article.txt`
+- Output fields on `ArticleAnalysis`: `shortSummary`, `whyItMatters`, `practicalValue`, `tags`, `relevanceScore`, `qualityScore`, `finalScore`, `deepDiveScore`, `complexityLevel` (`beginner`/`intermediate`/`advanced`/`architect`), `materialType` (`article`/`tutorial`/`release_notes`/`announcement`/`opinion`/`case_study`/`reference`), `urgencyScore`, `evergreen`, `breakingChanges`, `releaseData`/`securityData` (loose JSONB, only populated when relevant), `mainStreamId`, and the three `shouldIncludeIn*Digest` flags. Every Stage-2-only field is nullable, since the row exists from Stage 1 onward.
+- Taxonomy resolution is read-only against the existing catalog: the LLM's `technologySignals`/`interestSignals` are each resolved via `TechnologyInterestResolverService.resolveExisting()` (exact + alias match only — never creates a new catalog row); matched signals become `ArticleTechnologyInterest` join rows, unmatched signals are dropped silently. The LLM's `mainStreamKey` (required) and up to 2 `secondaryStreamKeys` are resolved via `ContentStreamQueryService.findByKey()` against the fixed 5-key catalog. `ArticleAnalysis.mainStreamId` and the corresponding `ArticleStream` rows (`isPrimary: true` for main, `false` for secondary) are written together inside one `DataSource.transaction()`, so the denormalized column and the join-table flag can never disagree — enforced at the DB level too via a partial unique index (`IDX_article_streams_primary_per_article`, at most one `isPrimary = true` row per article).
 
-User interests are loaded from `config/user-interests.yaml`. The default user ID is `default_user`; the schema supports multiple users via the `(articleId, userId)` unique constraint on `article_relevances`.
+**New join tables:**
+- `article_technology_interests` — `(articleId, technologyInterestId)`, FKs directly against `Article`/`TechnologyInterest` (mirrors `ArticleFeedback`'s shape), valid even before Stage 2 runs.
+- `article_streams` — `(articleId, streamId, isPrimary)`, same FK pattern.
+
+`DEFAULT_USER_ID` lives at `src/articles/constants/default-user.constant.ts` (relocated out of this module, since analysis is no longer user-scoped) and is still used by `ArticleFeedbackService`/`UserSourcePreferenceService`/digest recipient personalization until later multi-tenant phases.
 
 ### DigestModule
 Selects the best `DAILY_DIGEST_ARTICLES_LIMIT` articles (default 3) for the daily digest, and 5 articles each for the weekly and deep-dive digests, using a time-window fallback (24 h → 48 h → 72 h for daily; a relaxed-threshold fallback for weekly/deep-dive). Articles already present in any digest with status `draft` or `sent` are excluded. Ranking formula:
@@ -215,7 +221,9 @@ Each `DigestItem` also stores a `scoreBreakdown` JSONB column (`{ baseScore, fee
 
 Daily digest emails omit the `whyItMatters` paragraph per article; weekly and deep-dive digests still include it.
 
-**Footer statistics block:** every digest email's footer carries two stats blocks side by side. The pipeline block (pre-MVP3) reports `articlesIngested`/`articlesPassedPreanalysis`/`articlesAnalyzed` over the digest's time window plus running DB totals (`totalArticlesInDb`, `totalSourcesActive`). Alongside it, a sources block reports `feedSourcesActive` (enabled `Source` rows of type `rss`/`atom`/`github_release`), `webSourcesActive` (enabled `Source` rows of type `web`), and `sourceCandidatesPending` (`SourceCandidate` rows with status `pending` or `needs_review` — explicitly excluding `rejected`/`promoted`). Both blocks are computed in `DigestBuilderService.gatherStats` and rendered by `EmailTemplateService` in both the HTML and plain-text variants.
+**Footer statistics block:** every digest email's footer carries two stats blocks side by side. The pipeline block (pre-MVP3) reports `articlesIngested`/`articlesPassedPreanalysis`/`articlesAnalyzed` over the digest's time window (from `ArticleAnalysis.preScreenIsRelevant = true` and `fullAnalysisAt IS NOT NULL` counts, respectively) plus running DB totals (`totalArticlesInDb`, `totalSourcesActive`). Alongside it, a sources block reports `feedSourcesActive` (enabled `Source` rows of type `rss`/`atom`/`github_release`), `webSourcesActive` (enabled `Source` rows of type `web`), and `sourceCandidatesPending` (`SourceCandidate` rows with status `pending` or `needs_review` — explicitly excluding `rejected`/`promoted`). Both blocks are computed in `DigestBuilderService.gatherStats` and rendered by `EmailTemplateService` in both the HTML and plain-text variants.
+
+Each selected digest item's `matchedInterests` in the rendered email is resolved via a batched query joining `ArticleTechnologyInterest` → `TechnologyInterest.name` for the articles actually selected (built in `DigestBuilderService.buildMatchedInterestsMap`) — not read directly off `ArticleAnalysis` (which no longer has a `matchedInterests` column).
 
 - `POST /digests/daily/resend-latest` — resend latest built/sent digest via Resend
 

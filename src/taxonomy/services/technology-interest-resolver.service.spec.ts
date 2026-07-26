@@ -125,4 +125,50 @@ describe('TechnologyInterestResolverService', () => {
       }),
     );
   });
+
+  describe('resolveExisting', () => {
+    it('returns an exact normalizedName match without querying alias/similarity', async () => {
+      const existing = {
+        id: 'ti-1',
+        normalizedName: 'kubernetes',
+        aliases: [],
+      } as unknown as TechnologyInterest;
+      mockRepository.findOne.mockResolvedValue(existing);
+
+      const result = await service.resolveExisting(TechnologyInterestKind.TECHNOLOGY, 'Kubernetes');
+
+      expect(result).toEqual(existing);
+      expect(mockRepository.createQueryBuilder).not.toHaveBeenCalled();
+    });
+
+    it('returns an alias match when no exact match exists', async () => {
+      mockRepository.findOne.mockResolvedValue(null);
+      const aliasMatch = {
+        id: 'ti-2',
+        normalizedName: 'k8s',
+        aliases: ['kube'],
+      } as TechnologyInterest;
+      mockQueryBuilder.getOne.mockResolvedValueOnce(aliasMatch);
+
+      const result = await service.resolveExisting(TechnologyInterestKind.TECHNOLOGY, 'kube');
+
+      expect(result).toEqual(aliasMatch);
+    });
+
+    it('returns null on a total miss, without a similarity search or create', async () => {
+      mockRepository.findOne.mockResolvedValue(null);
+      mockQueryBuilder.getOne.mockResolvedValue(null);
+
+      const result = await service.resolveExisting(
+        TechnologyInterestKind.TECHNOLOGY,
+        'brand-new-thing',
+      );
+
+      expect(result).toBeNull();
+      expect(mockRepository.create).not.toHaveBeenCalled();
+      expect(mockRepository.save).not.toHaveBeenCalled();
+      // Only the alias-tier query builder call is issued — no similarity() ordering call.
+      expect(mockQueryBuilder.orderBy).not.toHaveBeenCalled();
+    });
+  });
 });

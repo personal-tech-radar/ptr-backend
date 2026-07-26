@@ -1,10 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, MoreThanOrEqual, Repository } from 'typeorm';
+import { In, IsNull, MoreThanOrEqual, Not, Repository } from 'typeorm';
 import { LoggingService } from '../../common/logging/logging.service';
 import { ArticleAnalysis } from '../../ai-analysis/entities/article-analysis.entity';
-import { ArticleRelevance } from '../../ai-analysis/entities/article-relevance.entity';
-import { DEFAULT_USER_ID } from '../../ai-analysis/services/ai-analysis.service';
+import { ArticleTechnologyInterest } from '../../ai-analysis/entities/article-technology-interest.entity';
+import { DEFAULT_USER_ID } from '../../articles/constants/default-user.constant';
 import { Article, ArticleStatus } from '../../articles/entities/article.entity';
 import {
   SourceCandidate,
@@ -12,6 +12,7 @@ import {
 } from '../../sources/entities/source-candidate.entity';
 import { Source, SourceType } from '../../sources/entities/source.entity';
 import { UserSourcePreferenceService } from '../../sources/services/user-source-preference.service';
+import { TechnologyInterestQueryService } from '../../taxonomy/services/technology-interest-query.service';
 import { Digest, DigestStatus, DigestType } from '../entities/digest.entity';
 import { DigestItem } from '../entities/digest-item.entity';
 import {
@@ -70,8 +71,8 @@ export class DigestBuilderService {
     private readonly digestItemRepo: Repository<DigestItem>,
     @InjectRepository(ArticleAnalysis)
     private readonly analysisRepo: Repository<ArticleAnalysis>,
-    @InjectRepository(ArticleRelevance)
-    private readonly relevanceRepo: Repository<ArticleRelevance>,
+    @InjectRepository(ArticleTechnologyInterest)
+    private readonly articleTechnologyInterestRepo: Repository<ArticleTechnologyInterest>,
     @InjectRepository(Article)
     private readonly articleRepo: Repository<Article>,
     @InjectRepository(Source)
@@ -81,6 +82,7 @@ export class DigestBuilderService {
     private readonly userSourcePreferenceService: UserSourcePreferenceService,
     private readonly aiDigestService: AiDigestService,
     private readonly emailTemplateService: EmailTemplateService,
+    private readonly technologyInterestQueryService: TechnologyInterestQueryService,
   ) {}
 
   async buildDailyDigest(): Promise<Digest | null> {
@@ -119,7 +121,10 @@ export class DigestBuilderService {
     const intro = await this.aiDigestService.generateIntro(DigestType.DAILY, selected);
 
     const stats = await this.gatherStats(finalWindowHours);
-    const emailItems = this.toEmailItems(selected, false);
+    const matchedInterestsMap = await this.buildMatchedInterestsMap(
+      selected.map((c) => c.analysis.articleId),
+    );
+    const emailItems = this.toEmailItems(selected, false, matchedInterestsMap);
     const htmlBody = this.emailTemplateService.renderHtml(subject, intro, emailItems, stats);
     const textBody = this.emailTemplateService.renderText(subject, intro, emailItems, stats);
 
@@ -206,7 +211,10 @@ export class DigestBuilderService {
     const intro = await this.aiDigestService.generateIntro(type, selected);
 
     const stats = await this.gatherStats(config.lookbackHours);
-    const emailItems = this.toEmailItems(selected, true);
+    const matchedInterestsMap = await this.buildMatchedInterestsMap(
+      selected.map((c) => c.analysis.articleId),
+    );
+    const emailItems = this.toEmailItems(selected, true, matchedInterestsMap);
     const htmlBody = this.emailTemplateService.renderHtml(subject, intro, emailItems, stats);
     const textBody = this.emailTemplateService.renderText(subject, intro, emailItems, stats);
 
@@ -334,17 +342,44 @@ export class DigestBuilderService {
   private toEmailItems(
     selected: ScoredCandidate[],
     includeWhyItMatters: boolean,
+    matchedInterestsMap: Map<string, string[]>,
   ): DigestEmailItem[] {
     return selected.map((c, i) => ({
       position: i + 1,
       title: c.analysis.article.title,
       sourceName: c.analysis.article.source?.name ?? '',
-      shortSummary: c.analysis.shortSummary,
-      whyItMatters: includeWhyItMatters ? c.analysis.whyItMatters : undefined,
+      shortSummary: c.analysis.shortSummary ?? '',
+      whyItMatters: includeWhyItMatters ? (c.analysis.whyItMatters ?? undefined) : undefined,
       url: c.analysis.article.url,
-      matchedInterests: c.analysis.matchedInterests,
+      matchedInterests: matchedInterestsMap.get(c.analysis.articleId) ?? [],
       articleId: c.analysis.articleId,
     }));
+  }
+
+  // Batched, two-step lookup (link rows -> names) rather than N+1 per selected article. Only
+  // called with the small set of articles actually selected for a single digest send.
+  private async buildMatchedInterestsMap(articleIds: string[]): Promise<Map<string, string[]>> {
+    const map = new Map<string, string[]>();
+    if (articleIds.length === 0) return map;
+
+    const links = await this.articleTechnologyInterestRepo.find({
+      where: { articleId: In(articleIds) },
+    });
+    if (links.length === 0) return map;
+
+    const technologyInterestIds = Array.from(new Set(links.map((l) => l.technologyInterestId)));
+    const technologyInterests =
+      await this.technologyInterestQueryService.findByIds(technologyInterestIds);
+    const nameById = new Map(technologyInterests.map((ti) => [ti.id, ti.name]));
+
+    for (const link of links) {
+      const name = nameById.get(link.technologyInterestId);
+      if (!name) continue;
+      const names = map.get(link.articleId) ?? [];
+      names.push(name);
+      map.set(link.articleId, names);
+    }
+    return map;
   }
 
   private async gatherStats(windowHours: number): Promise<DigestStats> {
@@ -361,10 +396,12 @@ export class DigestBuilderService {
       sourceCandidatesPending,
     ] = await Promise.all([
       this.articleRepo.count({ where: { createdAt: MoreThanOrEqual(windowStart) } }),
-      this.relevanceRepo.count({
-        where: { preAnalysisIsRelevant: true, createdAt: MoreThanOrEqual(windowStart) },
+      this.analysisRepo.count({
+        where: { preScreenIsRelevant: true, createdAt: MoreThanOrEqual(windowStart) },
       }),
-      this.analysisRepo.count({ where: { createdAt: MoreThanOrEqual(windowStart) } }),
+      this.analysisRepo.count({
+        where: { createdAt: MoreThanOrEqual(windowStart), fullAnalysisAt: Not(IsNull()) },
+      }),
       this.articleRepo.count(),
       this.sourceRepo.count({ where: { enabled: true } }),
       this.sourceRepo.count({
@@ -409,13 +446,9 @@ export class DigestBuilderService {
     return this.analysisRepo
       .createQueryBuilder('aa')
       .innerJoin('aa.article', 'a')
-      .innerJoin(
-        ArticleRelevance,
-        'ar',
-        'ar.articleId = aa.articleId AND ar.userId = :userId AND ar.preAnalysisIsRelevant = :relevant',
-        { userId: DEFAULT_USER_ID, relevant: true },
-      )
       .where('aa.deletedAt IS NULL')
+      .andWhere('aa.preScreenIsRelevant = true')
+      .andWhere('aa.fullAnalysisAt IS NOT NULL')
       .andWhere('a.deletedAt IS NULL')
       .andWhere(`aa.${includeFlag} = :flag`, { flag: true })
       .andWhere('a.status = :status', { status: ArticleStatus.ANALYZED })
@@ -435,13 +468,9 @@ export class DigestBuilderService {
       .createQueryBuilder('aa')
       .innerJoinAndSelect('aa.article', 'a')
       .innerJoinAndSelect('a.source', 's')
-      .innerJoin(
-        ArticleRelevance,
-        'ar',
-        'ar.articleId = aa.articleId AND ar.userId = :userId AND ar.preAnalysisIsRelevant = :relevant',
-        { userId: DEFAULT_USER_ID, relevant: true },
-      )
       .where('aa.deletedAt IS NULL')
+      .andWhere('aa.preScreenIsRelevant = true')
+      .andWhere('aa.fullAnalysisAt IS NOT NULL')
       .andWhere('a.deletedAt IS NULL')
       .andWhere('s.deletedAt IS NULL')
       .andWhere(`aa.${includeFlag} = :flag`, { flag: true })
@@ -465,13 +494,9 @@ export class DigestBuilderService {
       .createQueryBuilder('aa')
       .innerJoinAndSelect('aa.article', 'a')
       .innerJoinAndSelect('a.source', 's')
-      .innerJoin(
-        ArticleRelevance,
-        'ar',
-        'ar.articleId = aa.articleId AND ar.userId = :userId AND ar.preAnalysisIsRelevant = :relevant',
-        { userId: DEFAULT_USER_ID, relevant: true },
-      )
       .where('aa.deletedAt IS NULL')
+      .andWhere('aa.preScreenIsRelevant = true')
+      .andWhere('aa.fullAnalysisAt IS NOT NULL')
       .andWhere('a.deletedAt IS NULL')
       .andWhere('s.deletedAt IS NULL')
       .andWhere(`aa.${includeFlag} = :flag`, { flag: true })
@@ -489,13 +514,9 @@ export class DigestBuilderService {
       .createQueryBuilder('aa')
       .innerJoinAndSelect('aa.article', 'a')
       .innerJoinAndSelect('a.source', 's')
-      .innerJoin(
-        ArticleRelevance,
-        'ar',
-        'ar.articleId = aa.articleId AND ar.userId = :userId AND ar.preAnalysisIsRelevant = :relevant',
-        { userId: DEFAULT_USER_ID, relevant: true },
-      )
       .where('aa.deletedAt IS NULL')
+      .andWhere('aa.preScreenIsRelevant = true')
+      .andWhere('aa.fullAnalysisAt IS NOT NULL')
       .andWhere('a.deletedAt IS NULL')
       .andWhere('s.deletedAt IS NULL')
       .andWhere('aa.relevanceScore >= :minRelevance', { minRelevance: 40 })

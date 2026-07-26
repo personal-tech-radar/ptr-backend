@@ -5,6 +5,27 @@ Each entry is tagged with the branch it was made on.
 
 ---
 
+## [feature/mvp3-p3-global-article-analysis-rework] — 2026-07-26
+
+### Added
+- Global Article Analysis Rework (MVP3 Part 1, Phase 3 of 11) — every article is now analyzed once, globally, instead of per user. The per-user `ArticleRelevance` pre-screen gate is gone; its role is now fields directly on `ArticleAnalysis` (`preScreenIsRelevant`/`preScreenReason`/`preScreenAt`, `fullAnalysisAt`)
+- Real taxonomy-aware classification: `materialType`, a 4-level `complexityLevel` (beginner/intermediate/advanced/architect), `urgencyScore`, an `evergreen` flag, `breakingChanges`, loosely-shaped `releaseData`/`securityData`, and a resolved main content stream plus up to two secondary streams
+- `ArticleTechnologyInterest` and `ArticleStream` join tables link each article to real entries from Phase 2's technology/interest and content-stream catalogs — resolved by exact/alias match only; a signal that doesn't match anything existing is dropped, never used to grow the catalog (that stays exclusively onboarding's job)
+- `AiAnalysisService.analyzeArticle`/`preAnalyzeArticle` no longer take a `userId` — the whole pipeline is single-pass and shared across all users now
+
+### Updated
+- `DigestBuilderService`'s candidate-selection queries and pipeline stats now read directly off `ArticleAnalysis` instead of joining the removed `ArticleRelevance` table; digest emails render real resolved technology/interest names instead of the old freeform list
+- `SourceCandidatesService`'s promotion flow, and the `ArticleAnalysis` → `Article` foreign key, now cascade correctly now that an analysis row is reliably created earlier in an article's lifecycle
+
+### Removed
+- `ArticleRelevance` entity and its table
+
+### Known limitations
+- `DigestBootstrapService`'s synchronous re-analysis sweep and the queued `article-analysis` BullMQ job can race on the same freshly-ingested article, each independently calling OpenAI for the same article. Pre-existing architecture, not introduced by this phase — surfaced during Phase 3's QA pass. No data corruption results (errors are caught cleanly either way), just a wasted duplicate LLM call under race conditions. Worth a dedicated fix later.
+- `MailService.sendDigest` throws on a Resend failure instead of failing gracefully, which currently 500s `/digests/trigger` even though the digest itself is already correctly built and persisted in `DRAFT` status by that point. Pre-existing, unrelated to this phase's diff. Worth switching to a best-effort/non-fatal send so a mail-provider outage leaves a cleanly resendable draft instead of an opaque 500.
+
+---
+
 ## [feature/mvp3-p2-profile-onboarding-taxonomy] — 2026-07-26
 
 ### Added

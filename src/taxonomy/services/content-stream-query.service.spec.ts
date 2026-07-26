@@ -76,4 +76,20 @@ describe('ContentStreamQueryService', () => {
       expect(mockContentStreamRepo.find).not.toHaveBeenCalled();
     });
   });
+
+  describe('findByKey', () => {
+    it('returns the entity for a matching key', async () => {
+      const entity = { id: validId, key: 'security' } as ContentStream;
+      mockContentStreamRepo.findOne.mockResolvedValue(entity);
+
+      await expect(service.findByKey('security')).resolves.toEqual(entity);
+      expect(mockContentStreamRepo.findOne).toHaveBeenCalledWith({ where: { key: 'security' } });
+    });
+
+    it('returns null when no stream matches the key', async () => {
+      mockContentStreamRepo.findOne.mockResolvedValue(null);
+
+      await expect(service.findByKey('not-a-real-key')).resolves.toBeNull();
+    });
+  });
 });
