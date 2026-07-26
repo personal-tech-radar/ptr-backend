@@ -5,6 +5,23 @@ Each entry is tagged with the branch it was made on.
 
 ---
 
+## [feature/mvp3-p2-profile-onboarding-taxonomy] — 2026-07-26
+
+### Added
+- Profile, Onboarding & Taxonomy (MVP3 Part 1, Phase 2 of 11) — combines what was originally three separate phases (Profile & Onboarding, Technologies & Interests, Content Streams) into one delivery to avoid modeling the same entities twice. New `TechnologyInterest` entity (single entity with a technology/interest discriminator), `ContentStream` reference table seeded with the five fixed system streams, and their per-user selection join tables
+- Normalization and deduplication pipeline for technologies/interests: exact match, alias match, then Postgres `pg_trgm` similarity search before creating a new record, so near-duplicate entries (e.g. "Node.js" vs "node.js") resolve to the same row
+- Admin endpoint to merge duplicate technologies/interests, folding the merged-away entry's name into the surviving entry's aliases so it remains resolvable afterward; soft-deletes rather than removes, per policy
+- `POST /users/me/onboarding` (level, technology/interest, and content-stream selection) and `GET /users/me/taxonomy`; `level` also editable directly via `PATCH /users/me`
+- Isolated `taxonomy-source-discovery` background queue that records a request for future source discovery whenever a genuinely new technology/interest is created (stub for now — real web-search-based discovery is a separate future decision)
+
+### Updated
+- `HybridAuthGuard`/`RolesGuard` (built in Phase 1) get their first real caller: the technology/interest merge endpoint
+
+### Known limitations
+- Onboarding is additive-only — re-submitting adds new selections but does not remove previously selected ones. Deferred intentionally since nothing downstream (Personal Feed, digest delivery) yet depends on removal working; revisit once one of those needs it
+
+---
+
 ## [feature/mvp3-p1-auth-foundation] — 2026-07-26
 
 ### Added

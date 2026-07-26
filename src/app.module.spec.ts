@@ -14,6 +14,7 @@ import {
   QUEUE_ARTICLE_ANALYSIS,
   QUEUE_DIGEST,
   QUEUE_FEED_FETCH,
+  QUEUE_TAXONOMY_SOURCE_DISCOVERY,
   QUEUE_WEB_SOURCE_BROWSER_FETCH,
 } from './queue/queue.service';
 
@@ -66,6 +67,8 @@ describe('AppModule', () => {
       .overrideProvider(getQueueToken(QUEUE_DIGEST))
       .useValue({})
       .overrideProvider(getQueueToken(QUEUE_WEB_SOURCE_BROWSER_FETCH))
+      .useValue({})
+      .overrideProvider(getQueueToken(QUEUE_TAXONOMY_SOURCE_DISCOVERY))
       .useValue({})
       .compile();
 
