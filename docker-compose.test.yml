@@ -56,8 +56,13 @@ services:
       REDIS_PORT: 6379
       REDIS_PASSWORD: ''
       API_KEY: local-test-api-key
-      APP_URL: http://localhost:3000
+      APP_URL: http://localhost:3300
       FEEDBACK_TOKEN: local-test-feedback-token
+      JWT_SECRET: local-test-jwt-secret
+      JWT_EXPIRES_IN: 15m
+      JWT_REFRESH_EXPIRES_IN: 30d
+      EMAIL_VERIFICATION_TOKEN_TTL_HOURS: 48
+      PASSWORD_RESET_TOKEN_TTL_HOURS: 2
       OPENAI_API_KEY: sk-local-test-placeholder
       OPENAI_MODEL: gpt-4o-mini
       RESEND_API_KEY: re_local_test_placeholder

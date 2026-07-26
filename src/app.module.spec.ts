@@ -34,13 +34,20 @@ describe('AppModule', () => {
   // needs a placeholder value regardless of whether a real key is configured in the environment
   // (CI sets none). This is only about proving the DI graph wires up, not a real API call.
   const originalResendApiKey = process.env.RESEND_API_KEY;
+  // AuthModule's JwtModule.registerAsync() factory (and JwtStrategy's constructor, transitively
+  // instantiated as part of this DI graph) reads JWT_SECRET via getJwtSecret(), which throws if
+  // unset — same placeholder-around-the-test treatment as RESEND_API_KEY above. This now only
+  // needs to be set before compile() runs, not before AppModule is imported.
+  const originalJwtSecret = process.env.JWT_SECRET;
 
   beforeAll(() => {
     process.env.RESEND_API_KEY = 're_test_dummy_key';
+    process.env.JWT_SECRET = 'test-dummy-jwt-secret';
   });
 
   afterAll(() => {
     process.env.RESEND_API_KEY = originalResendApiKey;
+    process.env.JWT_SECRET = originalJwtSecret;
   });
 
   it('resolves the full DI graph without throwing', async () => {

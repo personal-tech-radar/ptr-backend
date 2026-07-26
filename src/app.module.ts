@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { AiAnalysisModule } from './ai-analysis/ai-analysis.module';
 import { ArticlesModule } from './articles/articles.module';
+import { AuthModule } from './auth/auth.module';
 import { DatabaseModule } from './common/database/database.module';
 import { ErrorModule } from './common/error/error.module';
 import { RedisModule } from './common/redis/redis.module';
@@ -14,6 +15,7 @@ import { MailModule } from './mail/mail.module';
 import { QueueModule } from './queue/queue.module';
 import { SchedulerModule } from './scheduler/scheduler.module';
 import { SourcesModule } from './sources/sources.module';
+import { UsersModule } from './users/users.module';
 
 @Module({
   imports: [
@@ -32,6 +34,8 @@ import { SourcesModule } from './sources/sources.module';
     DigestModule,
     MailModule,
     SchedulerModule,
+    UsersModule,
+    AuthModule,
   ],
 })
 export class AppModule {}

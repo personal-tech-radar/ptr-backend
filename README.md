@@ -31,7 +31,7 @@ A NestJS service that automatically curates a daily engineering digest. It fetch
 | Scheduler | @nestjs/schedule |
 | Validation | class-validator + class-transformer |
 | Documentation | Swagger / OpenAPI (`/docs`) |
-| Auth | API key guard (`X-API-KEY` header) |
+| Auth | API key guard (`X-API-KEY` header) for admin endpoints; JWT (access + persisted/hashed refresh tokens) for human users via `AuthModule` |
 
 ---
 
@@ -50,6 +50,8 @@ src/
 │   └── dto/               # PaginatedResponseDto
 ├── config/
 │   └── user-interests.yaml  # AI analysis interest profile
+├── auth/                  # Register/login/refresh/logout, email verification, password reset
+├── users/                 # User entity + profile endpoints (GET/PATCH/DELETE /users/me)
 ├── sources/               # Source CRUD — RSS/Atom/GitHub feeds + web source discovery/extraction
 ├── articles/              # Article storage and querying
 ├── feed-fetcher/          # Fetches and parses feeds, creates articles
@@ -66,6 +68,21 @@ src/
 ---
 
 ## Domain Modules
+
+### AuthModule + UsersModule
+Multi-tenant account infrastructure. `User` (`src/users/entities/user.entity.ts`) holds `email`/`passwordHash`/`displayName`/`timezone`/`role` (`user` | `admin`) plus profile fields (`githubUrl`, `level`, digest opt-ins, `emailVerifiedAt`) and an `onboardingCompletedAt` column reserved for the not-yet-built onboarding flow. `UserCommandService`/`UserQueryService` follow this repo's command/query split.
+
+**Auth flow** (`POST`/`GET /auth/*`, `AuthController`):
+1. `POST /auth/register` — creates the user immediately (email/password/displayName/timezone all required), persists an `EmailVerificationToken`, and sends a verification email via `MailService` — best-effort, matching the existing digest-send non-fatal-failure pattern (registration succeeds even if the email fails to send).
+2. `GET /auth/verify-email?token=` — consumes the token and sets `emailVerifiedAt`. Does not mark onboarding complete.
+3. `POST /auth/login` — email + password (validated via Passport `LocalStrategy` + `bcrypt.compare`), returns a short-lived JWT access token and a persisted, hashed, revocable refresh token (`RefreshToken` entity) — not a stateless JWT-only refresh.
+4. `POST /auth/refresh` — rotates the refresh token: the presented token is looked up by its SHA-256 hash, revoked, and a new access/refresh pair is issued. `JwtStrategy.validate()` rejects a token whose user has been soft-deleted (relies on TypeORM's default `deletedAt IS NULL` exclusion).
+5. `POST /auth/logout` — revokes the presented refresh token (idempotent).
+6. `POST /auth/password/forgot` / `POST /auth/password/reset` — `PasswordResetToken` issuance and consumption; a successful reset also revokes every other active refresh token for that user. `PATCH /auth/password` changes the password while logged in (current password required, JWT-protected).
+
+**Guards** (`src/auth/guards/`): `JwtAuthGuard` (JWT only), `HybridAuthGuard` (accepts either `X-API-KEY` — reusing `ApiKeyGuard`'s validation — or a JWT, for routes meant to serve both machine and human callers), `RolesGuard` + `@Roles(...)` decorator (role-gated routes), `@CurrentUser()` decorator (reads `request.user`). `HybridAuthGuard`/`RolesGuard` are defined in this phase but not yet applied to `SourcesController`/`ArticlesController`/`DigestController` — that migration off `ApiKeyGuard` is a later Admin API phase.
+
+**Profile endpoints** (`UsersController`, JWT-protected): `GET /users/me`, `PATCH /users/me` (displayName/timezone/githubUrl only — role and verification/onboarding state are not user-editable), `DELETE /users/me` (soft delete).
 
 ### SourcesModule
 Manages feed sources. Admin CRUD endpoints protected by `X-API-KEY`. When a source is created (via `POST /sources` or `npm run seed:sources:sync`), the URL is validated: for `rss`/`atom`/`github_release` sources the feed must return HTTP 200, parse as valid RSS/Atom, and contain at least one item; for `web` sources, a deterministic discovery pass (below) must find at least one working entry point before the source and its `WebSourceConfig` are saved. Sources that fail validation are rejected without being saved.
@@ -258,8 +275,13 @@ Health check: `http://localhost:3000/health`
 | `REDIS_PORT` | Redis port | `6379` |
 | `REDIS_PASSWORD` | Redis password | — |
 | `API_KEY` | Admin API key for `X-API-KEY` header | — |
-| `APP_URL` | Public base URL of this API (used in digest email feedback links) | — |
+| `APP_URL` | Public base URL of this API (used in digest email feedback links, and in verification/password-reset email links) | — |
 | `FEEDBACK_TOKEN` | Secret token validated when feedback links in emails are clicked | — |
+| `JWT_SECRET` | Secret used to sign access JWTs | — |
+| `JWT_EXPIRES_IN` | Access JWT lifetime | `15m` |
+| `JWT_REFRESH_EXPIRES_IN` | Refresh token lifetime (opaque, persisted, hashed, revocable `RefreshToken` entity — not JWT-signed) | `30d` |
+| `EMAIL_VERIFICATION_TOKEN_TTL_HOURS` | Hours an email verification token stays valid | `48` |
+| `PASSWORD_RESET_TOKEN_TTL_HOURS` | Hours a password reset token stays valid | `2` |
 | `OPENAI_API_KEY` | OpenAI API key | — |
 | `OPENAI_MODEL` | OpenAI model | `gpt-4o-mini` |
 | `PLAYWRIGHT_ENABLED` | Master kill switch for the Playwright browser-fetch fallback | `false` |
