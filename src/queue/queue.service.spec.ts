@@ -3,8 +3,10 @@ import {
   QUEUE_ARTICLE_ANALYSIS,
   QUEUE_DIGEST,
   QUEUE_FEED_FETCH,
+  QUEUE_TAXONOMY_SOURCE_DISCOVERY,
   QUEUE_WEB_SOURCE_BROWSER_FETCH,
   QueueService,
+  TAXONOMY_SOURCE_DISCOVERY_QUEUE_CONCURRENCY,
 } from './queue.service';
 
 describe('QueueService', () => {
@@ -12,6 +14,7 @@ describe('QueueService', () => {
   const mockArticleAnalysisQueue = { add: jest.fn() };
   const mockDigestQueue = { add: jest.fn() };
   const mockWebSourceBrowserFetchQueue = { add: jest.fn() };
+  const mockTaxonomySourceDiscoveryQueue = { add: jest.fn() };
 
   let service: QueueService;
 
@@ -22,18 +25,25 @@ describe('QueueService', () => {
       mockArticleAnalysisQueue as any,
       mockDigestQueue as any,
       mockWebSourceBrowserFetchQueue as any,
+      mockTaxonomySourceDiscoveryQueue as any,
     );
   });
 
-  it('gives web-source-browser-fetch its own distinct queue name, separate from the other three', () => {
+  it('gives web-source-browser-fetch and taxonomy-source-discovery their own distinct queue names', () => {
     const names = [
       QUEUE_FEED_FETCH,
       QUEUE_ARTICLE_ANALYSIS,
       QUEUE_DIGEST,
       QUEUE_WEB_SOURCE_BROWSER_FETCH,
+      QUEUE_TAXONOMY_SOURCE_DISCOVERY,
     ];
     expect(new Set(names).size).toBe(names.length);
     expect(QUEUE_WEB_SOURCE_BROWSER_FETCH).toBe('web-source-browser-fetch');
+    expect(QUEUE_TAXONOMY_SOURCE_DISCOVERY).toBe('taxonomy-source-discovery');
+  });
+
+  it('reads TAXONOMY_SOURCE_DISCOVERY_QUEUE_CONCURRENCY from its own env var, independently of the other queues', () => {
+    expect(TAXONOMY_SOURCE_DISCOVERY_QUEUE_CONCURRENCY).toBeGreaterThanOrEqual(1);
   });
 
   it('reads PLAYWRIGHT_QUEUE_CONCURRENCY from its own env var, independently of the other queues', () => {
@@ -64,6 +74,22 @@ describe('QueueService', () => {
     expect(mockFeedFetchQueue.add).not.toHaveBeenCalled();
     expect(mockArticleAnalysisQueue.add).not.toHaveBeenCalled();
     expect(mockDigestQueue.add).not.toHaveBeenCalled();
+    expect(mockTaxonomySourceDiscoveryQueue.add).not.toHaveBeenCalled();
+  });
+
+  it('enqueues a discover-technology-source job onto only its own queue', async () => {
+    await service.addTaxonomySourceDiscoveryJob('tech-1');
+
+    expect(mockTaxonomySourceDiscoveryQueue.add).toHaveBeenCalledWith(
+      'discover-technology-source',
+      {
+        technologyInterestId: 'tech-1',
+      },
+    );
+    expect(mockFeedFetchQueue.add).not.toHaveBeenCalled();
+    expect(mockArticleAnalysisQueue.add).not.toHaveBeenCalled();
+    expect(mockDigestQueue.add).not.toHaveBeenCalled();
+    expect(mockWebSourceBrowserFetchQueue.add).not.toHaveBeenCalled();
   });
 
   it('still enqueues fetch-all-sources onto feed-fetch only, unaffected by the new queue', async () => {

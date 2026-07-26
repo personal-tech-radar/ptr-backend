@@ -1,6 +1,7 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsOptional, IsString, IsTimeZone, IsUrl, MaxLength } from 'class-validator';
+import { IsEnum, IsOptional, IsString, IsTimeZone, IsUrl, MaxLength } from 'class-validator';
+import { UserLevel } from '../entities/user.entity';
 
 export class UpdateProfileDto {
   @ApiPropertyOptional({ description: 'Display name', example: 'Jane Doe', maxLength: 255 })
@@ -30,4 +31,13 @@ export class UpdateProfileDto {
     typeof value === 'string' ? value.trim() : value,
   )
   githubUrl?: string | null;
+
+  @ApiPropertyOptional({
+    description: 'Experience level. Also settable via the onboarding endpoint.',
+    enum: UserLevel,
+    example: UserLevel.MIDDLE,
+  })
+  @IsOptional()
+  @IsEnum(UserLevel)
+  level?: UserLevel;
 }

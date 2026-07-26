@@ -51,7 +51,8 @@ src/
 ├── config/
 │   └── user-interests.yaml  # AI analysis interest profile
 ├── auth/                  # Register/login/refresh/logout, email verification, password reset
-├── users/                 # User entity + profile endpoints (GET/PATCH/DELETE /users/me)
+├── users/                 # User entity + profile/onboarding endpoints (GET/PATCH/DELETE /users/me, POST /users/me/onboarding, GET /users/me/taxonomy)
+├── taxonomy/              # TechnologyInterest/ContentStream taxonomy, dedup resolver, merge endpoint
 ├── sources/               # Source CRUD — RSS/Atom/GitHub feeds + web source discovery/extraction
 ├── articles/              # Article storage and querying
 ├── feed-fetcher/          # Fetches and parses feeds, creates articles
@@ -70,7 +71,7 @@ src/
 ## Domain Modules
 
 ### AuthModule + UsersModule
-Multi-tenant account infrastructure. `User` (`src/users/entities/user.entity.ts`) holds `email`/`passwordHash`/`displayName`/`timezone`/`role` (`user` | `admin`) plus profile fields (`githubUrl`, `level`, digest opt-ins, `emailVerifiedAt`) and an `onboardingCompletedAt` column reserved for the not-yet-built onboarding flow. `UserCommandService`/`UserQueryService` follow this repo's command/query split.
+Multi-tenant account infrastructure. `User` (`src/users/entities/user.entity.ts`) holds `email`/`passwordHash`/`displayName`/`timezone`/`role` (`user` | `admin`) plus profile fields (`githubUrl`, `level`, digest opt-ins, `emailVerifiedAt`) and an `onboardingCompletedAt` column. `UserCommandService`/`UserQueryService` follow this repo's command/query split.
 
 **Auth flow** (`POST`/`GET /auth/*`, `AuthController`):
 1. `POST /auth/register` — creates the user immediately (email/password/displayName/timezone all required), persists an `EmailVerificationToken`, and sends a verification email via `MailService` — best-effort, matching the existing digest-send non-fatal-failure pattern (registration succeeds even if the email fails to send).
@@ -82,7 +83,28 @@ Multi-tenant account infrastructure. `User` (`src/users/entities/user.entity.ts`
 
 **Guards** (`src/auth/guards/`): `JwtAuthGuard` (JWT only), `HybridAuthGuard` (accepts either `X-API-KEY` — reusing `ApiKeyGuard`'s validation — or a JWT, for routes meant to serve both machine and human callers), `RolesGuard` + `@Roles(...)` decorator (role-gated routes), `@CurrentUser()` decorator (reads `request.user`). `HybridAuthGuard`/`RolesGuard` are defined in this phase but not yet applied to `SourcesController`/`ArticlesController`/`DigestController` — that migration off `ApiKeyGuard` is a later Admin API phase.
 
-**Profile endpoints** (`UsersController`, JWT-protected): `GET /users/me`, `PATCH /users/me` (displayName/timezone/githubUrl only — role and verification/onboarding state are not user-editable), `DELETE /users/me` (soft delete).
+**Profile endpoints** (`UsersController`, JWT-protected): `GET /users/me`, `PATCH /users/me` (displayName/timezone/githubUrl/level — role and verification/onboarding-completion state are not user-editable), `DELETE /users/me` (soft delete).
+
+**Onboarding endpoints** (`UsersController` + `OnboardingService`, JWT-protected):
+- `POST /users/me/onboarding` — body `{ level, technologyInterests: [{ kind, name }], contentStreamIds: [] }`. Each `technologyInterests` entry is resolved against the taxonomy via `TechnologyInterestCommandService.createOrReuse` (see TaxonomyModule below) and linked to the user; each `contentStreamIds` entry must reference an existing, enabled `ContentStream` or the whole request is rejected with `BadRequestException` before anything is linked. `user.level` is always updated; `user.onboardingCompletedAt` is set only if it was previously `null` — **safely re-callable**: calling it again after completion updates the level/selections but never un-sets the completion timestamp, so it doubles as "change my selections later" with no separate endpoint. Deliberately not wrapped in a single DB transaction: selections are persisted before the level/completion flag, so a mid-way failure leaves the user safely "not yet onboarded" and retryable. **Known limitation — additive-only:** re-submitting adds new technology/interest/content-stream selections but does not remove previously selected ones. Intentionally deferred since no consumer (Personal Feed, digest delivery) currently depends on removal semantics; revisit once Personal Feed or a dedicated subscription-management endpoint needs to support removing a selection.
+- `GET /users/me/taxonomy` — returns `{ level, technologyInterests, contentStreams, onboardingCompletedAt }` for the current user.
+
+### TaxonomyModule
+Personalization taxonomy, separate from `Source.category` (which classifies where content comes from, not what a user is interested in). Four entities: `TechnologyInterest` (`kind: 'technology' | 'interest'`, deduplicated by a resolver — see below), `ContentStream` (a fixed, curated set of 5 rows seeded by the `CreateTaxonomyTables` migration — never created/updated/deleted via the API in this phase), and their join tables `UserTechnologyInterest`/`UserContentStream`.
+
+**Deduplication pipeline** (`TechnologyInterestResolverService.resolve(kind, rawName)`), run for every onboarding selection:
+1. Normalize the input (`normalizeTechnologyInterestName` — lowercase/trim/collapse whitespace, but `.`/`#`/`+` are preserved since they're meaningful to a name's identity: "Node.js", "C#", ".NET").
+2. Exact `normalizedName` match on `(kind, normalizedName)`.
+3. Alias match — `aliases jsonb` containment (`@>`).
+4. Similarity match via Postgres `pg_trgm`'s `similarity()`, gated by `TAXONOMY_SIMILARITY_THRESHOLD` (default `0.6`), using a GIN trigram index on `normalizedName`. A match here gets the input string appended to its `aliases` if not already present.
+5. Otherwise, a new `TechnologyInterest` row is created.
+
+`TechnologyInterestCommandService.createOrReuse(userId, kind, name)` wraps the resolver: links the resolved/created row to the calling user (upsert-ignore — never errors if already linked), and — only when a genuinely new row was created — enqueues a job on the isolated `taxonomy-source-discovery` queue (see QueueModule below).
+
+**Endpoints:**
+- `GET /technology-interests?kind=&q=&page=&limit=` — paginated typeahead search, `JwtAuthGuard`.
+- `GET /content-streams` — the 5 enabled streams, `JwtAuthGuard`.
+- `POST /technology-interests/merge` — body `{ winnerId, loserId }`. Guards: `HybridAuthGuard` + `RolesGuard` + `@Roles('admin')` — the first route in the codebase to combine these (a low-blast-radius proof of the pattern ahead of a later, broader Admin API migration off `ApiKeyGuard`). `TechnologyInterestCommandService.merge` runs inside a single `dataSource.transaction()`: every `UserTechnologyInterest` row pointing at the loser is checked against the winner first — if the user already has both selected, the loser's join row is deleted instead of reassigned (avoiding a mid-transaction unique-constraint violation, which would otherwise abort the whole Postgres transaction and fail even the delete-fallback); otherwise it's reassigned to the winner. The loser is then soft-deleted with `mergedIntoId` set to the winner — technologies/interests are edited or merged, never hard-deleted.
 
 ### SourcesModule
 Manages feed sources. Admin CRUD endpoints protected by `X-API-KEY`. When a source is created (via `POST /sources` or `npm run seed:sources:sync`), the URL is validated: for `rss`/`atom`/`github_release` sources the feed must return HTTP 200, parse as valid RSS/Atom, and contain at least one item; for `web` sources, a deterministic discovery pass (below) must find at least one working entry point before the source and its `WebSourceConfig` are saved. Sources that fail validation are rejected without being saved.
@@ -201,11 +223,12 @@ Daily digest emails omit the `whyItMatters` paragraph per article; weekly and de
 Sends digest emails via Resend SDK. Uses `DIGEST_FROM_EMAIL` and `DIGEST_TO_EMAIL` env vars.
 
 ### QueueModule
-Four BullMQ queues backed by Redis:
+Five BullMQ queues backed by Redis:
 - `feed-fetch` — `fetch-all-sources`, `fetch-source`
 - `article-analysis` — `analyze-article`
 - `digest` — `build-daily-digest`, `send-daily-digest`
-- `web-source-browser-fetch` — `browser-fetch-source`. Isolated from the other three: its own queue/worker, its own concurrency ceiling (`PLAYWRIGHT_QUEUE_CONCURRENCY`, default `1`), and its own hard job timeout derived from `PLAYWRIGHT_TIMEOUT_MS`, so a slow/hung Playwright fetch can never block `feed-fetch` or `article-analysis`. Processed by `PlaywrightFetchProcessor`.
+- `web-source-browser-fetch` — `browser-fetch-source`. Isolated from the others: its own queue/worker, its own concurrency ceiling (`PLAYWRIGHT_QUEUE_CONCURRENCY`, default `1`), and its own hard job timeout derived from `PLAYWRIGHT_TIMEOUT_MS`, so a slow/hung Playwright fetch can never block `feed-fetch` or `article-analysis`. Processed by `PlaywrightFetchProcessor`.
+- `taxonomy-source-discovery` — `discover-technology-source`. Isolated for the same reason: its own queue/worker and its own concurrency ceiling (`TAXONOMY_SOURCE_DISCOVERY_QUEUE_CONCURRENCY`, default `2`). Enqueued by `TechnologyInterestCommandService.createOrReuse` only when a genuinely new `TechnologyInterest` is created. `TaxonomySourceDiscoveryProcessor` is a deliberate stub in this phase — no real keyword-based web search exists or is approved yet (a separate future decision); it only writes one `TaxonomySourceDiscoveryRequest` row per job (status `pending_manual_review`) plus a structured log line, for an operator to action manually.
 
 ### SchedulerModule
 Cron jobs registered dynamically from env vars:
@@ -289,6 +312,8 @@ Health check: `http://localhost:3000/health`
 | `PLAYWRIGHT_TIMEOUT_MS` | Hard navigation timeout for Playwright, and the base for the queue job's hard timeout | `30000` |
 | `SOURCE_DISCOVERY_AI_FALLBACK_ENABLED` | Master switch for the OpenAI structural discovery fallback | `false` |
 | `SOURCE_DISCOVERY_AI_FALLBACK_MAX_PER_DAY` | Redis-backed daily cap on OpenAI calls for structural fallback | `10` |
+| `TAXONOMY_SIMILARITY_THRESHOLD` | Minimum `pg_trgm` similarity score for `TechnologyInterestResolverService`'s dedup match | `0.6` |
+| `TAXONOMY_SOURCE_DISCOVERY_QUEUE_CONCURRENCY` | Concurrency for the `taxonomy-source-discovery` queue worker | `2` |
 | `RESEND_API_KEY` | Resend API key | — |
 | `DIGEST_FROM_EMAIL` | Sender email (verified in Resend) | — |
 | `DIGEST_TO_EMAIL` | Digest recipient email | — |

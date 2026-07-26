@@ -2,7 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { UserCommandService } from './user-command.service';
-import { User, UserRole } from '../entities/user.entity';
+import { User, UserLevel, UserRole } from '../entities/user.entity';
 
 describe('UserCommandService', () => {
   let service: UserCommandService;
@@ -83,6 +83,22 @@ describe('UserCommandService', () => {
 
       expect(result.displayName).toBe('New Name');
       expect(result.timezone).toBe('UTC');
+    });
+
+    it('updates the level', async () => {
+      const existing = {
+        id: validId,
+        displayName: 'Old Name',
+        timezone: 'UTC',
+        githubUrl: null,
+        level: UserLevel.JUNIOR,
+      };
+      mockUserRepo.findOne.mockResolvedValue(existing);
+
+      const result = await service.updateProfile(validId, { level: UserLevel.SENIOR });
+
+      expect(result.level).toBe('senior');
+      expect(result.displayName).toBe('Old Name');
     });
   });
 

@@ -15,6 +15,7 @@ import { MailModule } from './mail/mail.module';
 import { QueueModule } from './queue/queue.module';
 import { SchedulerModule } from './scheduler/scheduler.module';
 import { SourcesModule } from './sources/sources.module';
+import { TaxonomyModule } from './taxonomy/taxonomy.module';
 import { UsersModule } from './users/users.module';
 
 @Module({
@@ -36,6 +37,7 @@ import { UsersModule } from './users/users.module';
     SchedulerModule,
     UsersModule,
     AuthModule,
+    TaxonomyModule,
   ],
 })
 export class AppModule {}

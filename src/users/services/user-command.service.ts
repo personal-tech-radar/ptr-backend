@@ -51,6 +51,7 @@ export class UserCommandService {
     if (dto.displayName !== undefined) user.displayName = dto.displayName;
     if (dto.timezone !== undefined) user.timezone = dto.timezone;
     if (dto.githubUrl !== undefined) user.githubUrl = dto.githubUrl;
+    if (dto.level !== undefined) user.level = dto.level;
 
     const saved = await this.userRepo.save(user);
     this.logger.info('User profile updated', { id: saved.id });
