@@ -18,6 +18,12 @@ Each entry is tagged with the branch it was made on.
 - `MailService` extended beyond digest-only sending to also deliver verification and password-reset emails, using the same best-effort/non-fatal-failure pattern as existing digest sends
 - Swagger now documents a bearer-token security scheme alongside the existing API-key scheme, so the new JWT-protected routes are usable from `/docs`
 - README documents the new auth/user modules, the registration-through-reset flow, and the new environment variables
+## [chore/curate-phase1-auth-convention] — 2026-07-26
+
+### Updated
+- `CLAUDE.md` — new Architectural Rules entry: fail fast on a missing required secret/credential rather than silently defaulting, generalizing the existing `ApiKeyGuard` behavior into an explicit rule
+- `auth-oauth-module-pattern` skill — captures the persisted/hashed/revocable refresh-token pattern (rotation on use, revocation on logout and password reset) and the approved auth dependency stack (`@nestjs/passport`, `@nestjs/jwt`, `passport`, `passport-jwt`, `passport-local`, `bcrypt`) established while building MVP3 Part 1's Phase 1 (Auth Foundation, PR #11); corrects a stale `isActive`-based validation description to match the actual soft-delete-based check
+- Filed a GitHub issue on the upstream `nestjs-project-template` repo proposing the same conventions for adoption there (proposal only)
 
 ---
 

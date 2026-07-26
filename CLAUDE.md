@@ -57,6 +57,7 @@ Domain modules live at `src/<domain>/` and contain `controllers/`, `services/`, 
 - For complex domains, split services into `command`, `query`, and `domain` services.
 - Prefer existing patterns over new abstractions. Prefer minimal and local changes.
 - **Isolate slow, resource-heavy, or hang-prone background work in its own BullMQ queue** — separate from the domain's regular processing queue(s) — with an explicit concurrency limit. A single stuck job (headless browser automation, a long-running third-party call) must never be able to block unrelated work. See `src/queue/queue.service.ts` (`web-source-browser-fetch` queue) for a worked example.
+- **Fail fast on a missing required secret or credential.** Never fall back to a hardcoded literal default (e.g. `'insecure-dev-jwt-secret'`) when a required env-driven secret is unset — throw instead, so misconfiguration is loud at startup or first use, not a silent security hole. See `ApiKeyGuard` (`src/common/guards/`), which throws `InternalServerErrorException` when `API_KEY` is unset, for the established pattern. When the secret is read inside a module's synchronous registration call (e.g. `JwtModule.register({...})`), a throwing read forces awkward workarounds in tests and can crash the process at import time — use the module's async registration form (e.g. `JwtModule.registerAsync({ useFactory: ... })`) instead, so the throwing read happens lazily at DI-instantiation time.
 
 ---
 
