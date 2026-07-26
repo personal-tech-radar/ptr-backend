@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { ArticleAnalysis } from '../../ai-analysis/entities/article-analysis.entity';
-import { ArticleRelevance } from '../../ai-analysis/entities/article-relevance.entity';
+import { ArticleTechnologyInterest } from '../../ai-analysis/entities/article-technology-interest.entity';
 import { Article, ArticleStatus } from '../../articles/entities/article.entity';
 import {
   SourceCandidate,
@@ -9,6 +9,7 @@ import {
 } from '../../sources/entities/source-candidate.entity';
 import { Source, SourceCategory, SourceType } from '../../sources/entities/source.entity';
 import { UserSourcePreferenceService } from '../../sources/services/user-source-preference.service';
+import { TechnologyInterestQueryService } from '../../taxonomy/services/technology-interest-query.service';
 import { DigestItem } from '../entities/digest-item.entity';
 import { Digest, DigestStatus, DigestType } from '../entities/digest.entity';
 import { DigestBuildConfig } from '../digest.types';
@@ -55,8 +56,12 @@ const mockAnalysisRepo = {
   count: jest.fn().mockResolvedValue(0),
 };
 
-const mockRelevanceRepo = {
-  count: jest.fn().mockResolvedValue(0),
+const mockArticleTechnologyInterestRepo = {
+  find: jest.fn().mockResolvedValue([]),
+};
+
+const mockTechnologyInterestQueryService = {
+  findByIds: jest.fn().mockResolvedValue([]),
 };
 
 const mockArticleRepo = {
@@ -139,8 +144,11 @@ describe('DigestBuilderService', () => {
     jest.clearAllMocks();
     mockDigestItemRepo.getRawMany.mockResolvedValue([]);
     mockAnalysisRepo.getCount.mockResolvedValue(0);
+    mockAnalysisRepo.count.mockResolvedValue(0);
     mockSourceRepo.count.mockResolvedValue(0);
     mockSourceCandidateRepo.count.mockResolvedValue(0);
+    mockArticleTechnologyInterestRepo.find.mockResolvedValue([]);
+    mockTechnologyInterestQueryService.findByIds.mockResolvedValue([]);
     mockUserSourcePreferenceService.getAdjustmentsForSources.mockResolvedValue(new Map());
 
     const module: TestingModule = await Test.createTestingModule({
@@ -149,7 +157,10 @@ describe('DigestBuilderService', () => {
         { provide: getRepositoryToken(Digest), useValue: mockDigestRepo },
         { provide: getRepositoryToken(DigestItem), useValue: mockDigestItemRepo },
         { provide: getRepositoryToken(ArticleAnalysis), useValue: mockAnalysisRepo },
-        { provide: getRepositoryToken(ArticleRelevance), useValue: mockRelevanceRepo },
+        {
+          provide: getRepositoryToken(ArticleTechnologyInterest),
+          useValue: mockArticleTechnologyInterestRepo,
+        },
         { provide: getRepositoryToken(Article), useValue: mockArticleRepo },
         { provide: getRepositoryToken(Source), useValue: mockSourceRepo },
         { provide: getRepositoryToken(SourceCandidate), useValue: mockSourceCandidateRepo },
@@ -159,6 +170,7 @@ describe('DigestBuilderService', () => {
         },
         { provide: AiDigestService, useValue: mockAiDigestService },
         { provide: EmailTemplateService, useValue: mockEmailTemplateService },
+        { provide: TechnologyInterestQueryService, useValue: mockTechnologyInterestQueryService },
       ],
     }).compile();
 
@@ -436,6 +448,41 @@ describe('DigestBuilderService', () => {
     });
   });
 
+  describe('matchedInterests (technology/interest names resolved via the join tables)', () => {
+    it('populates email item matchedInterests from ArticleTechnologyInterest -> TechnologyInterest.name', async () => {
+      const analysis = makeAnalysis();
+      mockAnalysisRepo.getMany.mockResolvedValue([analysis]);
+      mockAnalysisRepo.getCount.mockResolvedValue(1);
+      mockArticleTechnologyInterestRepo.find.mockResolvedValue([
+        { articleId: 'a-1', technologyInterestId: 'ti-1' },
+        { articleId: 'a-1', technologyInterestId: 'ti-2' },
+      ]);
+      mockTechnologyInterestQueryService.findByIds.mockResolvedValue([
+        { id: 'ti-1', name: 'Kubernetes' },
+        { id: 'ti-2', name: 'Distributed systems' },
+      ]);
+
+      await service.buildDailyDigest();
+
+      const emailItems = mockEmailTemplateService.renderHtml.mock.calls[0][2];
+      expect(emailItems[0].matchedInterests).toEqual(
+        expect.arrayContaining(['Kubernetes', 'Distributed systems']),
+      );
+    });
+
+    it('leaves matchedInterests empty when no ArticleTechnologyInterest links exist', async () => {
+      mockAnalysisRepo.getMany.mockResolvedValue([makeAnalysis()]);
+      mockAnalysisRepo.getCount.mockResolvedValue(1);
+      mockArticleTechnologyInterestRepo.find.mockResolvedValue([]);
+
+      await service.buildDailyDigest();
+
+      const emailItems = mockEmailTemplateService.renderHtml.mock.calls[0][2];
+      expect(emailItems[0].matchedInterests).toEqual([]);
+      expect(mockTechnologyInterestQueryService.findByIds).not.toHaveBeenCalled();
+    });
+  });
+
   describe('gatherStats (footer statistics)', () => {
     it('reports feed vs web active source counts and pending candidates separately from the email template', async () => {
       mockAnalysisRepo.getMany.mockResolvedValue([makeAnalysis()]);
@@ -489,23 +536,40 @@ describe('DigestBuilderService', () => {
       expect(candidateCountArgs.where.status.value).not.toContain(SourceCandidateStatus.PROMOTED);
     });
 
-    it('reports articlesIngested/articlesPassedPreanalysis straight from the window-scoped repo counts', async () => {
+    it('reports articlesIngested/articlesPassedPreanalysis/articlesAnalyzed straight from the window-scoped repo counts', async () => {
       mockAnalysisRepo.getMany.mockResolvedValue([makeAnalysis()]);
       mockAnalysisRepo.getCount.mockResolvedValue(1);
       mockArticleRepo.count.mockResolvedValue(7);
-      mockRelevanceRepo.count.mockResolvedValue(4);
+      mockAnalysisRepo.count.mockImplementation((options: any) => {
+        if (options?.where?.preScreenIsRelevant !== undefined) return Promise.resolve(4);
+        if (options?.where?.fullAnalysisAt !== undefined) return Promise.resolve(2);
+        return Promise.resolve(0);
+      });
 
       await service.buildDailyDigest();
 
       const statsArg = mockEmailTemplateService.renderHtml.mock.calls[0][3];
       expect(statsArg.articlesIngested).toBe(7);
       expect(statsArg.articlesPassedPreanalysis).toBe(4);
+      expect(statsArg.articlesAnalyzed).toBe(2);
       // gatherStats has no scratch-row carve-out of its own — it trusts whatever physically
-      // exists in the articles/article_relevances tables for the window. That's only correct
+      // exists in the articles/article_analyses tables for the window. That's only correct
       // because SourceCandidatesService.promote() hard-deletes its sample Article rows (and
-      // their cascade-linked ArticleRelevance rows) once a candidate is promoted, before any
+      // their cascade-linked ArticleAnalysis row) once a candidate is promoted, before any
       // digest window could ever count them — see source-candidates.service.spec.ts's
       // 'hard-deletes the sample articles ...' test.
+    });
+
+    it('requires fullAnalysisAt IS NOT NULL for articlesAnalyzed, not just row existence', async () => {
+      mockAnalysisRepo.getMany.mockResolvedValue([makeAnalysis()]);
+      mockAnalysisRepo.getCount.mockResolvedValue(1);
+
+      await service.buildDailyDigest();
+
+      const analyzedCountCall = mockAnalysisRepo.count.mock.calls.find(
+        (c: any[]) => c[0]?.where?.fullAnalysisAt !== undefined,
+      );
+      expect(analyzedCountCall).toBeDefined();
     });
   });
 

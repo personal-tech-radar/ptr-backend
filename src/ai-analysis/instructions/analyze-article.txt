@@ -18,12 +18,21 @@ Return JSON with:
 - shortSummary: a single substantial paragraph (target 120-180 words, not a list of short sentences) that gives the reader enough to decide whether to open the article. It must: explain what the article is actually about; name its main argument, event, tool, practice, or technical idea; and explain why it may matter to someone working on backend systems, architecture, or infrastructure. Use plain, concrete language grounded only in what the article itself says — do not add numbers, claims, or details that are not present in the source material. Avoid marketing language (e.g. "game-changing", "revolutionary", "must-read") and vague filler (e.g. "in today's fast-paced world", "this is worth a look", "an interesting read")
 - whyItMatters: 3 sentences explaining why this is relevant to the engineering community, what problem or trend it responds to, and what the broader implications are
 - practicalValue: 3 sentences explaining how a backend architect or tech lead can apply this, what decisions or trade-offs it informs, and what concrete next steps or takeaways it suggests
-- tags: array of short tags (max 5)
-- matchedInterests: array of user interests that are directly relevant to the article (max 5)
+- tags: array of short, freeform display tags (max 5) — not part of the taxonomy, just a label
 - relevanceScore: integer from 0 to 100
 - qualityScore: integer from 0 to 100
 - deepDiveScore: integer from 0 to 100
-- complexityLevel: one of [basic, intermediate, advanced, architect]
+- complexityLevel: one of [beginner, intermediate, advanced, architect]
+- materialType: one of [article, tutorial, release_notes, announcement, opinion, case_study, reference]
+- urgencyScore: integer from 0 to 100 — how time-sensitive the material is (e.g. a security advisory or a breaking release note scores high; an evergreen deep dive scores low)
+- evergreen: boolean — true if the material stays useful well beyond the next few weeks
+- breakingChanges: boolean — true if the article describes a breaking change to a tool, API, or platform
+- releaseData: nullable object, only when the article is about a specific release — loose shape, e.g. {"version": "1.2.0", "breaking": true}. null when not applicable
+- securityData: nullable object, only when the article is about a security issue — loose shape, e.g. {"cve": ["CVE-2024-12345"], "severity": "high"}. null when not applicable
+- mainStreamKey: the single content stream that best fits this article, one of exactly: releases_and_changes, security, industry_pulse, engineering_experience, expert_opinions_and_practices
+- secondaryStreamKeys: array of 0-2 additional content streams from the same list above that also fit, excluding mainStreamKey
+- technologySignals: array of explicit named tools, frameworks, languages, or platforms mentioned in the article (e.g. "Kubernetes", "Node.js", "PostgreSQL")
+- interestSignals: array of broader topical concepts the article covers (e.g. "distributed systems", "observability", "incident response")
 - shouldIncludeInDailyDigest: boolean
 - shouldIncludeInWeeklyDigest: boolean
 - shouldIncludeInDeepDiveDigest: boolean
@@ -44,14 +53,10 @@ Deep dive digest:
 - Prefer architecture case studies, scaling stories, infrastructure migrations, reliability engineering, distributed systems analysis, incident write-ups, performance optimization, and detailed implementation trade-offs.
 - Exclude lightweight tutorials, marketing content, generic announcements, and shallow summaries.
 
-User interests:
-{{USER_INTERESTS}}
-
-Rules for matchedInterests:
-- choose only values from USER_INTERESTS
-- include only interests that strongly match the material
-- maximum 5 items
-- do not invent new interests
+Rules for technologySignals/interestSignals:
+- only include items explicitly present in or clearly implied by the article's own content
+- do not invent items that aren't grounded in the material
+- keep each item short (a name or a short phrase), not a sentence
 
 Avoid:
 - marketing-heavy content

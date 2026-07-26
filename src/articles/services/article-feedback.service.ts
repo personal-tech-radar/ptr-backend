@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { LoggingService } from '../../common/logging/logging.service';
-import { DEFAULT_USER_ID } from '../../ai-analysis/services/ai-analysis.service';
+import { DEFAULT_USER_ID } from '../constants/default-user.constant';
 import { UserSourcePreferenceService } from '../../sources/services/user-source-preference.service';
 import { ArticleFeedback, ArticleFeedbackType } from '../entities/article-feedback.entity';
 import { ArticlesService } from './articles.service';

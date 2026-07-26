@@ -41,6 +41,12 @@ export class ContentStreamQueryService {
     return this.contentStreamRepo.find({ where: { id: In(ids) } });
   }
 
+  // Read-only lookup by the fixed catalog key (e.g. 'security') — used by AiAnalysisService to
+  // resolve the LLM's mainStreamKey/secondaryStreamKeys output against the real ContentStream rows.
+  async findByKey(key: string): Promise<ContentStream | null> {
+    return this.contentStreamRepo.findOne({ where: { key } });
+  }
+
   async findSelectedByUser(userId: string): Promise<ContentStream[]> {
     const links = await this.userContentStreamRepo.find({ where: { userId } });
     if (links.length === 0) return [];
