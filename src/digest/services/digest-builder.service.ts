@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, IsNull, MoreThanOrEqual, Not, Repository } from 'typeorm';
 import { LoggingService } from '../../common/logging/logging.service';
+import { getRecencyScore } from '../../common/util/recency-score.util';
 import { ArticleAnalysis } from '../../ai-analysis/entities/article-analysis.entity';
 import { ArticleTechnologyInterest } from '../../ai-analysis/entities/article-technology-interest.entity';
 import { DEFAULT_USER_ID } from '../../articles/constants/default-user.constant';
@@ -299,11 +300,7 @@ export class DigestBuilderService {
   }
 
   getRecencyScore(publishedAt: Date | null, config: DigestBuildConfig): number {
-    if (!publishedAt) return 50;
-    const ageHours = (Date.now() - publishedAt.getTime()) / (1000 * 60 * 60);
-    if (ageHours <= config.recencyFreshHours) return 100;
-    if (ageHours <= config.recencyRecentHours) return 80;
-    return 50;
+    return getRecencyScore(publishedAt, config.recencyFreshHours, config.recencyRecentHours);
   }
 
   selectWithDiversification(scored: ScoredCandidate[], max: number): ScoredCandidate[] {

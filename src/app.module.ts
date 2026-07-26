@@ -14,6 +14,7 @@ import { HealthModule } from './health/health.module';
 import { MailModule } from './mail/mail.module';
 import { QueueModule } from './queue/queue.module';
 import { SchedulerModule } from './scheduler/scheduler.module';
+import { ScoringModule } from './scoring/scoring.module';
 import { SourcesModule } from './sources/sources.module';
 import { TaxonomyModule } from './taxonomy/taxonomy.module';
 import { UsersModule } from './users/users.module';
@@ -38,6 +39,7 @@ import { UsersModule } from './users/users.module';
     UsersModule,
     AuthModule,
     TaxonomyModule,
+    ScoringModule,
   ],
 })
 export class AppModule {}

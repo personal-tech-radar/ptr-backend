@@ -5,6 +5,18 @@ Each entry is tagged with the branch it was made on.
 
 ---
 
+## [feature/mvp3-p4-personal-relevance-scoring] — 2026-07-26
+
+### Added
+- Personal Relevance Scoring (MVP3 Part 1, Phase 4 of 11) — a deterministic, no-LLM scoring service (`ScoringModule`) that computes how relevant a globally-analyzed article is to a specific user, purely from data already in the database. No new schema, no endpoint yet — this is groundwork consumed by the upcoming Personal Feed and Public Preview phases
+- Scoring weighs technology/interest overlap, a complexity-level-to-experience-level match table, article quality, and recency; a user's selected content streams are a mandatory filter — an article outside them scores zero. Per-article "useful"/"not useful" feedback and a user's per-source preference both nudge the score up or down but never exclude an article outright
+- The full formula and every coefficient are documented in README, per policy
+
+### Updated
+- `DigestBuilderService`'s recency-scoring logic extracted into a shared utility so the digest pipeline and the new personal-scoring service compute freshness the same way, without duplicating the logic (purely internal refactor, no behavior change)
+
+---
+
 ## [feature/mvp3-p3-global-article-analysis-rework] — 2026-07-26
 
 ### Added
