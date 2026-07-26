@@ -5,6 +5,22 @@ Each entry is tagged with the branch it was made on.
 
 ---
 
+## [feature/mvp3-p1-auth-foundation] — 2026-07-26
+
+### Added
+- User accounts and authentication (MVP3 Part 1, Phase 1 of 13) — the first step in moving Personal Tech Radar from a single YAML-config-driven user to a multi-tenant platform. `User` entity (email, password, display name, timezone, role, GitHub URL, level and onboarding fields reserved for a later phase, soft delete)
+- Registration by email/password with immediate timezone capture, email verification via a token-based link (kept intentionally separate from onboarding completion, which lands in a later phase), login issuing an access JWT plus a persisted/hashed/revocable refresh token, refresh-token rotation, logout, password recovery (forgot/reset) and in-session password change
+- Profile self-service (`GET/PATCH/DELETE /users/me`), all deriving the target user exclusively from the authenticated JWT, never a client-supplied ID
+- `HybridAuthGuard` (accepts either the existing API key or a JWT) and `RolesGuard`/`@Roles()` for `user`/`admin` roles — implemented and unit-tested now, applied to existing endpoints in a later Admin API phase
+- New dependencies: `@nestjs/passport`, `@nestjs/jwt`, `passport`, `passport-jwt`, `passport-local`, `bcrypt` (password hashing)
+
+### Updated
+- `MailService` extended beyond digest-only sending to also deliver verification and password-reset emails, using the same best-effort/non-fatal-failure pattern as existing digest sends
+- Swagger now documents a bearer-token security scheme alongside the existing API-key scheme, so the new JWT-protected routes are usable from `/docs`
+- README documents the new auth/user modules, the registration-through-reset flow, and the new environment variables
+
+---
+
 ## [fix/seed-sync-prod-script] — 2026-07-09
 
 ### Fixed
