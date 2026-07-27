@@ -9,6 +9,7 @@ import { ErrorModule } from './common/error/error.module';
 import { RedisModule } from './common/redis/redis.module';
 import { S3Module } from './common/s3/s3.module';
 import { DigestModule } from './digest/digest.module';
+import { FeedModule } from './feed/feed.module';
 import { FeedFetcherModule } from './feed-fetcher/feed-fetcher.module';
 import { HealthModule } from './health/health.module';
 import { MailModule } from './mail/mail.module';
@@ -42,6 +43,7 @@ import { UsersModule } from './users/users.module';
     TaxonomyModule,
     ScoringModule,
     UserActionsModule,
+    FeedModule,
   ],
 })
 export class AppModule {}

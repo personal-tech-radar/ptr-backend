@@ -27,7 +27,12 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
   async validate(payload: JwtPayload): Promise<CurrentUserPayload> {
     try {
       const user = await this.userQueryService.findById(payload.sub);
-      return { id: user.id, email: user.email, role: user.role };
+      return {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        onboardingCompletedAt: user.onboardingCompletedAt,
+      };
     } catch {
       throw new UnauthorizedException('User not found or has been deleted');
     }

@@ -23,6 +23,7 @@ export class HybridAuthGuard extends AuthGuard('jwt') {
           id: 'api-key-client',
           email: 'api-key-client',
           role: UserRole.ADMIN,
+          onboardingCompletedAt: null,
         };
         return true;
       }

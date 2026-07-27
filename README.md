@@ -56,6 +56,7 @@ src/
 ├── sources/               # Source CRUD — RSS/Atom/GitHub feeds + web source discovery/extraction
 ├── articles/              # Article storage and querying
 ├── user-actions/          # SavedArticle + PersonalArticleLink — real per-user save/redirect/open-tracking
+├── feed/                  # Personal Feed API — day-grouped, scored, capped/distributed feed + Redis cache
 ├── feed-fetcher/          # Fetches and parses feeds, creates articles
 ├── ai-analysis/           # OpenAI article analysis, ArticleAnalysis entity
 ├── digest/                # Digest building, scoring, email body generation
@@ -257,6 +258,52 @@ Real, per-user (`userId: uuid` FK to `User`) actions on articles — deliberatel
 
 **Not yet wired up:** `PersonalArticleLinkService.findOrCreateLink` and `SaveLinkSignatureService.buildSaveFromEmailUrl` are shipped but unconsumed — no feed or digest email template generates a `/go/:linkId` or save-from-email link yet. That wiring is a later phase's job (feed/digest email personalization); this phase only builds the mechanism.
 
+### FeedModule
+`GET /feed` — the current user's personal feed: real DB queries scored via `ScoringModule` and rendered through `UserActionsModule`'s permanent per-user redirect links, day-grouped and cached in Redis. JWT-guarded, and additionally gated by `OnboardingCompletedGuard` (`src/feed/guards/`) — `@UseGuards(JwtAuthGuard, OnboardingCompletedGuard)`, in that order, since the guard reads `request.user.onboardingCompletedAt`, populated by `JwtAuthGuard`/`JwtStrategy`. A user who hasn't completed onboarding gets `403` with `errorCode: ONBOARDING_NOT_COMPLETED`.
+
+**Query params** (`QueryFeedDto`):
+- `beforeDate` (`YYYY-MM-DD`, optional, default: today in the user's own IANA timezone) — the most recent day, **inclusive**, in the returned range.
+- `days` (`1`–`30`, default `7`) — the range is `[beforeDate - days + 1, beforeDate]`, inclusive on both ends. Clamped server-side to the live `FEED_MAX_DAYS` env value even though the DTO's own `@Max` decorator is a hardcoded `30` (see "Deviations" below).
+- `stream` (repeatable, content stream **keys** e.g. `security`) — when given, per-day distribution across the user's own selected streams is skipped entirely; the day's list is just the top 50 matching articles by score.
+- `technology` / `interest` (repeatable, technology/interest **ids**) — two independent query keys, both filtering against the same underlying `TechnologyInterest` table (no `kind` cross-check is enforced — see "Deviations").
+- `source` (repeatable, source ids).
+- `saved` (`true`/`false`, default `false`) — switches to the user's own `SavedArticle` rows instead of the topical feed. **Cannot be combined with `stream`/`technology`/`interest`/`source`** — `400 Bad Request` if it is.
+
+Any unknown/invalid `stream` key, `technology`/`interest`/`source` id is a `400 Bad Request` (mirrors `OnboardingService`'s existing "unknown id" validation pattern).
+
+**The permanent 30-day floor:** every non-saved feed query is unconditionally bounded to the last `FEED_MAX_DAYS` days (default 30) from today, **regardless of the requested `beforeDate`/`days` range** — a request for an older window than that simply returns nothing for the out-of-range days. **`saved=true` is exempt from this floor** — a user's own saved articles must always be findable regardless of age; the saved path still respects an explicit `beforeDate`/`days` range if given, it just has no unconditional lower bound layered on top.
+
+**Candidate selection:**
+- *Non-saved path:* `ArticleAnalysis` inner-joined to `Article` (`status = 'analyzed'`, `deletedAt IS NULL`) and `Source` (`deletedAt IS NULL`), filtered to `fullAnalysisAt IS NOT NULL AND preScreenIsRelevant = true`, within `[floorDate, toDateExclusive)` where `floorDate = max(requestedFrom, today - FEED_MAX_DAYS + 1 days)`. `source`/`technology`/`interest` filters are applied in SQL (`technology`/`interest` via an `EXISTS` subquery against `article_technology_interests`); the `stream` filter is applied as an **in-memory post-filter** on each candidate's resolved `streamIds`, not SQL, because it also drives the per-day distribution algorithm below.
+- *Saved path (`saved=true`):* candidates come from the user's `SavedArticle` rows in range, joined the same way to `ArticleAnalysis`/`Article`/`Source` — but with no 30-day floor, and saved articles are **never excluded on stream-eligibility**; they're scored via `RelevanceScoringService.computeScore` for ranking purposes only, and included regardless of `eligible`.
+- `ArticleStream` and `ArticleTechnologyInterest` rows for the whole candidate set are then batch-fetched (`WHERE articleId IN (...)`, grouped in memory), and one `ScoringProfile` is built via `UserScoringProfileService.buildProfile(userId, candidateSourceIds, candidateArticleIds)` — all `O(1)` DB round trips regardless of candidate count, not N+1.
+- Each candidate is scored via `RelevanceScoringService.computeScore`; `eligible: false` results are dropped (non-saved path only).
+
+**Day grouping:** each candidate's local calendar date is computed via `Intl.DateTimeFormat('en-CA', { timeZone: user.timezone, ... })` — a pure, dependency-free helper in `src/common/util/timezone.util.ts` (`getLocalDateString`/`zonedStartOfDayUTC`/`zonedEndOfDayExclusiveUTC`/`addDaysToDateString`), also used to compute the SQL query's day-range boundaries in the user's own timezone rather than UTC. **Every day in the requested range appears in the response, even with zero matching articles (`articles: []`)** — chosen over omitting empty days so a client can render the full calendar range without independently recomputing it from `beforeDate`/`days`.
+
+**Capping/distribution algorithm**, applied per requested day:
+1. **`saved=true`:** no distribution logic — just the day's candidates sorted by score descending, capped at 100. Defensive only; a user is very unlikely to save 100+ articles in one day.
+2. **A `stream` filter was given:** filter the day's candidates to those whose resolved `streamIds` intersect the filter set, sort by score descending, take the top 50. This *is* the day's full list — no further 100-cap layering, since 50 ≤ 100.
+3. **No `stream` filter (distribute across the user's own selected streams, via `ContentStreamQueryService.findSelectedByUser`):**
+   - Build one capped (top 50), score-sorted sub-list ("queue") per selected stream the user has, stream order stable by `ContentStream.sortOrder`. An article matching 2+ streams (main + secondary) can appear in multiple sub-lists.
+   - **Round-robin merge:** one item at a time per stream, in stream order, highest-score-first within that stream's queue — duplicates allowed at this stage — until either every queue is exhausted or 100 items have been collected.
+   - **Dedup** the merged list by `articleId`, keeping the first occurrence.
+   - **Backfill** the slots freed by dedup from the single highest-scored, not-yet-selected candidate remaining across **all** streams' capped sub-lists (not just the stream that had the duplicate) — repeated until the freed slots are filled or the combined leftover pool is exhausted, up to the 100 cap.
+   - If the user has zero selected streams (shouldn't happen post-onboarding, which requires at least one), falls back defensively to a plain top-100-by-score list for that day.
+4. **Regardless of path:** the day's final list is re-sorted by score descending before being included in the response — the algorithm above determines *membership*, not final display order.
+
+**Redirect links:** after final day-grouping/capping, on the trimmed final article set **only** (never the full candidate pool), `PersonalArticleLinkService.findOrCreateLinksBatch(userId, finalArticleIds, PersonalArticleLinkContext.FEED)` is called exactly once — one `SELECT` for existing links, one batch `INSERT` for the missing ones (falling back per-row to the existing single-row `findOrCreateLink`'s catch-and-refetch handling only if a batch insert races a concurrent duplicate). Each `FeedArticleItem.url` renders as `${APP_URL}/go/{linkId}`, never the raw `Article.url`.
+
+**Caching (`FeedCacheService`):** key shape `feed:{userId}:{filterHash}:{beforeDate}:{days}`, where `filterHash` is a `sha1` hash (Node's built-in `crypto`, no new dependency) over the sorted/normalized `stream`/`technology`/`interest`/`source`/`saved` params — identical filters in a different query-param order hash identically. TTL is `FEED_CACHE_TTL_SECONDS` (default 600s / 10 min), read fresh on every write rather than baked into the key. `beforeDate` in the key is the raw request param (or the literal string `'today'` when omitted) rather than a fully resolved calendar date, to avoid a redundant user/timezone lookup in the controller on every request — see "Deviations" for the resulting (self-healing, TTL-bounded) trade-off. On a cache hit, the controller returns the cached response directly, skipping the query/scoring/grouping pipeline entirely.
+
+**Cache invalidation** — a small leaf module, `FeedCacheModule` (`src/feed/feed-cache.module.ts`), exports only `FeedCacheInvalidationService.invalidateForUser(userId)` (→ `RedisService.delByPattern('feed:' + userId + ':*')`, a `SCAN`-cursor-based bulk delete — never `KEYS`, which blocks Redis's single-threaded event loop under load). It's intentionally minimal (imports nothing feed-specific beyond the globally-available `RedisService`) so other modules can invalidate the cache without importing the rest of `FeedModule` (controller, query/cache services, `ScoringModule`/`TaxonomyModule` wiring) — avoiding a circular module dependency, since `FeedModule` itself imports `UsersModule`. Of the product's 6 conceptual invalidation triggers, this phase wires:
+- **Onboarding completed/updated** (`OnboardingService.completeOnboarding`) — covers technology-interest, content-stream, and level changes in one call site.
+- **Profile update** (`UserCommandService.updateProfile`) — unconditional on any profile field change (not diffed to "was `level` specifically present"), since a per-field diff added meaningful complexity for a cheap, idempotent, no-op-when-nothing-cached cache drop. Also covers `timezone` changes, which affect the feed's own day-boundary computation.
+- **Article ingestion completing analysis** — deliberately **not** wired to a targeted call site. Relies purely on the `FEED_CACHE_TTL_SECONDS` TTL backstop, per an explicit product decision — newly-analyzed articles become visible in the feed within one TTL window (≤10 min by default) without a dedicated invalidation call in `AiAnalysisService` or anywhere in the ingestion/analysis pipeline.
+- **Feedback submission** (`ArticleFeedbackService.upsertFeedback` / `UserSourcePreferenceService.applyFeedback`) — **not wired**. Its only current call site, `FeedbackClickController`, is a token-authenticated (not JWT-authenticated) email-link endpoint with no real per-user identity — it always calls `upsertFeedback` with the legacy `DEFAULT_USER_ID`, not a real user id. There is no real per-user feedback-submission call site to invalidate against yet; forcing one in would mean inventing an identity the flow doesn't actually have. TTL backstop applies here too until a later phase gives feedback submission a real authenticated identity.
+
+**Index:** `Article(publishedAt, status)` composite index (migration `AddArticlePublishedAtStatusIndex`) — this is the first live per-request query against `articles`, unlike the batch/cron-driven digest and ingestion queries.
+
 ### DigestModule
 Selects the best `DAILY_DIGEST_ARTICLES_LIMIT` articles (default 3) for the daily digest, and 5 articles each for the weekly and deep-dive digests, using a time-window fallback (24 h → 48 h → 72 h for daily; a relaxed-threshold fallback for weekly/deep-dive). Articles already present in any digest with status `draft` or `sent` are excluded. Ranking formula:
 
@@ -384,6 +431,8 @@ Health check: `http://localhost:3000/health`
 | `DIGEST_FROM_EMAIL` | Sender email (verified in Resend) | — |
 | `DIGEST_TO_EMAIL` | Digest recipient email | — |
 | `DAILY_DIGEST_ARTICLES_LIMIT` | Number of articles included in the daily digest | `3` |
+| `FEED_CACHE_TTL_SECONDS` | TTL for a cached computed Personal Feed response (`FeedCacheService`) | `600` |
+| `FEED_MAX_DAYS` | Max `days` query param for `GET /feed`, and the width of the permanent non-saved-feed date floor | `30` |
 | `FETCH_CRON` | Cron for feed fetching | `0 * * * *` |
 | `DIGEST_CRON` | Cron for daily digest | `0 7 * * *` |
 | `CORS_ORIGINS` | Allowed origins (production) | — |

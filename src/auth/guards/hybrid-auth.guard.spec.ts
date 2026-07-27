@@ -40,6 +40,7 @@ describe('HybridAuthGuard', () => {
       id: 'api-key-client',
       email: 'api-key-client',
       role: UserRole.ADMIN,
+      onboardingCompletedAt: null,
     });
     expect(superCanActivateSpy).not.toHaveBeenCalled();
   });

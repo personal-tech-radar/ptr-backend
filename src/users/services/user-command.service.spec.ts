@@ -3,6 +3,7 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { UserCommandService } from './user-command.service';
 import { User, UserLevel, UserRole } from '../entities/user.entity';
+import { FeedCacheInvalidationService } from '../../feed/services/feed-cache-invalidation.service';
 
 describe('UserCommandService', () => {
   let service: UserCommandService;
@@ -14,6 +15,10 @@ describe('UserCommandService', () => {
     softDelete: jest.fn(),
   };
 
+  const mockFeedCacheInvalidationService = {
+    invalidateForUser: jest.fn(),
+  };
+
   const validId = '123e4567-e89b-12d3-a456-426614174000';
 
   beforeEach(async () => {
@@ -23,6 +28,7 @@ describe('UserCommandService', () => {
       providers: [
         UserCommandService,
         { provide: getRepositoryToken(User), useValue: mockUserRepo },
+        { provide: FeedCacheInvalidationService, useValue: mockFeedCacheInvalidationService },
       ],
     }).compile();
 
@@ -99,6 +105,14 @@ describe('UserCommandService', () => {
 
       expect(result.level).toBe('senior');
       expect(result.displayName).toBe('Old Name');
+    });
+
+    it('invalidates the feed cache after any profile update', async () => {
+      mockUserRepo.findOne.mockResolvedValue({ id: validId, displayName: 'Old Name' });
+
+      await service.updateProfile(validId, { displayName: 'New Name' });
+
+      expect(mockFeedCacheInvalidationService.invalidateForUser).toHaveBeenCalledWith(validId);
     });
   });
 

@@ -5,6 +5,21 @@ Each entry is tagged with the branch it was made on.
 
 ---
 
+## [feature/mvp3-p6-personal-feed-api] — 2026-07-27
+
+### Added
+- Personal Feed API (MVP3 Part 1, Phase 6 of 11) — `GET /feed`, a JWT-protected, onboarding-gated feed of a user's personally-scored articles, grouped by their local calendar day. Supports filtering by content stream, technology, interest, source, date range, and a saved-only mode
+- Results are capped and distributed to keep any one content stream from crowding out the others: up to 50 articles per stream per day, up to 100 per day overall when no stream filter is applied, up to 50 when filtering to a single stream
+- The feed is built entirely from already-analyzed data in the database (no LLM calls at read time) and cached in Redis; the cache is invalidated automatically whenever a user changes their onboarding selections or profile level
+- Every article link in a feed response goes through Phase 5's permanent redirect mechanism instead of the raw article URL
+- `saved=true` mode is exempt from the platform's usual 30-day freshness floor — a user's own saved articles stay findable regardless of age
+
+### Known limitations
+- Re-onboarding to change selected content streams is still additive-only, same underlying limitation already documented for technology/interest selections in Phase 2 — deselecting a stream doesn't currently remove it from a user's profile. Phase 2's entry flagged this as worth revisiting once Personal Feed needed removal semantics; Personal Feed itself doesn't currently need it (it reads whatever is stored), but this is now the natural trigger point to fix it
+- Cache invalidation after new articles are ingested relies on the cache's short TTL rather than an immediate, targeted invalidation — a deliberate simplification consistent with the spec's own "simple full invalidation is acceptable" guidance
+
+---
+
 ## [feature/mvp3-p5-user-actions-on-articles] — 2026-07-27
 
 ### Added

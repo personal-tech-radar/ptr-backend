@@ -27,10 +27,12 @@ describe('JwtStrategy', () => {
   });
 
   it('returns the current user payload for an active, existing user', async () => {
+    const onboardingCompletedAt = new Date('2026-01-01T00:00:00Z');
     mockUserQueryService.findById.mockResolvedValue({
       id: 'user-1',
       email: 'jane@example.com',
       role: UserRole.USER,
+      onboardingCompletedAt,
     });
 
     const result = await strategy.validate({
@@ -39,7 +41,12 @@ describe('JwtStrategy', () => {
       role: UserRole.USER,
     });
 
-    expect(result).toEqual({ id: 'user-1', email: 'jane@example.com', role: UserRole.USER });
+    expect(result).toEqual({
+      id: 'user-1',
+      email: 'jane@example.com',
+      role: UserRole.USER,
+      onboardingCompletedAt,
+    });
   });
 
   // UserQueryService.findById relies on TypeORM's default soft-delete exclusion and throws

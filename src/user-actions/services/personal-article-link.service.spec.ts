@@ -14,6 +14,7 @@ const article = { id: articleId, url: 'https://example.com/article' };
 
 const mockRepository = {
   findOne: jest.fn(),
+  find: jest.fn(),
   create: jest.fn((data) => data),
   save: jest.fn((data) => Promise.resolve({ id: linkId, ...data })),
 };
@@ -103,6 +104,74 @@ describe('PersonalArticleLinkService', () => {
       await expect(
         service.findOrCreateLink(userId, articleId, PersonalArticleLinkContext.FEED),
       ).rejects.toThrow(saveError);
+    });
+  });
+
+  describe('findOrCreateLinksBatch', () => {
+    const articleId2 = '423e4567-e89b-12d3-a456-426614174000';
+    const articleId3 = '523e4567-e89b-12d3-a456-426614174000';
+    const linkId2 = '623e4567-e89b-12d3-a456-426614174000';
+    const linkId3 = '723e4567-e89b-12d3-a456-426614174000';
+
+    it('returns an empty map for an empty article id list without querying the repository', async () => {
+      const result = await service.findOrCreateLinksBatch(
+        userId,
+        [],
+        PersonalArticleLinkContext.FEED,
+      );
+
+      expect(result.size).toBe(0);
+      expect(mockRepository.find).not.toHaveBeenCalled();
+    });
+
+    it('returns a complete map covering a mix of existing and missing article ids', async () => {
+      mockRepository.find.mockResolvedValueOnce([
+        { id: linkId, userId, articleId, context: PersonalArticleLinkContext.FEED },
+      ]); // existence check: only `articleId` already has a link
+      mockRepository.save.mockResolvedValueOnce([
+        { id: linkId2, userId, articleId: articleId2, context: PersonalArticleLinkContext.FEED },
+        { id: linkId3, userId, articleId: articleId3, context: PersonalArticleLinkContext.FEED },
+      ]);
+
+      const result = await service.findOrCreateLinksBatch(
+        userId,
+        [articleId, articleId2, articleId3],
+        PersonalArticleLinkContext.FEED,
+      );
+
+      expect(result.get(articleId)).toBe(linkId);
+      expect(result.get(articleId2)).toBe(linkId2);
+      expect(result.get(articleId3)).toBe(linkId3);
+      expect(result.size).toBe(3);
+      expect(mockRepository.save).toHaveBeenCalledTimes(1);
+    });
+
+    it('recovers from a concurrent-insert race by refetching the winning rows for the raced ids', async () => {
+      mockRepository.find
+        .mockResolvedValueOnce([]) // existence check: nothing exists yet
+        .mockResolvedValueOnce([
+          { id: linkId2, userId, articleId: articleId2, context: PersonalArticleLinkContext.FEED },
+        ]); // refetch after the batch save fails: articleId2 won the race, articleId3 still missing
+      // articleId3 falls back to the single-row findOrCreateLink, which uses findOne/save.
+      mockRepository.findOne.mockResolvedValueOnce(null);
+      mockRepository.save
+        .mockRejectedValueOnce(new Error('duplicate key value violates unique constraint'))
+        .mockResolvedValueOnce({
+          id: linkId3,
+          userId,
+          articleId: articleId3,
+          context: PersonalArticleLinkContext.FEED,
+        });
+
+      const result = await service.findOrCreateLinksBatch(
+        userId,
+        [articleId2, articleId3],
+        PersonalArticleLinkContext.FEED,
+      );
+
+      expect(result.get(articleId2)).toBe(linkId2);
+      expect(result.get(articleId3)).toBe(linkId3);
+      expect(result.size).toBe(2);
     });
   });
 
