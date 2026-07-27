@@ -17,6 +17,7 @@ import { SchedulerModule } from './scheduler/scheduler.module';
 import { ScoringModule } from './scoring/scoring.module';
 import { SourcesModule } from './sources/sources.module';
 import { TaxonomyModule } from './taxonomy/taxonomy.module';
+import { UserActionsModule } from './user-actions/user-actions.module';
 import { UsersModule } from './users/users.module';
 
 @Module({
@@ -40,6 +41,7 @@ import { UsersModule } from './users/users.module';
     AuthModule,
     TaxonomyModule,
     ScoringModule,
+    UserActionsModule,
   ],
 })
 export class AppModule {}

@@ -55,6 +55,7 @@ src/
 ├── taxonomy/              # TechnologyInterest/ContentStream taxonomy, dedup resolver, merge endpoint
 ├── sources/               # Source CRUD — RSS/Atom/GitHub feeds + web source discovery/extraction
 ├── articles/              # Article storage and querying
+├── user-actions/          # SavedArticle + PersonalArticleLink — real per-user save/redirect/open-tracking
 ├── feed-fetcher/          # Fetches and parses feeds, creates articles
 ├── ai-analysis/           # OpenAI article analysis, ArticleAnalysis entity
 ├── digest/                # Digest building, scoring, email body generation
@@ -238,6 +239,24 @@ Complexity-match table (row = user level, column = article complexity):
 
 The bucketed recency scoring itself (`getRecencyScore(publishedAt, freshHours, recentHours)`) was extracted out of `DigestBuilderService` into a shared pure utility at `src/common/util/recency-score.util.ts`, reused by both `DigestModule` and `ScoringModule`. `DigestBuilderService.getRecencyScore`'s own public signature is unchanged and now just delegates to the shared util.
 
+### UserActionsModule
+Real, per-user (`userId: uuid` FK to `User`) actions on articles — deliberately separate from the legacy, still-`varchar`-keyed `ArticleFeedback`/`UserSourcePreference` tables, which this module does not touch (their `userId` typing conversion is a later phase's job).
+
+**Entities:**
+- `SavedArticle` (`saved_articles`) — `(userId, articleId)` unique, cascades on delete of either side. A simple "bookmark" join row; no status beyond existing/not-existing.
+- `PersonalArticleLink` (`personal_article_links`) — `(userId, articleId, context)` unique. A permanent, reusable per-user link id (the row's own `id`) used as the `/go/:linkId` redirect target, plus `firstOpenedAt` (nullable, set once) for idempotent first-open tracking. `context` is `PersonalArticleLinkContext` (`feed` / `daily_digest` / `weekly_digest` / `deep_dive_weekly_digest`) — mirrors `DigestType`'s three real values 1:1, plus `feed` (not a digest type, so not in `DigestType`).
+
+**Endpoints:**
+- `POST /saved-articles/:articleId` — save an article for the current user (JWT-guarded). Idempotent find-or-create; saving an already-saved article returns the existing row rather than erroring.
+- `DELETE /saved-articles/:articleId` — unsave (JWT-guarded). Idempotent: returns `204` even if the article wasn't currently saved — never `404` for "already not saved".
+- `GET /saved-articles` — paginated list of the current user's saved articles (JWT-guarded), joined to `Article`.
+- `GET /articles/:articleId/save-from-email?userId=&signature=` — unguarded, reached from an email link. Always renders a small HTML result page (success or failure), never a raw JSON error, matching `FeedbackClickController`'s existing contract. On success, saves the article (idempotent — safe to click twice).
+- `GET /go/:linkId` — unguarded pure redirect (`@Redirect()`) to the linked article's URL. Records `firstOpenedAt` on the first resolve only; repeat visits redirect without touching it again (idempotent, no locking — a benign race on a near-simultaneous first open is acceptable). An unresolved `linkId` is a standard JSON `404`.
+
+**HMAC signing scheme** (`SaveLinkSignatureService`): `signature = HMAC-SHA256(SAVE_LINK_SECRET, "save-article:v1:" + userId + ":" + articleId)`, hex-encoded. Verification guards on buffer length before calling `crypto.timingSafeEqual` (which throws rather than returning `false` on mismatched-length input), so a malformed or wrong-length signature fails closed instead of crashing the request. `SAVE_LINK_SECRET` is required at first use — an unset value throws immediately (`src/user-actions/utils/save-link-secret.util.ts`), mirroring `JWT_SECRET`'s fail-fast pattern.
+
+**Not yet wired up:** `PersonalArticleLinkService.findOrCreateLink` and `SaveLinkSignatureService.buildSaveFromEmailUrl` are shipped but unconsumed — no feed or digest email template generates a `/go/:linkId` or save-from-email link yet. That wiring is a later phase's job (feed/digest email personalization); this phase only builds the mechanism.
+
 ### DigestModule
 Selects the best `DAILY_DIGEST_ARTICLES_LIMIT` articles (default 3) for the daily digest, and 5 articles each for the weekly and deep-dive digests, using a time-window fallback (24 h → 48 h → 72 h for daily; a relaxed-threshold fallback for weekly/deep-dive). Articles already present in any digest with status `draft` or `sent` are excluded. Ranking formula:
 
@@ -346,6 +365,7 @@ Health check: `http://localhost:3000/health`
 | `API_KEY` | Admin API key for `X-API-KEY` header | — |
 | `APP_URL` | Public base URL of this API (used in digest email feedback links, and in verification/password-reset email links) | — |
 | `FEEDBACK_TOKEN` | Secret token validated when feedback links in emails are clicked | — |
+| `SAVE_LINK_SECRET` | HMAC secret signing save-from-email links (`SaveLinkSignatureService`) | — |
 | `JWT_SECRET` | Secret used to sign access JWTs | — |
 | `JWT_EXPIRES_IN` | Access JWT lifetime | `15m` |
 | `JWT_REFRESH_EXPIRES_IN` | Refresh token lifetime (opaque, persisted, hashed, revocable `RefreshToken` entity — not JWT-signed) | `30d` |

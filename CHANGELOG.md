@@ -5,6 +5,18 @@ Each entry is tagged with the branch it was made on.
 
 ---
 
+## [feature/mvp3-p5-user-actions-on-articles] — 2026-07-27
+
+### Added
+- User Actions on Articles (MVP3 Part 1, Phase 5 of 11) — users can now save/unsave/list articles for later (`/saved-articles`, JWT-protected). Unsaving something not currently saved is a no-op, not an error
+- A permanent, backend-redirect link mechanism (`GET /go/:linkId`) that records a user's first open of an article exactly once, along with the context it was opened from (feed, daily/weekly/deep-dive digest) — repeat visits redirect correctly but never re-record. This is the mechanism the upcoming Personal Feed and Personal Digest Delivery phases will render article links through; nothing calls it yet in this phase, which is expected groundwork
+- An unauthenticated, HMAC-signed "save from email" link for future digest/feed emails — idempotent, and always shows a simple HTML result page (saved, invalid link, already-gone article) rather than a raw error, since it's meant to be clicked straight from an email client
+
+### Updated
+- The small HTML-page helper used by the existing feedback-click email link is now shared with the new save-from-email link, instead of living as a private copy inside one controller
+
+---
+
 ## [feature/mvp3-p4-personal-relevance-scoring] — 2026-07-26
 
 ### Added

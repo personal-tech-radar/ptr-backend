@@ -58,6 +58,7 @@ services:
       API_KEY: local-test-api-key
       APP_URL: http://localhost:3300
       FEEDBACK_TOKEN: local-test-feedback-token
+      SAVE_LINK_SECRET: local-test-save-link-secret
       JWT_SECRET: local-test-jwt-secret
       JWT_EXPIRES_IN: 15m
       JWT_REFRESH_EXPIRES_IN: 30d
