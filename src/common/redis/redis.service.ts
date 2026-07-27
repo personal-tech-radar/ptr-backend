@@ -58,6 +58,25 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     return this.client.del(...keys);
   }
 
+  // SCAN-based bulk delete — never KEYS, which blocks Redis's single-threaded event loop under
+  // load. Cursor-paginated: each page's matched keys are deleted immediately, so a large match
+  // set never has to be buffered in memory before the first DEL.
+  async delByPattern(pattern: string): Promise<number> {
+    let cursor = '0';
+    let deletedCount = 0;
+
+    do {
+      const [nextCursor, keys] = await this.client.scan(cursor, 'MATCH', pattern, 'COUNT', 100);
+      cursor = nextCursor;
+
+      if (keys.length > 0) {
+        deletedCount += await this.client.del(...keys);
+      }
+    } while (cursor !== '0');
+
+    return deletedCount;
+  }
+
   async smembers(key: string): Promise<string[]> {
     return this.client.smembers(key);
   }

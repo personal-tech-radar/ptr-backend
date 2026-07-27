@@ -71,6 +71,8 @@ services:
       RESEND_API_KEY: re_local_test_placeholder
       DIGEST_FROM_EMAIL: digest@example.com
       DIGEST_TO_EMAIL: test@example.com
+      FEED_CACHE_TTL_SECONDS: 600
+      FEED_MAX_DAYS: 30
     ports:
       # Published to a non-default host port: 3000 is already bound locally on this machine
       # (another running stack). Poll http://localhost:3300/health, not :3000, from the host.

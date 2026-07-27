@@ -8,6 +8,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { validate as uuidValidate } from 'uuid';
 import { LoggingService } from '../../common/logging/logging.service';
+import { FeedCacheInvalidationService } from '../../feed/services/feed-cache-invalidation.service';
 import { UpdateProfileDto } from '../dto/update-profile.dto';
 import { User } from '../entities/user.entity';
 
@@ -25,6 +26,7 @@ export class UserCommandService {
   constructor(
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
+    private readonly feedCacheInvalidationService: FeedCacheInvalidationService,
   ) {}
 
   async create(input: CreateUserInput): Promise<User> {
@@ -55,6 +57,12 @@ export class UserCommandService {
 
     const saved = await this.userRepo.save(user);
     this.logger.info('User profile updated', { id: saved.id });
+
+    // Unconditional rather than diffed on "was level actually present/changed" — a per-field
+    // diff would add meaningful complexity for a cheap, idempotent cache-drop that's a no-op
+    // when there was nothing cached to begin with.
+    await this.feedCacheInvalidationService.invalidateForUser(id);
+
     return saved;
   }
 

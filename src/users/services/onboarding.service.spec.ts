@@ -30,6 +30,10 @@ describe('OnboardingService', () => {
     linkUserSelections: jest.fn(),
   };
 
+  const mockFeedCacheInvalidationService = {
+    invalidateForUser: jest.fn(),
+  };
+
   const enabledStream = { id: 'cs-1', enabled: true };
   const dto = {
     level: UserLevel.MIDDLE,
@@ -45,6 +49,7 @@ describe('OnboardingService', () => {
       mockTechnologyInterestQueryService as any,
       mockContentStreamQueryService as any,
       mockContentStreamCommandService as any,
+      mockFeedCacheInvalidationService as any,
     );
   });
 
@@ -81,6 +86,7 @@ describe('OnboardingService', () => {
       ]);
       expect(result.level).toBe(UserLevel.MIDDLE);
       expect(result.onboardingCompletedAt).toBeInstanceOf(Date);
+      expect(mockFeedCacheInvalidationService.invalidateForUser).toHaveBeenCalledWith(validId);
     });
 
     it('is idempotent on re-call after completion: updates level/selections but never un-sets onboardingCompletedAt', async () => {

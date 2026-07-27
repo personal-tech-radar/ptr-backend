@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { validate as uuidValidate } from 'uuid';
 import { LoggingService } from '../../common/logging/logging.service';
+import { FeedCacheInvalidationService } from '../../feed/services/feed-cache-invalidation.service';
 import { toContentStreamResponseDto } from '../../taxonomy/dto/content-stream-response.dto';
 import { toTechnologyInterestResponseDto } from '../../taxonomy/dto/technology-interest-response.dto';
 import { ContentStreamCommandService } from '../../taxonomy/services/content-stream-command.service';
@@ -24,6 +25,7 @@ export class OnboardingService {
     private readonly technologyInterestQueryService: TechnologyInterestQueryService,
     private readonly contentStreamQueryService: ContentStreamQueryService,
     private readonly contentStreamCommandService: ContentStreamCommandService,
+    private readonly feedCacheInvalidationService: FeedCacheInvalidationService,
   ) {}
 
   // Safely re-callable: doubles as "change my selections later", no separate endpoint needed.
@@ -67,6 +69,11 @@ export class OnboardingService {
       user.onboardingCompletedAt = new Date();
     }
     const saved = await this.userRepo.save(user);
+
+    // Covers 3 of the 6 feed-cache invalidation triggers in one call site (level, technology
+    // interests, content streams all change together here) — see coder.md, no need to re-diff
+    // which sub-selection actually changed.
+    await this.feedCacheInvalidationService.invalidateForUser(userId);
 
     this.logger.info('User onboarding completed/updated', {
       userId,

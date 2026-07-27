@@ -3,6 +3,7 @@ import {
   CreateDateColumn,
   DeleteDateColumn,
   Entity,
+  Index,
   JoinColumn,
   ManyToOne,
   PrimaryGeneratedColumn,
@@ -27,7 +28,10 @@ export enum ContentExtractionMethod {
   PLAYWRIGHT = 'playwright',
 }
 
+// Composite index (publishedAt, status) — first live per-request query against this table
+// (FeedQueryService's candidate-window filter: publishedAt range + status = 'analyzed').
 @Entity('articles')
+@Index(['publishedAt', 'status'])
 export class Article {
   @PrimaryGeneratedColumn('uuid')
   id: string;
