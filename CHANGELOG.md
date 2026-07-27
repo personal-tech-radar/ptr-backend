@@ -5,6 +5,18 @@ Each entry is tagged with the branch it was made on.
 
 ---
 
+## [feature/mvp3-p7-public-feed-preview] — 2026-07-27
+
+### Added
+- Public Feed + Anonymous Preview (MVP3 Part 1, Phase 7 of 11) — `GET /public/feed`, a fully open, no-registration-required feed of already-analyzed articles that meet a minimum quality bar and belong to at least one content stream, sorted strictly by publish date with no personalization
+- `POST /public/feed/preview` — lets a visitor see what a personalized feed would look like by supplying technologies, interests, and streams directly in the request, without creating an account or any database row. Scored using the same relevance engine as the real personal feed, against articles from the last 30 days
+- Both endpoints cache their results in Redis; article links in the public feed point straight at the original source, since there's no visitor identity to attach a personal redirect to
+
+### Known limitations
+- Neither new endpoint has rate limiting yet, consistent with every other endpoint in this app today — a known, deliberately deferred gap pending a future cross-cutting throttling pass across the whole API, not specific to this phase
+
+---
+
 ## [feature/mvp3-p6-personal-feed-api] — 2026-07-27
 
 ### Added

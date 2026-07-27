@@ -13,6 +13,7 @@ import { FeedModule } from './feed/feed.module';
 import { FeedFetcherModule } from './feed-fetcher/feed-fetcher.module';
 import { HealthModule } from './health/health.module';
 import { MailModule } from './mail/mail.module';
+import { PublicFeedModule } from './public-feed/public-feed.module';
 import { QueueModule } from './queue/queue.module';
 import { SchedulerModule } from './scheduler/scheduler.module';
 import { ScoringModule } from './scoring/scoring.module';
@@ -44,6 +45,7 @@ import { UsersModule } from './users/users.module';
     ScoringModule,
     UserActionsModule,
     FeedModule,
+    PublicFeedModule,
   ],
 })
 export class AppModule {}
