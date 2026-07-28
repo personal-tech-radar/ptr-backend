@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { FeedCacheModule } from '../feed/feed-cache.module';
 import { TaxonomyModule } from '../taxonomy/taxonomy.module';
+import { AdminUsersController } from './controllers/admin-users.controller';
 import { UsersController } from './controllers/users.controller';
 import { User } from './entities/user.entity';
 import { OnboardingService } from './services/onboarding.service';
@@ -15,7 +16,7 @@ import { UserQueryService } from './services/user-query.service';
   // NOT pull in FeedModule (controller/query-service/taxonomy+scoring wiring), avoiding a
   // circular module dependency since FeedModule itself imports UsersModule.
   imports: [TypeOrmModule.forFeature([User]), TaxonomyModule, FeedCacheModule],
-  controllers: [UsersController],
+  controllers: [UsersController, AdminUsersController],
   providers: [UserCommandService, UserQueryService, OnboardingService],
   exports: [UserCommandService, UserQueryService],
 })
