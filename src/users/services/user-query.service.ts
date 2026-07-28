@@ -29,13 +29,22 @@ export class UserQueryService {
     return this.userRepo.findOne({ where: { email } });
   }
 
-  // For future admin use (see coder.md) — no controller route exposes this in this phase.
   async findAll(query: QueryUserDto): Promise<PaginatedResponseDto<User>> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
 
-    const [data, total] = await this.userRepo
-      .createQueryBuilder('user')
+    const qb = this.userRepo.createQueryBuilder('user');
+    if (query.includeDeleted) {
+      qb.withDeleted();
+    }
+    if (query.email) {
+      qb.andWhere('user.email ILIKE :email', { email: `%${query.email}%` });
+    }
+    if (query.role) {
+      qb.andWhere('user.role = :role', { role: query.role });
+    }
+
+    const [data, total] = await qb
       .orderBy('user.createdAt', 'DESC')
       .skip((page - 1) * limit)
       .take(limit)

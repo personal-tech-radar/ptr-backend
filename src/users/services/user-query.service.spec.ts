@@ -2,12 +2,14 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { UserQueryService } from './user-query.service';
-import { User } from '../entities/user.entity';
+import { User, UserRole } from '../entities/user.entity';
 
 describe('UserQueryService', () => {
   let service: UserQueryService;
 
   const mockQueryBuilder = {
+    withDeleted: jest.fn().mockReturnThis(),
+    andWhere: jest.fn().mockReturnThis(),
     orderBy: jest.fn().mockReturnThis(),
     skip: jest.fn().mockReturnThis(),
     take: jest.fn().mockReturnThis(),
@@ -75,7 +77,36 @@ describe('UserQueryService', () => {
 
       expect(mockQueryBuilder.skip).toHaveBeenCalledWith(0);
       expect(mockQueryBuilder.take).toHaveBeenCalledWith(20);
+      expect(mockQueryBuilder.withDeleted).not.toHaveBeenCalled();
       expect(result.meta).toEqual({ total: 1, page: 1, limit: 20, totalPages: 1 });
+    });
+
+    it('applies an email ILIKE filter', async () => {
+      mockQueryBuilder.getManyAndCount.mockResolvedValue([[], 0]);
+
+      await service.findAll({ email: 'jane' });
+
+      expect(mockQueryBuilder.andWhere).toHaveBeenCalledWith('user.email ILIKE :email', {
+        email: '%jane%',
+      });
+    });
+
+    it('applies an exact role filter', async () => {
+      mockQueryBuilder.getManyAndCount.mockResolvedValue([[], 0]);
+
+      await service.findAll({ role: UserRole.ADMIN });
+
+      expect(mockQueryBuilder.andWhere).toHaveBeenCalledWith('user.role = :role', {
+        role: UserRole.ADMIN,
+      });
+    });
+
+    it('only includes soft-deleted users when includeDeleted is explicitly true', async () => {
+      mockQueryBuilder.getManyAndCount.mockResolvedValue([[], 0]);
+
+      await service.findAll({ includeDeleted: true });
+
+      expect(mockQueryBuilder.withDeleted).toHaveBeenCalledTimes(1);
     });
   });
 });

@@ -5,6 +5,24 @@ Each entry is tagged with the branch it was made on.
 
 ---
 
+## [feature/mvp3-p8a-admin-core] — 2026-07-27
+
+### Added
+- Admin API, part 1 of 3 (MVP3 Part 1, Phase 8a of 11) — new admin-only endpoints for managing users (`/admin/users`) and articles (`/admin/articles`): paginated listing with filters, single-record lookup, and soft delete. Filtering by email is supported for users
+- Admin endpoints require the `admin` role, either via a logged-in admin's token or the existing API key, so existing ops and automation tooling keeps working unchanged while gaining real per-admin JWT access
+
+### Updated
+- Sources, source candidates, and the digest-trigger endpoint now also require the admin role instead of just the API key, completing a guard migration that was intentionally deferred back in Phase 1
+- `GET /sources` now returns a paginated, filterable result instead of a plain list — a breaking change to that endpoint's response shape, for anyone calling it directly
+
+### Fixed
+- Explicitly requesting `enabled=false` or `includeDeleted=false` on the new admin filters was silently returning the opposite of what was asked, due to a NestJS/class-transformer interaction that corrupted the value before it reached our own filter logic. Omitted filters and `=true` were unaffected
+
+### Known limitations
+- The same false-filter bug fixed above also exists on the already-shipped personal feed's `saved` filter (`GET /feed?saved=false`) — out of scope for this phase since that file wasn't touched here, flagged for a small standalone follow-up fix
+
+---
+
 ## [feature/mvp3-p7-public-feed-preview] — 2026-07-27
 
 ### Added

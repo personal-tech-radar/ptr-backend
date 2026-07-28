@@ -1,7 +1,7 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type, TransformFnParams } from 'class-transformer';
-import { IsBoolean, IsEnum, IsInt, IsOptional, IsString, Min } from 'class-validator';
-import { UserRole } from '../entities/user.entity';
+import { IsBoolean, IsEnum, IsInt, IsOptional, Max, Min } from 'class-validator';
+import { SourceCategory, SourceType } from '../entities/source.entity';
 
 // Reads the raw value from `obj[key]` rather than the pipeline-provided `value`. The global
 // ValidationPipe's `enableImplicitConversion` runs class-transformer's own Boolean(value) coercion
@@ -15,9 +15,7 @@ const toBoolean = ({ obj, key }: TransformFnParams): boolean | undefined => {
   return raw === 'true';
 };
 
-// Used by UserQueryService.findAll, backing the admin users listing endpoint
-// (AdminUsersController, GET /admin/users).
-export class QueryUserDto {
+export class QuerySourceDto {
   @ApiPropertyOptional({ description: 'Page number', example: 1, minimum: 1, default: 1 })
   @IsOptional()
   @Type(() => Number)
@@ -25,29 +23,38 @@ export class QueryUserDto {
   @Min(1)
   page?: number = 1;
 
-  @ApiPropertyOptional({ description: 'Items per page', example: 20, minimum: 1, default: 20 })
+  @ApiPropertyOptional({
+    description: 'Items per page',
+    example: 20,
+    minimum: 1,
+    maximum: 100,
+    default: 20,
+  })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
+  @Max(100)
   limit?: number = 20;
 
-  @ApiPropertyOptional({
-    description: 'Case-insensitive partial match filter on email',
-    example: 'jane',
-  })
+  @ApiPropertyOptional({ description: 'Filter by source type', enum: SourceType })
   @IsOptional()
-  @IsString()
-  @Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value))
-  email?: string;
+  @IsEnum(SourceType)
+  type?: SourceType;
 
-  @ApiPropertyOptional({ description: 'Filter by role', enum: UserRole })
+  @ApiPropertyOptional({ description: 'Filter by source category', enum: SourceCategory })
   @IsOptional()
-  @IsEnum(UserRole)
-  role?: UserRole;
+  @IsEnum(SourceCategory)
+  category?: SourceCategory;
+
+  @ApiPropertyOptional({ description: 'Filter by enabled status', example: true })
+  @IsOptional()
+  @Transform(toBoolean)
+  @IsBoolean()
+  enabled?: boolean;
 
   @ApiPropertyOptional({
-    description: 'Include soft-deleted users in the results',
+    description: 'Include soft-deleted sources in the results',
     example: false,
     default: false,
   })

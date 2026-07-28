@@ -9,14 +9,14 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import {
-  ApiSecurity,
-  ApiOperation,
-  ApiResponse,
-  ApiTags,
-} from '@nestjs/swagger';
+import { ApiBearerAuth, ApiSecurity, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { Roles } from '../../auth/decorators/roles.decorator';
+import { HybridAuthGuard } from '../../auth/guards/hybrid-auth.guard';
+import { RolesGuard } from '../../auth/guards/roles.guard';
 import { ApiKeyGuard } from '../../common/guards/api-key.guard';
 import { PaginatedResponseDto } from '../../common/dto/paginated-response.dto';
+import { ErrorResponseDto } from '../../common/error/error-response.dto';
+import { UserRole } from '../../users/entities/user.entity';
 import { ArticleFeedbackResponseDto } from '../dto/article-feedback-response.dto';
 import { ArticleListQueryDto } from '../dto/article-list-query.dto';
 import { ArticleResponseDto } from '../dto/article-response.dto';
@@ -26,7 +26,6 @@ import { ArticlesService } from '../services/articles.service';
 
 @ApiTags('Articles')
 @ApiSecurity('api-key')
-@UseGuards(ApiKeyGuard)
 @Controller('articles')
 export class ArticlesController {
   constructor(
@@ -35,15 +34,15 @@ export class ArticlesController {
   ) {}
 
   @Get()
+  @UseGuards(ApiKeyGuard)
   @ApiOperation({ summary: 'List articles with pagination and filtering' })
   @ApiResponse({ status: 200, type: PaginatedResponseDto })
-  findAll(
-    @Query() query: ArticleListQueryDto,
-  ): Promise<PaginatedResponseDto<ArticleResponseDto>> {
+  findAll(@Query() query: ArticleListQueryDto): Promise<PaginatedResponseDto<ArticleResponseDto>> {
     return this.articlesService.findAll(query);
   }
 
   @Get(':id')
+  @UseGuards(ApiKeyGuard)
   @ApiOperation({ summary: 'Get a single article by ID' })
   @ApiResponse({ status: 200, type: ArticleResponseDto })
   findOne(@Param('id') id: string): Promise<ArticleResponseDto> {
@@ -52,8 +51,13 @@ export class ArticlesController {
 
   @Post(':id/feedback')
   @HttpCode(HttpStatus.OK)
+  @UseGuards(HybridAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Submit or update feedback for an article' })
   @ApiResponse({ status: 200, type: ArticleFeedbackResponseDto })
+  @ApiResponse({ status: 401, type: ErrorResponseDto })
+  @ApiResponse({ status: 403, type: ErrorResponseDto })
   @ApiResponse({ status: 404, description: 'Article not found' })
   addFeedback(
     @Param('id') id: string,

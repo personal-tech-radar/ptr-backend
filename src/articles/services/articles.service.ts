@@ -71,10 +71,7 @@ export class ArticlesService {
     return this.articleRepo.findOne({ where: { urlHash } });
   }
 
-  async findByTitleHashInLastDays(
-    titleHash: string,
-    days: number,
-  ): Promise<Article | null> {
+  async findByTitleHashInLastDays(titleHash: string, days: number): Promise<Article | null> {
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
     return this.articleRepo
       .createQueryBuilder('a')
@@ -105,5 +102,14 @@ export class ArticlesService {
   async deleteByIds(ids: string[]): Promise<void> {
     if (ids.length === 0) return;
     await this.articleRepo.delete(ids);
+  }
+
+  async remove(id: string): Promise<void> {
+    const article = await this.articleRepo.findOne({ where: { id } });
+    if (!article) {
+      throw new NotFoundException(`Article ${id} not found`);
+    }
+    await this.articleRepo.softDelete(id);
+    this.logger.info('Article soft-deleted', { id });
   }
 }

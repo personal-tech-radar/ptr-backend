@@ -84,13 +84,25 @@ Multi-tenant account infrastructure. `User` (`src/users/entities/user.entity.ts`
 5. `POST /auth/logout` — revokes the presented refresh token (idempotent).
 6. `POST /auth/password/forgot` / `POST /auth/password/reset` — `PasswordResetToken` issuance and consumption; a successful reset also revokes every other active refresh token for that user. `PATCH /auth/password` changes the password while logged in (current password required, JWT-protected).
 
-**Guards** (`src/auth/guards/`): `JwtAuthGuard` (JWT only), `HybridAuthGuard` (accepts either `X-API-KEY` — reusing `ApiKeyGuard`'s validation — or a JWT, for routes meant to serve both machine and human callers), `RolesGuard` + `@Roles(...)` decorator (role-gated routes), `@CurrentUser()` decorator (reads `request.user`). `HybridAuthGuard`/`RolesGuard` are defined in this phase but not yet applied to `SourcesController`/`ArticlesController`/`DigestController` — that migration off `ApiKeyGuard` is a later Admin API phase.
+**Guards** (`src/auth/guards/`): `JwtAuthGuard` (JWT only), `HybridAuthGuard` (accepts either `X-API-KEY` — reusing `ApiKeyGuard`'s validation, and synthesizing an admin `request.user` principal (`role: UserRole.ADMIN`) when the key matches — or a JWT, for routes meant to serve both machine and human callers), `RolesGuard` + `@Roles(...)` decorator (role-gated routes), `@CurrentUser()` decorator (reads `request.user`).
+
+**MVP3 Phase 8a — Admin API guard migration.** `HybridAuthGuard` + `RolesGuard` + `@Roles(UserRole.ADMIN)` now also protect:
+- `SourcesController` (whole controller, `GET`/`POST`/`PATCH`/`DELETE /sources`, `GET`/`POST /source-candidates`)
+- `DigestController` (`POST /digests/trigger`)
+- `ArticlesController.addFeedback` only (`POST /articles/:id/feedback`) — `findAll`/`findOne` on that controller (`GET /articles`, `GET /articles/:id`) intentionally stay on `ApiKeyGuard` alone, unchanged
+
+Because `HybridAuthGuard` synthesizes an admin principal for a valid `X-API-KEY`, **existing `X-API-KEY`-only ops/automation callers keep working unchanged** against all four migrated routes — no client-side change required. The only new capability is that an admin JWT can now be used in place of the API key on these routes.
 
 **Profile endpoints** (`UsersController`, JWT-protected): `GET /users/me`, `PATCH /users/me` (displayName/timezone/githubUrl/level — role and verification/onboarding-completion state are not user-editable), `DELETE /users/me` (soft delete).
 
 **Onboarding endpoints** (`UsersController` + `OnboardingService`, JWT-protected):
 - `POST /users/me/onboarding` — body `{ level, technologyInterests: [{ kind, name }], contentStreamIds: [] }`. Each `technologyInterests` entry is resolved against the taxonomy via `TechnologyInterestCommandService.createOrReuse` (see TaxonomyModule below) and linked to the user; each `contentStreamIds` entry must reference an existing, enabled `ContentStream` or the whole request is rejected with `BadRequestException` before anything is linked. `user.level` is always updated; `user.onboardingCompletedAt` is set only if it was previously `null` — **safely re-callable**: calling it again after completion updates the level/selections but never un-sets the completion timestamp, so it doubles as "change my selections later" with no separate endpoint. Deliberately not wrapped in a single DB transaction: selections are persisted before the level/completion flag, so a mid-way failure leaves the user safely "not yet onboarded" and retryable. **Known limitation — additive-only:** re-submitting adds new technology/interest/content-stream selections but does not remove previously selected ones. Intentionally deferred since no consumer (Personal Feed, digest delivery) currently depends on removal semantics; revisit once Personal Feed or a dedicated subscription-management endpoint needs to support removing a selection.
 - `GET /users/me/taxonomy` — returns `{ level, technologyInterests, contentStreams, onboardingCompletedAt }` for the current user.
+
+**Admin Users endpoints** (`AdminUsersController`, `HybridAuthGuard` + `RolesGuard` + `@Roles(UserRole.ADMIN)`, MVP3 Phase 8a):
+- `GET /admin/users?page=&limit=&email=&role=&includeDeleted=` — paginated list; `email` is a case-insensitive partial (`ILIKE`) match, `role` an exact match, `includeDeleted` (default `false`) opts soft-deleted users back into the results.
+- `GET /admin/users/:id` — single user by id.
+- `DELETE /admin/users/:id` — soft-delete any user by id (reuses `UserCommandService.softDelete`, not restricted to "self" the way `DELETE /users/me` is).
 
 ### TaxonomyModule
 Personalization taxonomy, separate from `Source.category` (which classifies where content comes from, not what a user is interested in). Four entities: `TechnologyInterest` (`kind: 'technology' | 'interest'`, deduplicated by a resolver — see below), `ContentStream` (a fixed, curated set of 5 rows seeded by the `CreateTaxonomyTables` migration — never created/updated/deleted via the API in this phase), and their join tables `UserTechnologyInterest`/`UserContentStream`.
@@ -112,9 +124,9 @@ Personalization taxonomy, separate from `Source.category` (which classifies wher
 - `POST /technology-interests/merge` — body `{ winnerId, loserId }`. Guards: `HybridAuthGuard` + `RolesGuard` + `@Roles('admin')` — the first route in the codebase to combine these (a low-blast-radius proof of the pattern ahead of a later, broader Admin API migration off `ApiKeyGuard`). `TechnologyInterestCommandService.merge` runs inside a single `dataSource.transaction()`: every `UserTechnologyInterest` row pointing at the loser is checked against the winner first — if the user already has both selected, the loser's join row is deleted instead of reassigned (avoiding a mid-transaction unique-constraint violation, which would otherwise abort the whole Postgres transaction and fail even the delete-fallback); otherwise it's reassigned to the winner. The loser is then soft-deleted with `mergedIntoId` set to the winner — technologies/interests are edited or merged, never hard-deleted.
 
 ### SourcesModule
-Manages feed sources. Admin CRUD endpoints protected by `X-API-KEY`. When a source is created (via `POST /sources` or `npm run seed:sources:sync`), the URL is validated: for `rss`/`atom`/`github_release` sources the feed must return HTTP 200, parse as valid RSS/Atom, and contain at least one item; for `web` sources, a deterministic discovery pass (below) must find at least one working entry point before the source and its `WebSourceConfig` are saved. Sources that fail validation are rejected without being saved.
+Manages feed sources. Admin-only endpoints, protected by `HybridAuthGuard` + `RolesGuard` + `@Roles(UserRole.ADMIN)` (`X-API-KEY` still works unchanged — see the guard-migration note under AuthModule/UsersModule above; previously plain `ApiKeyGuard`). When a source is created (via `POST /sources` or `npm run seed:sources:sync`), the URL is validated: for `rss`/`atom`/`github_release` sources the feed must return HTTP 200, parse as valid RSS/Atom, and contain at least one item; for `web` sources, a deterministic discovery pass (below) must find at least one working entry point before the source and its `WebSourceConfig` are saved. Sources that fail validation are rejected without being saved.
 
-- `GET /sources` — list all active sources
+- `GET /sources?page=&limit=&type=&category=&enabled=&includeDeleted=` — **MVP3 Phase 8a breaking change:** now returns `{ data: SourceResponseDto[], meta: { total, page, limit, totalPages } }` instead of a bare array. Filterable by `type`, `category`, `enabled`; `includeDeleted` (default `false`) opts soft-deleted sources back into the results. The only known consumer, `npm run seed:sources:sync`, calls `SourcesService`/`SourceSyncService` directly in-process and never through HTTP, so it is unaffected by this change.
 - `POST /sources` — add a source (validates feed URL, or runs web discovery, before saving)
 - `PATCH /sources/:id` — update a source
 - `DELETE /sources/:id` — soft-delete (sets `deletedAt`)
@@ -144,7 +156,7 @@ Content extraction (`ContentExtractionService`) uses its own ladder per article:
 #### Source candidates + promotion (`SourceCandidatesService`)
 A `SourceCandidate` (`source_candidates` table) is a not-yet-vetted URL — created via `SourceCandidatesService.create(url, ...)`, which upserts by `normalizedUrl` (idempotent: re-discovering the same URL refreshes the existing row's `proposedConfig`/`lastValidatedAt` instead of duplicating it). Nothing currently calls `create` over HTTP; it exists for the seed-manifest sync flow to call directly.
 
-- `GET /source-candidates` — paginated list, filterable by `status` (`pending`, `validated`, `rejected`, `promoted`, `needs_review`)
+- `GET /source-candidates` — paginated list, filterable by `status` (`pending`, `validated`, `rejected`, `promoted`, `needs_review`). Same admin guard as the rest of `SourceCandidatesController` (`HybridAuthGuard` + `RolesGuard` + `@Roles(UserRole.ADMIN)`, previously plain `ApiKeyGuard`).
 - `POST /source-candidates/:id/promote` — runs discovery + sampled pre-analysis and promotes if enough samples are relevant
 - `POST /source-candidates/:id/reject` — manual rejection with an optional `reason`
 
@@ -164,10 +176,15 @@ A candidate's `proposedConfig` (jsonb) can carry a `name`/`category` hint for th
 ### ArticlesModule
 Stores articles fetched from sources.
 
-- `GET /articles` — paginated list (filter by `status`, `sourceId`)
-- `GET /articles/:id` — single article
-- `POST /articles/:id/feedback` — submit `useful` / `not_useful` feedback (requires `X-API-KEY`); upserts the user's per-source `UserSourcePreference` row
+- `GET /articles` — paginated list (filter by `status`, `sourceId`). `ApiKeyGuard` only, unchanged (moved from class-level to method-level in MVP3 Phase 8a — no behavior change).
+- `GET /articles/:id` — single article. `ApiKeyGuard` only, unchanged (same method-level move as above).
+- `POST /articles/:id/feedback` — submit `useful` / `not_useful` feedback; upserts the user's per-source `UserSourcePreference` row. **MVP3 Phase 8a:** now `HybridAuthGuard` + `RolesGuard` + `@Roles(UserRole.ADMIN)` (previously `ApiKeyGuard`) — `X-API-KEY` still works unchanged (see the guard-migration note under AuthModule/UsersModule above).
 - `GET /articles/:id/feedback/click?type=useful|not_useful&token=TOKEN` — unguarded endpoint for email digest links; saves feedback and updates the same per-source preference
+
+**Admin Articles endpoints** (`AdminArticlesController`, `/admin/articles`, `HybridAuthGuard` + `RolesGuard` + `@Roles(UserRole.ADMIN)`, MVP3 Phase 8a):
+- `GET /admin/articles` — same pagination/filtering as `GET /articles` (`ArticlesService.findAll`/`ArticleListQueryDto`, reused as-is), behind the admin guard instead of `ApiKeyGuard`.
+- `GET /admin/articles/:id` — single article (`ArticlesService.findOne`, reused as-is).
+- `DELETE /admin/articles/:id` — soft-delete an article (`ArticlesService.remove`, new in this phase — sets `Article.deletedAt` via `softDelete`, does not trigger `ArticleAnalysis`'s `onDelete: CASCADE`, which only fires on a hard delete).
 
 Feedback no longer touches `Source.trustScore`. Each `useful`/`not_useful` vote updates a `UserSourcePreference` row (`usefulCount`, `notUsefulCount`, `feedbackAdjustment`) for that `(userId, sourceId)` pair — `feedbackAdjustment` is a dampened score in the range ±8 that feeds into digest ranking (see DigestModule below). Feedback is single-user (`DEFAULT_USER_ID = 'default_user'`). The `article_feedbacks` table has a `userId` column and a `(articleId, userId)` unique constraint, so the schema is ready for multi-user when needed — the feedback and preference logic will need to be updated to aggregate per-user at that point.
 
@@ -341,7 +358,7 @@ Daily digest emails omit the `whyItMatters` paragraph per article; weekly and de
 
 Each selected digest item's `matchedInterests` in the rendered email is resolved via a batched query joining `ArticleTechnologyInterest` → `TechnologyInterest.name` for the articles actually selected (built in `DigestBuilderService.buildMatchedInterestsMap`) — not read directly off `ArticleAnalysis` (which no longer has a `matchedInterests` column).
 
-- `POST /digests/daily/resend-latest` — resend latest built/sent digest via Resend
+- `POST /digests/trigger` — fetch, analyze, build, and send a digest of the selected type. **MVP3 Phase 8a:** now `HybridAuthGuard` + `RolesGuard` + `@Roles(UserRole.ADMIN)` at the controller level (previously `ApiKeyGuard`) — `X-API-KEY` still works unchanged (see the guard-migration note under AuthModule/UsersModule above).
 
 ### MailModule
 Sends digest emails via Resend SDK. Uses `DIGEST_FROM_EMAIL` and `DIGEST_TO_EMAIL` env vars.

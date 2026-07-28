@@ -8,7 +8,9 @@ import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, Repository } from 'typeorm';
 import { LoggingService } from '../../common/logging/logging.service';
 import { fetchAndValidateFeed } from '../../common/util/feed-validator.util';
+import { PaginatedResponseDto } from '../../common/dto/paginated-response.dto';
 import { CreateSourceDto } from '../dto/create-source.dto';
+import { QuerySourceDto } from '../dto/query-source.dto';
 import { UpdateSourceDto } from '../dto/update-source.dto';
 import { Source, SourceType } from '../entities/source.entity';
 import { WebSourceConfig } from '../entities/web-source-config.entity';
@@ -141,8 +143,39 @@ export class SourcesService {
     throw new BadRequestException(result.message);
   }
 
-  async findAll(): Promise<SourceWithWebConfig[]> {
-    const sources = await this.sourceRepo.find();
+  async findAll(query: QuerySourceDto): Promise<PaginatedResponseDto<SourceWithWebConfig>> {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+
+    const qb = this.sourceRepo.createQueryBuilder('source');
+    if (query.includeDeleted) {
+      qb.withDeleted();
+    }
+    if (query.type) {
+      qb.andWhere('source.type = :type', { type: query.type });
+    }
+    if (query.category) {
+      qb.andWhere('source.category = :category', { category: query.category });
+    }
+    if (query.enabled !== undefined) {
+      qb.andWhere('source.enabled = :enabled', { enabled: query.enabled });
+    }
+
+    const [sources, total] = await qb
+      .orderBy('source.createdAt', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getManyAndCount();
+
+    const data = await this.attachWebConfigs(sources);
+
+    return {
+      data,
+      meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
+    };
+  }
+
+  private async attachWebConfigs(sources: Source[]): Promise<SourceWithWebConfig[]> {
     const webSourceIds = sources
       .filter((source) => source.type === SourceType.WEB)
       .map((source) => source.id);
