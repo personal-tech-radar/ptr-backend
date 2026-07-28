@@ -1,5 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { Transform, Type } from 'class-transformer';
+import { Transform, Type, TransformFnParams } from 'class-transformer';
 import { IsArray, IsBoolean, IsInt, IsOptional, IsUUID, Matches, Max, Min } from 'class-validator';
 
 // Normalizes a repeated query key (?stream=a&stream=b -> ['a','b']) and a single occurrence
@@ -11,9 +11,16 @@ const toArray = ({ value }: { value: unknown }): string[] | undefined => {
   return Array.isArray(value) ? (value as string[]) : [value as string];
 };
 
-const toBoolean = ({ value }: { value: unknown }): boolean | undefined => {
-  if (value === undefined) return undefined;
-  return value === true || value === 'true';
+// Reads the raw value from `obj[key]` rather than the pipeline-provided `value`. The global
+// ValidationPipe's `enableImplicitConversion` runs class-transformer's own Boolean(value) coercion
+// on the property BEFORE this @Transform executes (design:type Boolean is reflected for the field),
+// and Boolean('false') is `true` — any non-empty string is truthy. Reading obj[key] bypasses that
+// already-corrupted `value` and parses the original query string directly.
+const toBoolean = ({ obj, key }: TransformFnParams): boolean | undefined => {
+  const raw = obj[key];
+  if (raw === undefined) return undefined;
+  if (typeof raw === 'boolean') return raw;
+  return raw === 'true';
 };
 
 export class QueryFeedDto {

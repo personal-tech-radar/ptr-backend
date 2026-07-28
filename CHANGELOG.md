@@ -5,6 +5,13 @@ Each entry is tagged with the branch it was made on.
 
 ---
 
+## [fix/feed-saved-boolean-filter] — 2026-07-28
+
+### Fixed
+- `GET /feed?saved=false` was silently behaving like `saved=true`, the same false-filter bug already fixed on the admin sources/users filters in Phase 8a. This was the third and last place it existed in the codebase; a search confirmed no other instance remains
+
+---
+
 ## [feature/mvp3-p8a-admin-core] — 2026-07-27
 
 ### Added
