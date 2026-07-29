@@ -1,4 +1,4 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { TechnologyInterestCommandService } from './technology-interest-command.service';
 import { TechnologyInterestResolverService } from './technology-interest-resolver.service';
 import { TechnologyInterest, TechnologyInterestKind } from '../entities/technology-interest.entity';
@@ -9,6 +9,20 @@ describe('TechnologyInterestCommandService', () => {
 
   const validWinnerId = '123e4567-e89b-12d3-a456-426614174000';
   const validLoserId = '223e4567-e89b-12d3-a456-426614174000';
+  const validId = '323e4567-e89b-12d3-a456-426614174000';
+
+  const mockQueryBuilder = {
+    withDeleted: jest.fn().mockReturnThis(),
+    where: jest.fn().mockReturnThis(),
+    andWhere: jest.fn().mockReturnThis(),
+    getOne: jest.fn(),
+  };
+
+  const mockTechnologyInterestRepo = {
+    findOne: jest.fn(),
+    save: jest.fn((data: Partial<TechnologyInterest>) => Promise.resolve(data)),
+    createQueryBuilder: jest.fn(() => mockQueryBuilder),
+  };
 
   const mockUserTechnologyInterestRepo = {
     findOne: jest.fn(),
@@ -39,6 +53,7 @@ describe('TechnologyInterestCommandService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     service = new TechnologyInterestCommandService(
+      mockTechnologyInterestRepo as any,
       mockUserTechnologyInterestRepo as any,
       mockResolverService as any,
       mockQueueService as any,
@@ -251,6 +266,93 @@ describe('TechnologyInterestCommandService', () => {
       expect(result).toEqual({ entity: winner, created: false });
       expect(resolverRepo.create).not.toHaveBeenCalled();
       expect(resolverRepo.save).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('update', () => {
+    it('throws BadRequestException for an invalid ID format', async () => {
+      await expect(service.update('not-a-uuid', { name: 'Node.js' })).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(mockTechnologyInterestRepo.findOne).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFoundException when the entity does not exist', async () => {
+      mockTechnologyInterestRepo.findOne.mockResolvedValue(null);
+
+      await expect(service.update(validId, { name: 'Node.js' })).rejects.toThrow(NotFoundException);
+    });
+
+    it('updates name and normalizedName when the new name has no collision', async () => {
+      const entity = {
+        id: validId,
+        kind: TechnologyInterestKind.TECHNOLOGY,
+        name: 'Node',
+        normalizedName: 'node',
+        aliases: [],
+      } as unknown as TechnologyInterest;
+      mockTechnologyInterestRepo.findOne.mockResolvedValue(entity);
+      mockQueryBuilder.getOne.mockResolvedValue(null);
+
+      const result = await service.update(validId, { name: 'Node.js' });
+
+      expect(mockQueryBuilder.withDeleted).toHaveBeenCalled();
+      expect(result.name).toBe('Node.js');
+      expect(result.normalizedName).toBe('node.js');
+    });
+
+    it('updates aliases only, leaving name/normalizedName untouched', async () => {
+      const entity = {
+        id: validId,
+        kind: TechnologyInterestKind.TECHNOLOGY,
+        name: 'Node.js',
+        normalizedName: 'node.js',
+        aliases: [],
+      } as unknown as TechnologyInterest;
+      mockTechnologyInterestRepo.findOne.mockResolvedValue(entity);
+
+      const result = await service.update(validId, { aliases: ['nodejs', ' NodeJS ', ''] });
+
+      expect(mockQueryBuilder.getOne).not.toHaveBeenCalled();
+      expect(result.name).toBe('Node.js');
+      expect(result.normalizedName).toBe('node.js');
+      expect(result.aliases).toEqual(['nodejs']);
+    });
+
+    it('throws ConflictException when the new name collides with an active row', async () => {
+      const entity = {
+        id: validId,
+        kind: TechnologyInterestKind.TECHNOLOGY,
+        name: 'Node',
+        normalizedName: 'node',
+        aliases: [],
+      } as unknown as TechnologyInterest;
+      mockTechnologyInterestRepo.findOne.mockResolvedValue(entity);
+      mockQueryBuilder.getOne.mockResolvedValue({ id: 'other-active-id' });
+
+      await expect(service.update(validId, { name: 'Node.js' })).rejects.toThrow(ConflictException);
+    });
+
+    // The (kind, normalizedName) unique constraint is not a partial index (confirmed in the
+    // CreateTaxonomyTables migration) — a soft-deleted row still occupies its slot, so the
+    // collision check must use `.withDeleted()` or this exact scenario would be missed and the
+    // eventual `save()` would hit an uncaught DB unique-violation instead of a clean 409.
+    it('throws ConflictException when the new name collides with a soft-deleted row', async () => {
+      const entity = {
+        id: validId,
+        kind: TechnologyInterestKind.TECHNOLOGY,
+        name: 'Node',
+        normalizedName: 'node',
+        aliases: [],
+      } as unknown as TechnologyInterest;
+      mockTechnologyInterestRepo.findOne.mockResolvedValue(entity);
+      mockQueryBuilder.getOne.mockResolvedValue({
+        id: 'other-soft-deleted-id',
+        deletedAt: new Date(),
+      });
+
+      await expect(service.update(validId, { name: 'Node.js' })).rejects.toThrow(ConflictException);
+      expect(mockQueryBuilder.withDeleted).toHaveBeenCalled();
     });
   });
 });

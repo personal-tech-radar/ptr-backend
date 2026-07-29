@@ -5,6 +5,18 @@ Each entry is tagged with the branch it was made on.
 
 ---
 
+## [feature/mvp3-p8b-admin-taxonomy-streams] — 2026-07-29
+
+### Added
+- Admin API, part 2 of 3 (MVP3 Part 1, Phase 8b of 11) — admins can now view and edit technologies/interests (`/admin/technology-interests`) and content streams (`/admin/content-streams`), including entries hidden from the public listings (merged-away technologies, disabled streams). Editing is limited to their display fields; a technology's kind and a stream's key can never be changed, only its name, description, or similar metadata
+- Two more listings, `/admin/user-technology-interests` and `/admin/user-content-streams`, let an admin look up which technologies, interests, and streams a given user (by email) has selected
+
+### Fixed
+- Renaming a technology or interest to match one that had already been merged away under a different entry was silently allowed to violate a uniqueness rule instead of returning a clear conflict error. Editing now checks against merged/removed entries too, not just active ones
+- Partially updating a content stream (for example, only disabling it) could return incorrect data for the fields left out of that request — a previously-set description could come back as empty even though it was still saved correctly underneath. Responses now always reflect the true current state
+
+---
+
 ## [fix/feed-saved-boolean-filter] — 2026-07-28
 
 ### Fixed

@@ -1,11 +1,18 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { validate as uuidValidate } from 'uuid';
 import { LoggingService } from '../../common/logging/logging.service';
 import { QueueService } from '../../queue/queue.service';
+import { UpdateTechnologyInterestDto } from '../dto/update-technology-interest.dto';
 import { TechnologyInterest, TechnologyInterestKind } from '../entities/technology-interest.entity';
 import { UserTechnologyInterest } from '../entities/user-technology-interest.entity';
+import { normalizeTechnologyInterestName } from '../util/normalize-technology-interest-name.util';
 import { TechnologyInterestResolverService } from './technology-interest-resolver.service';
 
 @Injectable()
@@ -13,6 +20,8 @@ export class TechnologyInterestCommandService {
   private readonly logger = new LoggingService(TechnologyInterestCommandService.name);
 
   constructor(
+    @InjectRepository(TechnologyInterest)
+    private readonly technologyInterestRepo: Repository<TechnologyInterest>,
     @InjectRepository(UserTechnologyInterest)
     private readonly userTechnologyInterestRepo: Repository<UserTechnologyInterest>,
     private readonly resolverService: TechnologyInterestResolverService,
@@ -130,5 +139,55 @@ export class TechnologyInterestCommandService {
 
       return winner;
     });
+  }
+
+  // Edits name/aliases only — `kind` is immutable (see UpdateTechnologyInterestDto) and there is
+  // no dedicated delete endpoint (merge is the only supported consolidation path). A name change
+  // is checked for a (kind, normalizedName) collision via `.withDeleted()`: that DB constraint is
+  // NOT a partial index (confirmed in the CreateTaxonomyTables migration), so a soft-deleted row
+  // still occupies its slot and would otherwise raise an uncaught unique-violation on save.
+  async update(id: string, dto: UpdateTechnologyInterestDto): Promise<TechnologyInterest> {
+    if (!uuidValidate(id)) {
+      throw new BadRequestException(`Invalid ID format: ${id}`);
+    }
+
+    const entity = await this.technologyInterestRepo.findOne({ where: { id } });
+    if (!entity) {
+      throw new NotFoundException(`Technology/interest ${id} not found`);
+    }
+
+    if (dto.name !== undefined) {
+      const normalized = normalizeTechnologyInterestName(dto.name);
+      if (normalized !== entity.normalizedName) {
+        const collision = await this.technologyInterestRepo
+          .createQueryBuilder('ti')
+          .withDeleted()
+          .where('ti.kind = :kind', { kind: entity.kind })
+          .andWhere('ti.normalizedName = :n', { n: normalized })
+          .andWhere('ti.id != :id', { id })
+          .getOne();
+
+        if (collision) {
+          throw new ConflictException(
+            `Another technology/interest already uses the name "${dto.name}" — use merge instead of renaming into a duplicate`,
+          );
+        }
+      }
+      entity.name = dto.name;
+      entity.normalizedName = normalized;
+    }
+
+    if (dto.aliases !== undefined) {
+      const normalizedAliases = new Set(
+        dto.aliases
+          .map((alias) => normalizeTechnologyInterestName(alias))
+          .filter((alias) => alias.length > 0),
+      );
+      entity.aliases = Array.from(normalizedAliases);
+    }
+
+    const saved = await this.technologyInterestRepo.save(entity);
+    this.logger.info('Technology/interest updated', { id: saved.id });
+    return saved;
   }
 }
