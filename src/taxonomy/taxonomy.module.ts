@@ -1,6 +1,10 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { QueueModule } from '../queue/queue.module';
+import { AdminContentStreamsController } from './controllers/admin-content-streams.controller';
+import { AdminTechnologyInterestsController } from './controllers/admin-technology-interests.controller';
+import { AdminUserContentStreamsController } from './controllers/admin-user-content-streams.controller';
+import { AdminUserTechnologyInterestsController } from './controllers/admin-user-technology-interests.controller';
 import { ContentStreamController } from './controllers/content-stream.controller';
 import { TechnologyInterestController } from './controllers/technology-interest.controller';
 import { ContentStream } from './entities/content-stream.entity';
@@ -28,7 +32,14 @@ import { TechnologyInterestResolverService } from './services/technology-interes
     ]),
     QueueModule,
   ],
-  controllers: [TechnologyInterestController, ContentStreamController],
+  controllers: [
+    TechnologyInterestController,
+    ContentStreamController,
+    AdminTechnologyInterestsController,
+    AdminContentStreamsController,
+    AdminUserTechnologyInterestsController,
+    AdminUserContentStreamsController,
+  ],
   providers: [
     TechnologyInterestResolverService,
     TechnologyInterestCommandService,

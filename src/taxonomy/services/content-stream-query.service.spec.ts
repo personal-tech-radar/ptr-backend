@@ -19,8 +19,18 @@ describe('ContentStreamQueryService', () => {
     createQueryBuilder: jest.fn(() => mockQueryBuilder),
   };
 
+  const mockUserSelectionsQueryBuilder = {
+    innerJoinAndSelect: jest.fn().mockReturnThis(),
+    andWhere: jest.fn().mockReturnThis(),
+    orderBy: jest.fn().mockReturnThis(),
+    skip: jest.fn().mockReturnThis(),
+    take: jest.fn().mockReturnThis(),
+    getManyAndCount: jest.fn(),
+  };
+
   const mockUserContentStreamRepo = {
     find: jest.fn(),
+    createQueryBuilder: jest.fn(() => mockUserSelectionsQueryBuilder),
   };
 
   beforeEach(() => {
@@ -90,6 +100,54 @@ describe('ContentStreamQueryService', () => {
       mockContentStreamRepo.findOne.mockResolvedValue(null);
 
       await expect(service.findByKey('not-a-real-key')).resolves.toBeNull();
+    });
+  });
+
+  describe('findAllUserSelections', () => {
+    it('returns all selections, flattened, when no email filter is given', async () => {
+      const link = {
+        userId: 'user-1',
+        user: { email: 'jane@example.com' },
+        contentStreamId: 'cs-1',
+        contentStream: { key: 'security', name: 'Security' },
+        createdAt: new Date('2024-01-01'),
+      };
+      mockUserSelectionsQueryBuilder.getManyAndCount.mockResolvedValue([[link], 1]);
+
+      const result = await service.findAllUserSelections({ page: 1, limit: 20 });
+
+      expect(mockUserSelectionsQueryBuilder.andWhere).not.toHaveBeenCalled();
+      expect(result.data).toEqual([
+        {
+          userId: 'user-1',
+          userEmail: 'jane@example.com',
+          contentStreamId: 'cs-1',
+          contentStreamKey: 'security',
+          contentStreamName: 'Security',
+          createdAt: link.createdAt,
+        },
+      ]);
+      expect(result.meta).toEqual({ total: 1, page: 1, limit: 20, totalPages: 1 });
+    });
+
+    it('applies an ILIKE partial-match filter on the linked user email', async () => {
+      mockUserSelectionsQueryBuilder.getManyAndCount.mockResolvedValue([[], 0]);
+
+      await service.findAllUserSelections({ page: 1, limit: 20, email: 'jane' });
+
+      expect(mockUserSelectionsQueryBuilder.andWhere).toHaveBeenCalledWith(
+        'user.email ILIKE :email',
+        { email: '%jane%' },
+      );
+    });
+
+    it('paginates using skip/take derived from page/limit', async () => {
+      mockUserSelectionsQueryBuilder.getManyAndCount.mockResolvedValue([[], 0]);
+
+      await service.findAllUserSelections({ page: 2, limit: 5 });
+
+      expect(mockUserSelectionsQueryBuilder.skip).toHaveBeenCalledWith(5);
+      expect(mockUserSelectionsQueryBuilder.take).toHaveBeenCalledWith(5);
     });
   });
 });

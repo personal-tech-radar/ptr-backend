@@ -13,6 +13,7 @@ describe('TechnologyInterestQueryService', () => {
     orderBy: jest.fn().mockReturnThis(),
     skip: jest.fn().mockReturnThis(),
     take: jest.fn().mockReturnThis(),
+    withDeleted: jest.fn().mockReturnThis(),
     getManyAndCount: jest.fn(),
   };
 
@@ -22,8 +23,18 @@ describe('TechnologyInterestQueryService', () => {
     createQueryBuilder: jest.fn(() => mockQueryBuilder),
   };
 
+  const mockUserSelectionsQueryBuilder = {
+    innerJoinAndSelect: jest.fn().mockReturnThis(),
+    andWhere: jest.fn().mockReturnThis(),
+    orderBy: jest.fn().mockReturnThis(),
+    skip: jest.fn().mockReturnThis(),
+    take: jest.fn().mockReturnThis(),
+    getManyAndCount: jest.fn(),
+  };
+
   const mockUserTechnologyInterestRepo = {
     find: jest.fn(),
+    createQueryBuilder: jest.fn(() => mockUserSelectionsQueryBuilder),
   };
 
   beforeEach(() => {
@@ -101,6 +112,88 @@ describe('TechnologyInterestQueryService', () => {
       mockTechnologyInterestRepo.find.mockResolvedValue(entities);
 
       await expect(service.findSelectedByUser('user-1')).resolves.toEqual(entities);
+    });
+  });
+
+  describe('findAllForAdmin', () => {
+    it('excludes soft-deleted rows by default', async () => {
+      mockQueryBuilder.getManyAndCount.mockResolvedValue([[], 0]);
+
+      await service.findAllForAdmin({ page: 1, limit: 20 });
+
+      expect(mockQueryBuilder.where).toHaveBeenCalledWith('ti.deletedAt IS NULL');
+      expect(mockQueryBuilder.withDeleted).not.toHaveBeenCalled();
+    });
+
+    it('includes soft-deleted rows when includeDeleted is true', async () => {
+      mockQueryBuilder.getManyAndCount.mockResolvedValue([[], 0]);
+
+      await service.findAllForAdmin({ page: 1, limit: 20, includeDeleted: true });
+
+      expect(mockQueryBuilder.withDeleted).toHaveBeenCalled();
+      expect(mockQueryBuilder.where).not.toHaveBeenCalled();
+    });
+
+    it('applies the kind filter', async () => {
+      mockQueryBuilder.getManyAndCount.mockResolvedValue([[], 0]);
+
+      await service.findAllForAdmin({
+        page: 1,
+        limit: 20,
+        kind: TechnologyInterestKind.INTEREST,
+      });
+
+      expect(mockQueryBuilder.andWhere).toHaveBeenCalledWith('ti.kind = :kind', {
+        kind: TechnologyInterestKind.INTEREST,
+      });
+    });
+  });
+
+  describe('findAllUserSelections', () => {
+    it('returns all selections, flattened, when no email filter is given', async () => {
+      const link = {
+        userId: 'user-1',
+        user: { email: 'jane@example.com' },
+        technologyInterestId: 'ti-1',
+        technologyInterest: { name: 'Node.js', kind: TechnologyInterestKind.TECHNOLOGY },
+        createdAt: new Date('2024-01-01'),
+      };
+      mockUserSelectionsQueryBuilder.getManyAndCount.mockResolvedValue([[link], 1]);
+
+      const result = await service.findAllUserSelections({ page: 1, limit: 20 });
+
+      expect(mockUserSelectionsQueryBuilder.andWhere).not.toHaveBeenCalled();
+      expect(result.data).toEqual([
+        {
+          userId: 'user-1',
+          userEmail: 'jane@example.com',
+          technologyInterestId: 'ti-1',
+          technologyInterestName: 'Node.js',
+          technologyInterestKind: TechnologyInterestKind.TECHNOLOGY,
+          createdAt: link.createdAt,
+        },
+      ]);
+      expect(result.meta).toEqual({ total: 1, page: 1, limit: 20, totalPages: 1 });
+    });
+
+    it('applies an ILIKE partial-match filter on the linked user email', async () => {
+      mockUserSelectionsQueryBuilder.getManyAndCount.mockResolvedValue([[], 0]);
+
+      await service.findAllUserSelections({ page: 1, limit: 20, email: 'jane' });
+
+      expect(mockUserSelectionsQueryBuilder.andWhere).toHaveBeenCalledWith(
+        'user.email ILIKE :email',
+        { email: '%jane%' },
+      );
+    });
+
+    it('paginates using skip/take derived from page/limit', async () => {
+      mockUserSelectionsQueryBuilder.getManyAndCount.mockResolvedValue([[], 0]);
+
+      await service.findAllUserSelections({ page: 3, limit: 10 });
+
+      expect(mockUserSelectionsQueryBuilder.skip).toHaveBeenCalledWith(20);
+      expect(mockUserSelectionsQueryBuilder.take).toHaveBeenCalledWith(10);
     });
   });
 });

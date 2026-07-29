@@ -11,6 +11,13 @@ export class TechnologyInterestResponseDto {
   @ApiProperty({ example: 'Node.js' })
   name: string;
 
+  @ApiProperty({
+    description: 'Alternate names that resolve to this technology/interest',
+    example: ['nodejs', 'node'],
+    type: [String],
+  })
+  aliases: string[];
+
   @ApiProperty()
   createdAt: Date;
 
@@ -25,6 +32,7 @@ export function toTechnologyInterestResponseDto(
     id: entity.id,
     kind: entity.kind,
     name: entity.name,
+    aliases: entity.aliases,
     createdAt: entity.createdAt,
     updatedAt: entity.updatedAt,
   };
