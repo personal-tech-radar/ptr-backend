@@ -1,0 +1,4 @@
+interface:
+  display_name: "Auth and OAuth Module"
+  short_description: "Build secure JWT and RBAC authentication"
+  default_prompt: "Use $auth-oauth-module to implement or review authentication and authorization in this service."

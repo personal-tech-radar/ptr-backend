@@ -1,0 +1,4 @@
+interface:
+  display_name: "Sync Seed Data"
+  short_description: "Build idempotent reference-data synchronization"
+  default_prompt: "Use $sync-seed-data to implement versioned and idempotent reference-data synchronization."

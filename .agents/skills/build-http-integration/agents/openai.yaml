@@ -1,0 +1,4 @@
+interface:
+  display_name: "Build HTTP Integration"
+  short_description: "Implement external HTTP service integrations"
+  default_prompt: "Use $build-http-integration to implement this external HTTP integration using project conventions."

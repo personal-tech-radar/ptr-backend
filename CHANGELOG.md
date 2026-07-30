@@ -5,6 +5,16 @@ Each entry is tagged with the branch it was made on.
 
 ---
 
+## [chore/codex-claude-coexistence] — 2026-07-30
+
+### Added
+- Codex CLI support through self-contained repository instructions, eight native project skills, conservative project configuration, and an ignored local task-context workspace
+
+### Updated
+- AI-assisted development documentation now covers independent Claude Code and Codex CLI workflows while preserving the existing Claude configuration
+
+---
+
 ## [feature/mvp3-p9-admin-bootstrap] — 2026-07-30
 
 ### Added
