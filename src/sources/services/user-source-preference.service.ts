@@ -1,8 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
+import { PaginatedResponseDto } from '../../common/dto/paginated-response.dto';
 import { LoggingService } from '../../common/logging/logging.service';
 import { ArticleFeedbackType } from '../../articles/entities/article-feedback.entity';
+import { User } from '../../users/entities/user.entity';
+import { AdminQueryUserSourcePreferenceDto } from '../dto/admin-query-user-source-preference.dto';
+import { UserSourcePreferenceResponseDto } from '../dto/user-source-preference-response.dto';
 import { UserSourcePreference } from '../entities/user-source-preference.entity';
 
 // Additive smoothing: 6 phantom neutral votes so early feedback doesn't swing the adjustment to the clamp.
@@ -81,6 +85,65 @@ export class UserSourcePreferenceService {
     });
 
     return new Map(preferences.map((p) => [p.sourceId, Number(p.feedbackAdjustment)]));
+  }
+
+  // Flattened, admin-only listing across all users' source preferences. userId has no real FK to
+  // User (see UserSourcePreference entity) — every existing row today carries the legacy
+  // DEFAULT_USER_ID literal, not a real user id — so the join to User is a best-effort id cast
+  // rather than a declared relation, and userEmail is expected to be null until Phase 11.
+  async findAllAdmin(
+    query: AdminQueryUserSourcePreferenceDto,
+  ): Promise<PaginatedResponseDto<UserSourcePreferenceResponseDto>> {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+
+    const qb = this.preferenceRepo
+      .createQueryBuilder('pref')
+      .innerJoinAndSelect('pref.source', 'source')
+      .leftJoin(User, 'user', 'user.id::text = pref.userId')
+      .addSelect(['user.email']);
+
+    if (query.email) {
+      qb.andWhere('user.email ILIKE :email', { email: `%${query.email}%` });
+    }
+    if (query.sourceId) {
+      qb.andWhere('pref.sourceId = :sourceId', { sourceId: query.sourceId });
+    }
+
+    const total = await qb.clone().getCount();
+
+    const { entities, raw } = await qb
+      .orderBy('pref.updatedAt', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getRawAndEntities();
+
+    const data = entities.map((entity, index) =>
+      this.toResponseDto(entity, raw[index] as { user_email?: string | null }),
+    );
+
+    return {
+      data,
+      meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
+    };
+  }
+
+  private toResponseDto(
+    entity: UserSourcePreference,
+    raw: { user_email?: string | null },
+  ): UserSourcePreferenceResponseDto {
+    return {
+      id: entity.id,
+      userId: entity.userId,
+      userEmail: raw.user_email ?? null,
+      sourceId: entity.sourceId,
+      sourceName: entity.source.name,
+      usefulCount: entity.usefulCount,
+      notUsefulCount: entity.notUsefulCount,
+      feedbackAdjustment: Number(entity.feedbackAdjustment),
+      createdAt: entity.createdAt,
+      updatedAt: entity.updatedAt,
+    };
   }
 
   private increment(preference: UserSourcePreference, type: ArticleFeedbackType): void {

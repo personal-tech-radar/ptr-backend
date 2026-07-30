@@ -9,10 +9,24 @@ import { ArticleFeedbackService } from './article-feedback.service';
 const DEFAULT_USER_ID = 'default_user';
 const articleId = 'a-1';
 
+const mockAdminQueryBuilder = {
+  innerJoinAndSelect: jest.fn().mockReturnThis(),
+  leftJoin: jest.fn().mockReturnThis(),
+  addSelect: jest.fn().mockReturnThis(),
+  andWhere: jest.fn().mockReturnThis(),
+  orderBy: jest.fn().mockReturnThis(),
+  skip: jest.fn().mockReturnThis(),
+  take: jest.fn().mockReturnThis(),
+  clone: jest.fn().mockReturnThis(),
+  getCount: jest.fn(),
+  getRawAndEntities: jest.fn(),
+};
+
 const mockFeedbackRepo = {
   findOne: jest.fn(),
   create: jest.fn((data) => data),
   save: jest.fn((data) => Promise.resolve({ id: 'fb-1', ...data })),
+  createQueryBuilder: jest.fn(() => mockAdminQueryBuilder),
 };
 
 const mockArticlesService = {
@@ -137,6 +151,101 @@ describe('ArticleFeedbackService', () => {
       );
       expect(mockFeedbackRepo.findOne).not.toHaveBeenCalled();
       expect(mockUserSourcePreferenceService.applyFeedback).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('findAllAdmin', () => {
+    const feedbackEntity = {
+      id: 'fb-1',
+      articleId,
+      article: { id: articleId, title: 'How we cut p99 latency in half' },
+      userId: DEFAULT_USER_ID,
+      type: ArticleFeedbackType.USEFUL,
+      createdAt: new Date('2026-01-01'),
+      updatedAt: new Date('2026-01-02'),
+    };
+
+    it('joins User via an id::text cast rather than a declared relation', async () => {
+      mockAdminQueryBuilder.getCount.mockResolvedValue(0);
+      mockAdminQueryBuilder.getRawAndEntities.mockResolvedValue({ entities: [], raw: [] });
+
+      await service.findAllAdmin({ page: 1, limit: 20 });
+
+      expect(mockAdminQueryBuilder.leftJoin).toHaveBeenCalledWith(
+        expect.anything(),
+        'user',
+        'user.id::text = feedback.userId',
+      );
+    });
+
+    it('maps a row with no matching user to userEmail: null, not undefined', async () => {
+      mockAdminQueryBuilder.getCount.mockResolvedValue(1);
+      mockAdminQueryBuilder.getRawAndEntities.mockResolvedValue({
+        entities: [feedbackEntity],
+        raw: [{ user_email: undefined }],
+      });
+
+      const result = await service.findAllAdmin({ page: 1, limit: 20 });
+
+      expect(result.data[0].userEmail).toBeNull();
+      expect(result.data[0].articleTitle).toBe('How we cut p99 latency in half');
+    });
+
+    it('maps a row with a matching user to the resolved email', async () => {
+      mockAdminQueryBuilder.getCount.mockResolvedValue(1);
+      mockAdminQueryBuilder.getRawAndEntities.mockResolvedValue({
+        entities: [feedbackEntity],
+        raw: [{ user_email: 'jane@example.com' }],
+      });
+
+      const result = await service.findAllAdmin({ page: 1, limit: 20 });
+
+      expect(result.data[0].userEmail).toBe('jane@example.com');
+    });
+
+    it('applies email, articleId, and type filters only when provided', async () => {
+      mockAdminQueryBuilder.getCount.mockResolvedValue(0);
+      mockAdminQueryBuilder.getRawAndEntities.mockResolvedValue({ entities: [], raw: [] });
+
+      await service.findAllAdmin({
+        page: 1,
+        limit: 20,
+        email: 'jane',
+        articleId: 'article-2',
+        type: ArticleFeedbackType.NOT_USEFUL,
+      });
+
+      expect(mockAdminQueryBuilder.andWhere).toHaveBeenCalledWith('user.email ILIKE :email', {
+        email: '%jane%',
+      });
+      expect(mockAdminQueryBuilder.andWhere).toHaveBeenCalledWith(
+        'feedback.articleId = :articleId',
+        { articleId: 'article-2' },
+      );
+      expect(mockAdminQueryBuilder.andWhere).toHaveBeenCalledWith('feedback.type = :type', {
+        type: ArticleFeedbackType.NOT_USEFUL,
+      });
+    });
+
+    it('does not apply filters when none are provided', async () => {
+      mockAdminQueryBuilder.getCount.mockResolvedValue(0);
+      mockAdminQueryBuilder.getRawAndEntities.mockResolvedValue({ entities: [], raw: [] });
+
+      await service.findAllAdmin({ page: 1, limit: 20 });
+
+      expect(mockAdminQueryBuilder.andWhere).not.toHaveBeenCalled();
+    });
+
+    it('derives the count from a cloned query builder and paginates the main query with skip/take', async () => {
+      mockAdminQueryBuilder.getCount.mockResolvedValue(45);
+      mockAdminQueryBuilder.getRawAndEntities.mockResolvedValue({ entities: [], raw: [] });
+
+      const result = await service.findAllAdmin({ page: 3, limit: 20 });
+
+      expect(mockAdminQueryBuilder.clone).toHaveBeenCalled();
+      expect(mockAdminQueryBuilder.skip).toHaveBeenCalledWith(40);
+      expect(mockAdminQueryBuilder.take).toHaveBeenCalledWith(20);
+      expect(result.meta).toEqual({ total: 45, page: 3, limit: 20, totalPages: 3 });
     });
   });
 });

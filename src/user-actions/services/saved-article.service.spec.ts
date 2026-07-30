@@ -139,4 +139,55 @@ describe('SavedArticleService', () => {
       expect(result.meta).toEqual({ total: 1, page: 1, limit: 20, totalPages: 1 });
     });
   });
+
+  describe('findAllAdmin', () => {
+    const user = { id: userId, email: 'jane@example.com' };
+    const row = { id: 'sa-1', userId, user, articleId, article, createdAt: new Date() };
+
+    const mockAdminQueryBuilder = {
+      innerJoinAndSelect: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      getManyAndCount: jest.fn(),
+    };
+
+    beforeEach(() => {
+      mockRepository.createQueryBuilder.mockReturnValue(mockAdminQueryBuilder);
+    });
+
+    it('returns all saved articles across users, flattened, when no filters are given', async () => {
+      mockAdminQueryBuilder.getManyAndCount.mockResolvedValue([[row], 1]);
+
+      const result = await service.findAllAdmin({ page: 1, limit: 20 });
+
+      expect(mockAdminQueryBuilder.andWhere).not.toHaveBeenCalled();
+      expect(result.data[0].userEmail).toBe('jane@example.com');
+      expect(result.meta).toEqual({ total: 1, page: 1, limit: 20, totalPages: 1 });
+    });
+
+    it('applies email and articleId filters only when provided', async () => {
+      mockAdminQueryBuilder.getManyAndCount.mockResolvedValue([[], 0]);
+
+      await service.findAllAdmin({ page: 1, limit: 20, email: 'jane', articleId: 'article-2' });
+
+      expect(mockAdminQueryBuilder.andWhere).toHaveBeenCalledWith('user.email ILIKE :email', {
+        email: '%jane%',
+      });
+      expect(mockAdminQueryBuilder.andWhere).toHaveBeenCalledWith(
+        'savedArticle.articleId = :articleId',
+        { articleId: 'article-2' },
+      );
+    });
+
+    it('paginates using skip/take derived from page/limit', async () => {
+      mockAdminQueryBuilder.getManyAndCount.mockResolvedValue([[], 0]);
+
+      await service.findAllAdmin({ page: 2, limit: 5 });
+
+      expect(mockAdminQueryBuilder.skip).toHaveBeenCalledWith(5);
+      expect(mockAdminQueryBuilder.take).toHaveBeenCalledWith(5);
+    });
+  });
 });

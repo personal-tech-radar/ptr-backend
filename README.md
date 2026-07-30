@@ -143,6 +143,9 @@ Manages feed sources. Admin-only endpoints, protected by `HybridAuthGuard` + `Ro
 - `PATCH /sources/:id` — update a source
 - `DELETE /sources/:id` — soft-delete (sets `deletedAt`)
 
+**Admin User Source Preferences endpoint** (`AdminUserSourcePreferenceController`, `/admin/user-source-preferences`, same admin guard, MVP3 Phase 8c, view-only — no PATCH/DELETE):
+- `GET /admin/user-source-preferences?page=&limit=&email=&sourceId=` — flattened, paginated listing across all users (`userId`, `userEmail`, `sourceId`, `sourceName`, `usefulCount`, `notUsefulCount`, `feedbackAdjustment`, `createdAt`, `updatedAt`). Same best-effort `user.id::text = pref.userId` cast as the article-feedback listing above (no declared `User` relation on `UserSourcePreference`) — **every existing row today resolves `userEmail: null`** for the same `DEFAULT_USER_ID` reason (see ArticlesModule above), until Phase 11.
+
 Source categories: `backend_architecture_infra`, `engineering_deep_dives`, `node_typescript_nestjs`, `ai_engineering`
 
 Source types: `rss`, `atom`, `github_release`, `web`.
@@ -197,6 +200,9 @@ Stores articles fetched from sources.
 - `GET /admin/articles` — same pagination/filtering as `GET /articles` (`ArticlesService.findAll`/`ArticleListQueryDto`, reused as-is), behind the admin guard instead of `ApiKeyGuard`.
 - `GET /admin/articles/:id` — single article (`ArticlesService.findOne`, reused as-is).
 - `DELETE /admin/articles/:id` — soft-delete an article (`ArticlesService.remove`, new in this phase — sets `Article.deletedAt` via `softDelete`, does not trigger `ArticleAnalysis`'s `onDelete: CASCADE`, which only fires on a hard delete).
+
+**Admin Article Feedback endpoint** (`AdminArticleFeedbackController`, `/admin/article-feedback`, same admin guard, MVP3 Phase 8c, view-only — no PATCH/DELETE):
+- `GET /admin/article-feedback?page=&limit=&email=&articleId=&type=` — flattened, paginated listing of feedback across all users (`articleId`, `articleTitle`, `userId`, `userEmail`, `type`, `createdAt`, `updatedAt`). `userId` has no real FK to `User` (see below), so the join to resolve `userEmail` is a best-effort `user.id::text = feedback.userId` cast, not a declared relation — **every existing row today resolves `userEmail: null`**, since `userId` is still the legacy `DEFAULT_USER_ID` literal (see the next paragraph); this will start resolving real emails once Phase 11 gives feedback submission a real per-user identity.
 
 Feedback no longer touches `Source.trustScore`. Each `useful`/`not_useful` vote updates a `UserSourcePreference` row (`usefulCount`, `notUsefulCount`, `feedbackAdjustment`) for that `(userId, sourceId)` pair — `feedbackAdjustment` is a dampened score in the range ±8 that feeds into digest ranking (see DigestModule below). Feedback is single-user (`DEFAULT_USER_ID = 'default_user'`). The `article_feedbacks` table has a `userId` column and a `(articleId, userId)` unique constraint, so the schema is ready for multi-user when needed — the feedback and preference logic will need to be updated to aggregate per-user at that point.
 
@@ -283,6 +289,10 @@ Real, per-user (`userId: uuid` FK to `User`) actions on articles — deliberatel
 - `GET /saved-articles` — paginated list of the current user's saved articles (JWT-guarded), joined to `Article`.
 - `GET /articles/:articleId/save-from-email?userId=&signature=` — unguarded, reached from an email link. Always renders a small HTML result page (success or failure), never a raw JSON error, matching `FeedbackClickController`'s existing contract. On success, saves the article (idempotent — safe to click twice).
 - `GET /go/:linkId` — unguarded pure redirect (`@Redirect()`) to the linked article's URL. Records `firstOpenedAt` on the first resolve only; repeat visits redirect without touching it again (idempotent, no locking — a benign race on a near-simultaneous first open is acceptable). An unresolved `linkId` is a standard JSON `404`.
+
+**Admin endpoints** (`HybridAuthGuard` + `RolesGuard` + `@Roles(UserRole.ADMIN)`, MVP3 Phase 8c, view-only — no PATCH/DELETE; both entities here have real `uuid` FKs to `User`, so — unlike the article-feedback/user-source-preference admin listings above — `userEmail` is a genuine joined column and is never null):
+- `GET /admin/saved-articles?page=&limit=&email=&articleId=` (`AdminSavedArticleController`) — flattened, paginated listing of saved articles across all users (`userId`, `userEmail`, `articleId`, `article`, `savedAt`); `email` is an `ILIKE` partial match on the saving user.
+- `GET /admin/opens?page=&limit=&email=&context=&opened=` (`AdminOpensController`) — flattened, paginated listing of `PersonalArticleLink` rows across all users (`userId`, `userEmail`, `articleId`, `article`, `context`, `opened`, `firstOpenedAt`, `createdAt`); `opened` (derived from `firstOpenedAt !== null`) filters to opened (`true`) or never-opened (`false`) links.
 
 **HMAC signing scheme** (`SaveLinkSignatureService`): `signature = HMAC-SHA256(SAVE_LINK_SECRET, "save-article:v1:" + userId + ":" + articleId)`, hex-encoded. Verification guards on buffer length before calling `crypto.timingSafeEqual` (which throws rather than returning `false` on mismatched-length input), so a malformed or wrong-length signature fails closed instead of crashing the request. `SAVE_LINK_SECRET` is required at first use — an unset value throws immediately (`src/user-actions/utils/save-link-secret.util.ts`), mirroring `JWT_SECRET`'s fail-fast pattern.
 
@@ -371,6 +381,10 @@ Daily digest emails omit the `whyItMatters` paragraph per article; weekly and de
 Each selected digest item's `matchedInterests` in the rendered email is resolved via a batched query joining `ArticleTechnologyInterest` → `TechnologyInterest.name` for the articles actually selected (built in `DigestBuilderService.buildMatchedInterestsMap`) — not read directly off `ArticleAnalysis` (which no longer has a `matchedInterests` column).
 
 - `POST /digests/trigger` — fetch, analyze, build, and send a digest of the selected type. **MVP3 Phase 8a:** now `HybridAuthGuard` + `RolesGuard` + `@Roles(UserRole.ADMIN)` at the controller level (previously `ApiKeyGuard`) — `X-API-KEY` still works unchanged (see the guard-migration note under AuthModule/UsersModule above).
+
+**Admin Digests endpoints** (`AdminDigestController`, `/admin/digests`, same admin guard, MVP3 Phase 8c, view-only — no PATCH/DELETE):
+- `GET /admin/digests?page=&limit=&type=&status=` — paginated listing (`DigestResponseDto`), filterable by `type`/`status`.
+- `GET /admin/digests/:id` — single digest with its `DigestItem`s expanded (`DigestDetailResponseDto`, each item including its joined `Article`, `position`, and `scoreBreakdown`).
 
 ### MailModule
 Sends digest emails via Resend SDK. Uses `DIGEST_FROM_EMAIL` and `DIGEST_TO_EMAIL` env vars.

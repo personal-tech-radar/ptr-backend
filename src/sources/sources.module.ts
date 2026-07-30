@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { AiAnalysisModule } from '../ai-analysis/ai-analysis.module';
 import { ArticlesModule } from '../articles/articles.module';
 import { HttpModule } from '../common/http/http.module';
+import { AdminUserSourcePreferenceController } from './controllers/admin-user-source-preference.controller';
 import { SourceCandidatesController } from './controllers/source-candidates.controller';
 import { SourcesController } from './controllers/sources.controller';
 import { SourceCandidate } from './entities/source-candidate.entity';
@@ -34,7 +35,7 @@ import { UserSourcePreferenceService } from './services/user-source-preference.s
     forwardRef(() => ArticlesModule),
     forwardRef(() => AiAnalysisModule),
   ],
-  controllers: [SourcesController, SourceCandidatesController],
+  controllers: [SourcesController, SourceCandidatesController, AdminUserSourcePreferenceController],
   providers: [
     SourcesService,
     UserSourcePreferenceService,

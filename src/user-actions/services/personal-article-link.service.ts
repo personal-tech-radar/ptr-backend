@@ -3,7 +3,10 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { validate as uuidValidate } from 'uuid';
 import { Article } from '../../articles/entities/article.entity';
+import { PaginatedResponseDto } from '../../common/dto/paginated-response.dto';
 import { LoggingService } from '../../common/logging/logging.service';
+import { AdminOpensResponseDto } from '../dto/admin-opens-response.dto';
+import { AdminQueryOpensDto } from '../dto/admin-query-opens.dto';
 import {
   PersonalArticleLink,
   PersonalArticleLinkContext,
@@ -119,5 +122,68 @@ export class PersonalArticleLinkService {
     }
 
     return { article: link.article };
+  }
+
+  // Flattened, admin-only listing across all users' personal article links ("opens"). userId and
+  // articleId are real FKs here, so this is a plain join — no cast trick needed.
+  async findAllAdmin(
+    query: AdminQueryOpensDto,
+  ): Promise<PaginatedResponseDto<AdminOpensResponseDto>> {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+
+    const qb = this.linkRepo
+      .createQueryBuilder('link')
+      .innerJoinAndSelect('link.user', 'user')
+      .innerJoinAndSelect('link.article', 'article');
+
+    if (query.email) {
+      qb.andWhere('user.email ILIKE :email', { email: `%${query.email}%` });
+    }
+    if (query.context) {
+      qb.andWhere('link.context = :context', { context: query.context });
+    }
+    if (query.opened === true) {
+      qb.andWhere('link.firstOpenedAt IS NOT NULL');
+    } else if (query.opened === false) {
+      qb.andWhere('link.firstOpenedAt IS NULL');
+    }
+
+    const [rows, total] = await qb
+      .orderBy('link.createdAt', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getManyAndCount();
+
+    return {
+      data: rows.map((row) => this.toAdminResponseDto(row)),
+      meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
+    };
+  }
+
+  private toAdminResponseDto(entity: PersonalArticleLink): AdminOpensResponseDto {
+    return {
+      id: entity.id,
+      userId: entity.userId,
+      userEmail: entity.user.email,
+      articleId: entity.articleId,
+      article: {
+        id: entity.article.id,
+        sourceId: entity.article.sourceId,
+        title: entity.article.title,
+        url: entity.article.url,
+        urlHash: entity.article.urlHash,
+        author: entity.article.author,
+        publishedAt: entity.article.publishedAt,
+        summaryFromFeed: entity.article.summaryFromFeed,
+        status: entity.article.status,
+        createdAt: entity.article.createdAt,
+        updatedAt: entity.article.updatedAt,
+      },
+      context: entity.context,
+      opened: entity.firstOpenedAt !== null,
+      firstOpenedAt: entity.firstOpenedAt,
+      createdAt: entity.createdAt,
+    };
   }
 }

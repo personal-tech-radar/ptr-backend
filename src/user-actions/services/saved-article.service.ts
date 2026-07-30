@@ -4,6 +4,8 @@ import { Repository } from 'typeorm';
 import { PaginatedResponseDto } from '../../common/dto/paginated-response.dto';
 import { LoggingService } from '../../common/logging/logging.service';
 import { ArticlesService } from '../../articles/services/articles.service';
+import { AdminQuerySavedArticleDto } from '../dto/admin-query-saved-article.dto';
+import { AdminSavedArticleResponseDto } from '../dto/admin-saved-article-response.dto';
 import {
   SavedArticleResponseDto,
   toSavedArticleResponseDto,
@@ -74,5 +76,61 @@ export class SavedArticleService {
 
   private findJoined(userId: string, articleId: string): Promise<SavedArticle | null> {
     return this.savedArticleRepo.findOne({ where: { userId, articleId }, relations: ['article'] });
+  }
+
+  // Flattened, admin-only listing across all users' saved articles. userId/articleId are real
+  // FKs here (unlike ArticleFeedback/UserSourcePreference), so this is a plain join — no cast
+  // trick, no separate raw-select handling needed.
+  async findAllAdmin(
+    query: AdminQuerySavedArticleDto,
+  ): Promise<PaginatedResponseDto<AdminSavedArticleResponseDto>> {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+
+    const qb = this.savedArticleRepo
+      .createQueryBuilder('savedArticle')
+      .innerJoinAndSelect('savedArticle.user', 'user')
+      .innerJoinAndSelect('savedArticle.article', 'article');
+
+    if (query.email) {
+      qb.andWhere('user.email ILIKE :email', { email: `%${query.email}%` });
+    }
+    if (query.articleId) {
+      qb.andWhere('savedArticle.articleId = :articleId', { articleId: query.articleId });
+    }
+
+    const [rows, total] = await qb
+      .orderBy('savedArticle.createdAt', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getManyAndCount();
+
+    return {
+      data: rows.map((row) => this.toAdminResponseDto(row)),
+      meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
+    };
+  }
+
+  private toAdminResponseDto(entity: SavedArticle): AdminSavedArticleResponseDto {
+    return {
+      id: entity.id,
+      userId: entity.userId,
+      userEmail: entity.user.email,
+      articleId: entity.articleId,
+      article: {
+        id: entity.article.id,
+        sourceId: entity.article.sourceId,
+        title: entity.article.title,
+        url: entity.article.url,
+        urlHash: entity.article.urlHash,
+        author: entity.article.author,
+        publishedAt: entity.article.publishedAt,
+        summaryFromFeed: entity.article.summaryFromFeed,
+        status: entity.article.status,
+        createdAt: entity.article.createdAt,
+        updatedAt: entity.article.updatedAt,
+      },
+      savedAt: entity.createdAt,
+    };
   }
 }
