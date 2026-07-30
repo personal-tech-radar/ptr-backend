@@ -69,6 +69,21 @@ describe('UserQueryService', () => {
     });
   });
 
+  describe('findByEmailIncludingDeleted', () => {
+    it('returns a soft-deleted user, unlike findByEmail', async () => {
+      const softDeletedUser = { id: validId, email: 'jane@example.com', deletedAt: new Date() };
+      mockUserRepo.findOne.mockResolvedValue(softDeletedUser);
+
+      const result = await service.findByEmailIncludingDeleted('jane@example.com');
+
+      expect(mockUserRepo.findOne).toHaveBeenCalledWith({
+        where: { email: 'jane@example.com' },
+        withDeleted: true,
+      });
+      expect(result).toEqual(softDeletedUser);
+    });
+  });
+
   describe('findAll', () => {
     it('returns paginated results with default params', async () => {
       mockQueryBuilder.getManyAndCount.mockResolvedValue([[{ id: validId }], 1]);

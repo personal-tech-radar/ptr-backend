@@ -13,6 +13,7 @@ describe('UserCommandService', () => {
     create: jest.fn((data) => data),
     save: jest.fn((data) => Promise.resolve({ id: 'generated-id', role: UserRole.USER, ...data })),
     softDelete: jest.fn(),
+    restore: jest.fn(),
   };
 
   const mockFeedCacheInvalidationService = {
@@ -57,6 +58,85 @@ describe('UserCommandService', () => {
 
       await expect(service.create(input)).rejects.toThrow(ConflictException);
       expect(mockUserRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('defaults role/emailVerifiedAt/onboardingCompletedAt when omitted (AuthService.register call shape)', async () => {
+      mockUserRepo.findOne.mockResolvedValue(null);
+
+      const result = await service.create(input);
+
+      expect(result.role).toBe(UserRole.USER);
+      expect(result.emailVerifiedAt).toBeNull();
+      expect(result.onboardingCompletedAt).toBeNull();
+    });
+
+    it('honors explicitly provided role/emailVerifiedAt/onboardingCompletedAt', async () => {
+      mockUserRepo.findOne.mockResolvedValue(null);
+      const verifiedAt = new Date();
+      const onboardedAt = new Date();
+
+      const result = await service.create({
+        ...input,
+        role: UserRole.ADMIN,
+        emailVerifiedAt: verifiedAt,
+        onboardingCompletedAt: onboardedAt,
+      });
+
+      expect(result.role).toBe(UserRole.ADMIN);
+      expect(result.emailVerifiedAt).toBe(verifiedAt);
+      expect(result.onboardingCompletedAt).toBe(onboardedAt);
+    });
+  });
+
+  describe('resurrectAsAdmin', () => {
+    it('restores the row, sets role to admin, and does not touch passwordHash', async () => {
+      mockUserRepo.restore.mockResolvedValue({ affected: 1 });
+      mockUserRepo.findOne.mockResolvedValue({
+        id: validId,
+        role: UserRole.USER,
+        passwordHash: 'existing-hash',
+        emailVerifiedAt: null,
+        onboardingCompletedAt: null,
+        deletedAt: null,
+      });
+
+      const result = await service.resurrectAsAdmin(validId);
+
+      expect(mockUserRepo.restore).toHaveBeenCalledWith(validId);
+      expect(mockUserRepo.findOne).toHaveBeenCalledWith({
+        where: { id: validId },
+        withDeleted: true,
+      });
+      expect(result.role).toBe(UserRole.ADMIN);
+      expect(result.passwordHash).toBe('existing-hash');
+      expect(result.emailVerifiedAt).toBeInstanceOf(Date);
+      expect(result.onboardingCompletedAt).toBeInstanceOf(Date);
+    });
+
+    it('does not overwrite emailVerifiedAt/onboardingCompletedAt when already set', async () => {
+      const existingVerifiedAt = new Date('2020-01-01');
+      const existingOnboardedAt = new Date('2020-01-02');
+      mockUserRepo.restore.mockResolvedValue({ affected: 1 });
+      mockUserRepo.findOne.mockResolvedValue({
+        id: validId,
+        role: UserRole.USER,
+        passwordHash: 'existing-hash',
+        emailVerifiedAt: existingVerifiedAt,
+        onboardingCompletedAt: existingOnboardedAt,
+        deletedAt: null,
+      });
+
+      const result = await service.resurrectAsAdmin(validId);
+
+      expect(result.emailVerifiedAt).toBe(existingVerifiedAt);
+      expect(result.onboardingCompletedAt).toBe(existingOnboardedAt);
+    });
+
+    it('throws NotFoundException when the row cannot be found after restore', async () => {
+      mockUserRepo.restore.mockResolvedValue({ affected: 0 });
+      mockUserRepo.findOne.mockResolvedValue(null);
+
+      await expect(service.resurrectAsAdmin(validId)).rejects.toThrow(NotFoundException);
     });
   });
 

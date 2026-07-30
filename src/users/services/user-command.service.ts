@@ -10,13 +10,16 @@ import { validate as uuidValidate } from 'uuid';
 import { LoggingService } from '../../common/logging/logging.service';
 import { FeedCacheInvalidationService } from '../../feed/services/feed-cache-invalidation.service';
 import { UpdateProfileDto } from '../dto/update-profile.dto';
-import { User } from '../entities/user.entity';
+import { User, UserRole } from '../entities/user.entity';
 
 export interface CreateUserInput {
   email: string;
   passwordHash: string;
   displayName: string;
   timezone: string;
+  role?: UserRole;
+  emailVerifiedAt?: Date | null;
+  onboardingCompletedAt?: Date | null;
 }
 
 @Injectable()
@@ -40,6 +43,9 @@ export class UserCommandService {
       passwordHash: input.passwordHash,
       displayName: input.displayName,
       timezone: input.timezone,
+      role: input.role ?? UserRole.USER,
+      emailVerifiedAt: input.emailVerifiedAt ?? null,
+      onboardingCompletedAt: input.onboardingCompletedAt ?? null,
     });
 
     const saved = await this.userRepo.save(user);
@@ -81,6 +87,28 @@ export class UserCommandService {
 
     const saved = await this.userRepo.save(user);
     this.logger.info('User email verified', { id: saved.id });
+    return saved;
+  }
+
+  // Undoes a soft delete for AdminBootstrapService's "an active admin login always works" guarantee
+  // when ADMIN_EMAIL collides with a soft-deleted row. Deliberately never touches passwordHash —
+  // restore() clears deletedAt via a plain UPDATE, so the row must be re-read (withDeleted: true,
+  // since the row may not yet be visible to a default query in the same call) before role/
+  // verification/onboarding fields can be set on it.
+  async resurrectAsAdmin(id: string): Promise<User> {
+    await this.userRepo.restore(id);
+
+    const user = await this.userRepo.findOne({ where: { id }, withDeleted: true });
+    if (!user) {
+      throw new NotFoundException(`User ${id} not found`);
+    }
+
+    user.role = UserRole.ADMIN;
+    if (!user.emailVerifiedAt) user.emailVerifiedAt = new Date();
+    if (!user.onboardingCompletedAt) user.onboardingCompletedAt = new Date();
+
+    const saved = await this.userRepo.save(user);
+    this.logger.info('User resurrected as admin', { id: saved.id });
     return saved;
   }
 

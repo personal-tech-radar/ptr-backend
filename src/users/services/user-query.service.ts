@@ -29,6 +29,13 @@ export class UserQueryService {
     return this.userRepo.findOne({ where: { email } });
   }
 
+  // Unlike findByEmail, includes soft-deleted rows — used by AdminBootstrapService to detect
+  // (and resurrect) a soft-deleted user occupying ADMIN_EMAIL instead of crashing on the
+  // underlying plain (non-partial) unique constraint on email.
+  async findByEmailIncludingDeleted(email: string): Promise<User | null> {
+    return this.userRepo.findOne({ where: { email }, withDeleted: true });
+  }
+
   async findAll(query: QueryUserDto): Promise<PaginatedResponseDto<User>> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;

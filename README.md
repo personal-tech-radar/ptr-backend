@@ -86,6 +86,11 @@ Multi-tenant account infrastructure. `User` (`src/users/entities/user.entity.ts`
 
 **Guards** (`src/auth/guards/`): `JwtAuthGuard` (JWT only), `HybridAuthGuard` (accepts either `X-API-KEY` — reusing `ApiKeyGuard`'s validation, and synthesizing an admin `request.user` principal (`role: UserRole.ADMIN`) when the key matches — or a JWT, for routes meant to serve both machine and human callers), `RolesGuard` + `@Roles(...)` decorator (role-gated routes), `@CurrentUser()` decorator (reads `request.user`).
 
+**MVP3 Phase 9 — Admin Bootstrap** (`AdminBootstrapService`, `src/auth/services/admin-bootstrap.service.ts`). Runs on every application startup (`OnModuleInit`) to guarantee a working admin login always exists. `ADMIN_EMAIL` and `ADMIN_PASSWORD` are both **required** — the app fails to boot if either is unset, a deliberately stricter-than-originally-planned choice that treats them exactly like other required secrets (`JWT_SECRET`, `API_KEY`; see `getJwtSecret`'s fail-fast pattern), no warn-and-skip fallback. Three outcomes at boot:
+- No user occupies `ADMIN_EMAIL` — a new admin is created (`role: ADMIN`, `emailVerifiedAt`/`onboardingCompletedAt` both set, password hashed via the new shared `hashPassword`/`BCRYPT_SALT_ROUNDS` util in `src/auth/utils/password-hash.util.ts`, also now used by `AuthService`).
+- An active (non-deleted) user already occupies `ADMIN_EMAIL` — no-op; its password is never reset, regardless of its current role.
+- A soft-deleted user occupies `ADMIN_EMAIL` — automatically resurrected as an admin (`UserCommandService.resurrectAsAdmin`: clears `deletedAt`, sets `role: ADMIN`, sets `emailVerifiedAt`/`onboardingCompletedAt` only if they were still `null`) — also without touching its existing password hash. This undoes a prior `DELETE /admin/users/:id` soft delete on every restart, so "the admin login always works" holds unconditionally.
+
 **MVP3 Phase 8a — Admin API guard migration.** `HybridAuthGuard` + `RolesGuard` + `@Roles(UserRole.ADMIN)` now also protect:
 - `SourcesController` (whole controller, `GET`/`POST`/`PATCH`/`DELETE /sources`, `GET`/`POST /source-candidates`)
 - `DigestController` (`POST /digests/trigger`)
@@ -473,6 +478,8 @@ Health check: `http://localhost:3000/health`
 | `JWT_REFRESH_EXPIRES_IN` | Refresh token lifetime (opaque, persisted, hashed, revocable `RefreshToken` entity — not JWT-signed) | `30d` |
 | `EMAIL_VERIFICATION_TOKEN_TTL_HOURS` | Hours an email verification token stays valid | `48` |
 | `PASSWORD_RESET_TOKEN_TTL_HOURS` | Hours a password reset token stays valid | `2` |
+| `ADMIN_EMAIL` | Email of the admin account `AdminBootstrapService` ensures exists on every boot — required, app fails to boot if unset | — |
+| `ADMIN_PASSWORD` | Password for the same bootstrap admin account — required, app fails to boot if unset; never used to reset an existing user's password | — |
 | `OPENAI_API_KEY` | OpenAI API key | — |
 | `OPENAI_MODEL` | OpenAI model | `gpt-4o-mini` |
 | `PLAYWRIGHT_ENABLED` | Master kill switch for the Playwright browser-fetch fallback | `false` |

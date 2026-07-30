@@ -20,8 +20,7 @@ import { PasswordResetToken } from '../entities/password-reset-token.entity';
 import { RefreshToken } from '../entities/refresh-token.entity';
 import { toExpiresIn } from '../utils/jwt-expiry.util';
 import { getJwtSecret } from '../utils/jwt-secret.util';
-
-const BCRYPT_SALT_ROUNDS = 10;
+import { BCRYPT_SALT_ROUNDS } from '../utils/password-hash.util';
 
 @Injectable()
 export class AuthService {
