@@ -5,6 +5,16 @@ Each entry is tagged with the branch it was made on.
 
 ---
 
+## [feature/mvp3-p8c-admin-read-only] — 2026-07-29
+
+### Added
+- Admin API, part 3 of 3 (MVP3 Part 1, Phase 8c of 11) — the last of three admin API deliveries, view-only. Admins can now list digests (with full item detail), saved articles, and article-open history, all filterable and paginated. This completes the Admin API in full
+
+### Known limitations
+- The new article-feedback and per-source-preference admin listings will show an empty user email for every existing row today, since neither table has ever recorded a real per-user identity — both still only carry the single legacy placeholder user from before accounts existed. This resolves automatically once existing feedback and preference data is linked to real accounts, planned for a later phase
+
+---
+
 ## [feature/mvp3-p8b-admin-taxonomy-streams] — 2026-07-29
 
 ### Added

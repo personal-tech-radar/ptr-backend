@@ -12,6 +12,7 @@ import { ArticleTechnologyInterest } from '../ai-analysis/entities/article-techn
 import { Article } from '../articles/entities/article.entity';
 import { SourceCandidate } from '../sources/entities/source-candidate.entity';
 import { Source } from '../sources/entities/source.entity';
+import { AdminDigestController } from './controllers/admin-digest.controller';
 import { DigestController } from './controllers/digest.controller';
 import { DigestItem } from './entities/digest-item.entity';
 import { Digest } from './entities/digest.entity';
@@ -41,7 +42,7 @@ import { EmailTemplateService } from './services/email-template.service';
     SourcesModule,
     TaxonomyModule,
   ],
-  controllers: [DigestController],
+  controllers: [DigestController, AdminDigestController],
   providers: [
     AiDigestService,
     EmailTemplateService,

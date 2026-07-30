@@ -17,6 +17,7 @@ const mockRepository = {
   find: jest.fn(),
   create: jest.fn((data) => data),
   save: jest.fn((data) => Promise.resolve({ id: linkId, ...data })),
+  createQueryBuilder: jest.fn(),
 };
 
 describe('PersonalArticleLinkService', () => {
@@ -209,6 +210,114 @@ describe('PersonalArticleLinkService', () => {
     it('throws NotFoundException for a malformed linkId without querying the repository', async () => {
       await expect(service.resolveAndRecordOpen('not-a-uuid')).rejects.toThrow(NotFoundException);
       expect(mockRepository.findOne).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('findAllAdmin', () => {
+    const user = { id: userId, email: 'jane@example.com' };
+    const openedLink = {
+      id: linkId,
+      userId,
+      user,
+      articleId,
+      article,
+      context: PersonalArticleLinkContext.FEED,
+      firstOpenedAt: new Date('2026-01-01'),
+      createdAt: new Date('2025-12-31'),
+    };
+
+    const mockAdminQueryBuilder = {
+      innerJoinAndSelect: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      getManyAndCount: jest.fn(),
+    };
+
+    beforeEach(() => {
+      mockRepository.createQueryBuilder.mockReturnValue(mockAdminQueryBuilder);
+    });
+
+    it('returns all links across users, flattened, when no filters are given', async () => {
+      mockAdminQueryBuilder.getManyAndCount.mockResolvedValue([[openedLink], 1]);
+
+      const result = await service.findAllAdmin({ page: 1, limit: 20 });
+
+      expect(mockAdminQueryBuilder.andWhere).not.toHaveBeenCalled();
+      expect(result.data[0].userEmail).toBe('jane@example.com');
+      expect(result.data[0].opened).toBe(true);
+      expect(result.meta).toEqual({ total: 1, page: 1, limit: 20, totalPages: 1 });
+    });
+
+    it('applies the email and context filters only when provided', async () => {
+      mockAdminQueryBuilder.getManyAndCount.mockResolvedValue([[], 0]);
+
+      await service.findAllAdmin({
+        page: 1,
+        limit: 20,
+        email: 'jane',
+        context: PersonalArticleLinkContext.DAILY_DIGEST,
+      });
+
+      expect(mockAdminQueryBuilder.andWhere).toHaveBeenCalledWith('user.email ILIKE :email', {
+        email: '%jane%',
+      });
+      expect(mockAdminQueryBuilder.andWhere).toHaveBeenCalledWith('link.context = :context', {
+        context: PersonalArticleLinkContext.DAILY_DIGEST,
+      });
+    });
+
+    it('filters to opened links when opened=true', async () => {
+      mockAdminQueryBuilder.getManyAndCount.mockResolvedValue([[], 0]);
+
+      await service.findAllAdmin({ page: 1, limit: 20, opened: true });
+
+      expect(mockAdminQueryBuilder.andWhere).toHaveBeenCalledWith('link.firstOpenedAt IS NOT NULL');
+      expect(mockAdminQueryBuilder.andWhere).not.toHaveBeenCalledWith('link.firstOpenedAt IS NULL');
+    });
+
+    // Regression test for the boolean-query-param coercion bug (fixed 3 times already in this
+    // program — see QueryUserDto's toBoolean, AdminQueryOpensDto's toBoolean). opened=false must
+    // filter to UN-opened links, not be silently treated as opened=true.
+    it('filters to un-opened links when opened=false, not silently coerced to true', async () => {
+      mockAdminQueryBuilder.getManyAndCount.mockResolvedValue([[], 0]);
+
+      await service.findAllAdmin({ page: 1, limit: 20, opened: false });
+
+      expect(mockAdminQueryBuilder.andWhere).toHaveBeenCalledWith('link.firstOpenedAt IS NULL');
+      expect(mockAdminQueryBuilder.andWhere).not.toHaveBeenCalledWith(
+        'link.firstOpenedAt IS NOT NULL',
+      );
+    });
+
+    it('applies no opened filter when opened is undefined', async () => {
+      mockAdminQueryBuilder.getManyAndCount.mockResolvedValue([[], 0]);
+
+      await service.findAllAdmin({ page: 1, limit: 20 });
+
+      expect(mockAdminQueryBuilder.andWhere).not.toHaveBeenCalledWith(
+        expect.stringContaining('firstOpenedAt'),
+      );
+    });
+
+    it('derives opened: false in the response when firstOpenedAt is null', async () => {
+      const unopenedLink = { ...openedLink, firstOpenedAt: null };
+      mockAdminQueryBuilder.getManyAndCount.mockResolvedValue([[unopenedLink], 1]);
+
+      const result = await service.findAllAdmin({ page: 1, limit: 20 });
+
+      expect(result.data[0].opened).toBe(false);
+      expect(result.data[0].firstOpenedAt).toBeNull();
+    });
+
+    it('paginates using skip/take derived from page/limit', async () => {
+      mockAdminQueryBuilder.getManyAndCount.mockResolvedValue([[], 0]);
+
+      await service.findAllAdmin({ page: 2, limit: 5 });
+
+      expect(mockAdminQueryBuilder.skip).toHaveBeenCalledWith(5);
+      expect(mockAdminQueryBuilder.take).toHaveBeenCalledWith(5);
     });
   });
 });
