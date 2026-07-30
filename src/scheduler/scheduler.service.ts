@@ -15,41 +15,26 @@ export class SchedulerService implements OnModuleInit {
 
   onModuleInit(): void {
     const fetchCron = process.env.FETCH_CRON || '0 * * * *';
-    const digestCron = process.env.DIGEST_CRON || '0 7 * * 1-5';
-    const weeklyDigestCron = process.env.WEEKLY_DIGEST_CRON || '0 8 * * 5';
-    const deepDiveCron = process.env.DEEP_DIVE_CRON || '0 8 * * 1';
+    // Ticks every 15 minutes and evaluates every eligible user's own local send-time window
+    // (DigestSweepService) — replaces the old fixed-UTC per-cadence crons entirely (MVP3 Phase
+    // 10). See DigestSweepService for the actual daily(Mon-Fri)/weekly(Fri 14:00) local-time
+    // logic; this cron only controls how often the sweep itself runs.
+    const digestSweepCron = process.env.DIGEST_SWEEP_CRON || '*/15 * * * *';
 
     this.registerCronJob('fetch-all-sources', fetchCron, async () => {
       this.logger.info('Cron: dispatching fetch-all-sources job');
       await this.queueService.addFetchAllSourcesJob();
     });
 
-    this.registerCronJob('build-daily-digest', digestCron, async () => {
-      this.logger.info('Cron: dispatching build-daily-digest job');
-      await this.queueService.addBuildDailyDigestJob();
+    this.registerCronJob('digest-sweep', digestSweepCron, async () => {
+      this.logger.info('Cron: dispatching digest-sweep job');
+      await this.queueService.addDigestSweepJob();
     });
-
-    this.registerCronJob('build-weekly-digest', weeklyDigestCron, async () => {
-      this.logger.info('Cron: dispatching build-weekly-digest job');
-      await this.queueService.addBuildWeeklyDigestJob();
-    });
-
-    this.registerCronJob('build-deep-dive-weekly-digest', deepDiveCron, async () => {
-      this.logger.info('Cron: dispatching build-deep-dive-weekly-digest job');
-      await this.queueService.addBuildDeepDiveWeeklyDigestJob();
-    });
-
   }
 
-  private registerCronJob(
-    name: string,
-    expression: string,
-    callback: () => Promise<void>,
-  ): void {
+  private registerCronJob(name: string, expression: string, callback: () => Promise<void>): void {
     const job = new CronJob(expression, () => {
-      callback().catch((err) =>
-        this.logger.error(`Cron job "${name}" failed`, err),
-      );
+      callback().catch((err) => this.logger.error(`Cron job "${name}" failed`, err));
     });
     this.schedulerRegistry.addCronJob(name, job);
     job.start();

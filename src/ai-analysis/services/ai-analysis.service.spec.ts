@@ -90,7 +90,6 @@ describe('AiAnalysisService', () => {
         tags: ['tag'],
         relevanceScore: 80,
         qualityScore: 70,
-        deepDiveScore: 60,
         complexityLevel: 'advanced',
         materialType: 'tutorial',
         urgencyScore: 40,
@@ -104,7 +103,6 @@ describe('AiAnalysisService', () => {
         interestSignals: [],
         shouldIncludeInDailyDigest: true,
         shouldIncludeInWeeklyDigest: false,
-        shouldIncludeInDeepDiveDigest: false,
         ...overrides,
       }),
     );

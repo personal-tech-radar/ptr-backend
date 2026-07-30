@@ -36,6 +36,21 @@ export class UserQueryService {
     return this.userRepo.findOne({ where: { email }, withDeleted: true });
   }
 
+  // Backs DigestSweepService's per-15-minute cron sweep. Unpaginated by design — the sweep needs
+  // the full eligible set to evaluate each user's own local send-time window, not a page of it.
+  // emailVerifiedAt IS NOT NULL is a deliberate product-decision gate (MVP3 Phase 10, decision
+  // #5) on top of the pre-existing onboarding/opt-in checks — a user must have verified their
+  // email before receiving ANY digest.
+  async findEligibleForDigestSweep(): Promise<User[]> {
+    return this.userRepo
+      .createQueryBuilder('user')
+      .where('user.deletedAt IS NULL')
+      .andWhere('user.onboardingCompletedAt IS NOT NULL')
+      .andWhere('user.emailVerifiedAt IS NOT NULL')
+      .andWhere('(user.dailyDigestEnabled = true OR user.weeklyDigestEnabled = true)')
+      .getMany();
+  }
+
   async findAll(query: QueryUserDto): Promise<PaginatedResponseDto<User>> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;

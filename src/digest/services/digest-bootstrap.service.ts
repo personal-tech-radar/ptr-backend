@@ -3,8 +3,9 @@ import { LoggingService } from '../../common/logging/logging.service';
 import { AiAnalysisService } from '../../ai-analysis/services/ai-analysis.service';
 import { ArticlesService } from '../../articles/services/articles.service';
 import { FeedFetcherService } from '../../feed-fetcher/services/feed-fetcher.service';
-import { Digest } from '../entities/digest.entity';
-import { DigestBuilderService } from './digest-builder.service';
+import { UserQueryService } from '../../users/services/user-query.service';
+import { Digest, DigestType } from '../entities/digest.entity';
+import { PersonalDigestBuilderService } from './personal-digest-builder.service';
 
 @Injectable()
 export class DigestBootstrapService {
@@ -14,25 +15,22 @@ export class DigestBootstrapService {
     private readonly feedFetcherService: FeedFetcherService,
     private readonly articlesService: ArticlesService,
     private readonly aiAnalysisService: AiAnalysisService,
-    private readonly digestBuilderService: DigestBuilderService,
+    private readonly personalDigestBuilderService: PersonalDigestBuilderService,
+    private readonly userQueryService: UserQueryService,
   ) {}
 
-  async buildDailyDigest(): Promise<Digest | null> {
+  async buildDailyDigest(userId: string): Promise<Digest | null> {
     await this.feedFetcherService.fetchAllSources();
     await this.analyzePendingArticles();
-    return this.digestBuilderService.buildDailyDigest();
+    const user = await this.userQueryService.findById(userId);
+    return this.personalDigestBuilderService.buildForUser(user, DigestType.DAILY);
   }
 
-  async buildWeeklyDigest(): Promise<Digest | null> {
+  async buildWeeklyDigest(userId: string): Promise<Digest | null> {
     await this.feedFetcherService.fetchAllSources();
     await this.analyzePendingArticles();
-    return this.digestBuilderService.buildWeeklyDigest();
-  }
-
-  async buildDeepDiveWeeklyDigest(): Promise<Digest | null> {
-    await this.feedFetcherService.fetchAllSources();
-    await this.analyzePendingArticles();
-    return this.digestBuilderService.buildDeepDiveWeeklyDigest();
+    const user = await this.userQueryService.findById(userId);
+    return this.personalDigestBuilderService.buildForUser(user, DigestType.WEEKLY);
   }
 
   private async analyzePendingArticles(): Promise<void> {

@@ -33,8 +33,8 @@ export class SaveLinkSignatureService {
     return timingSafeEqual(expectedBuffer, providedBuffer);
   }
 
-  // Unconsumed in this phase — no caller wires this into a real feed/digest email template yet.
-  // Shipped as groundwork for Phase 6/10, matching how Phase 4's ScoringModule shipped unwired.
+  // Consumed by PersonalDigestBuilderService to render the per-item "Save for later" link in
+  // personal digest emails (MVP3 Phase 10).
   buildSaveFromEmailUrl(userId: string, articleId: string): string {
     const signature = this.sign(userId, articleId);
     const appUrl = process.env.APP_URL ?? '';

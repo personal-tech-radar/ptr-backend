@@ -33,7 +33,6 @@ interface FullAnalysisResult {
   tags: string[];
   relevanceScore: number;
   qualityScore: number;
-  deepDiveScore: number;
   complexityLevel: ArticleComplexityLevel;
   materialType: ArticleMaterialType;
   urgencyScore: number;
@@ -47,7 +46,6 @@ interface FullAnalysisResult {
   interestSignals: string[];
   shouldIncludeInDailyDigest: boolean;
   shouldIncludeInWeeklyDigest: boolean;
-  shouldIncludeInDeepDiveDigest: boolean;
 }
 
 // Two-stage, fully global pipeline (no per-user dimension — see the removed ArticleRelevance
@@ -238,7 +236,6 @@ export class AiAnalysisService implements OnModuleInit {
         analysis.relevanceScore = result.relevanceScore;
         analysis.qualityScore = result.qualityScore;
         analysis.finalScore = Math.round(finalScore * 100) / 100;
-        analysis.deepDiveScore = result.deepDiveScore;
         analysis.complexityLevel = result.complexityLevel;
         analysis.materialType = result.materialType;
         analysis.urgencyScore = result.urgencyScore;
@@ -249,7 +246,6 @@ export class AiAnalysisService implements OnModuleInit {
         analysis.mainStreamId = main?.id ?? null;
         analysis.shouldIncludeInDailyDigest = result.shouldIncludeInDailyDigest;
         analysis.shouldIncludeInWeeklyDigest = result.shouldIncludeInWeeklyDigest;
-        analysis.shouldIncludeInDeepDiveDigest = result.shouldIncludeInDeepDiveDigest;
         analysis.fullAnalysisAt = new Date();
 
         await manager.save(ArticleAnalysis, analysis);
@@ -435,7 +431,6 @@ export class AiAnalysisService implements OnModuleInit {
       tags: Array.isArray(parsed.tags) ? parsed.tags.map(String) : [],
       relevanceScore: clampScore(parsed.relevanceScore),
       qualityScore: clampScore(parsed.qualityScore),
-      deepDiveScore: clampScore(parsed.deepDiveScore),
       complexityLevel: isValidComplexityLevel(parsed.complexityLevel)
         ? parsed.complexityLevel
         : ArticleComplexityLevel.INTERMEDIATE,
@@ -461,7 +456,6 @@ export class AiAnalysisService implements OnModuleInit {
         : [],
       shouldIncludeInDailyDigest: Boolean(parsed.shouldIncludeInDailyDigest),
       shouldIncludeInWeeklyDigest: Boolean(parsed.shouldIncludeInWeeklyDigest),
-      shouldIncludeInDeepDiveDigest: Boolean(parsed.shouldIncludeInDeepDiveDigest),
     };
   }
 }

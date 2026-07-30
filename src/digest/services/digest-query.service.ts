@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
 import { PaginatedResponseDto } from '../../common/dto/paginated-response.dto';
 import { AdminQueryDigestDto } from '../dto/admin-query-digest.dto';
 import { DigestResponseDto, toDigestResponseDto } from '../dto/digest-response.dto';
@@ -25,13 +25,21 @@ export class DigestQueryService {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
 
-    const qb = this.digestRepo.createQueryBuilder('digest');
+    // Real FK join (Digest.userId -> users.id), not a cast-join trick — userId is a genuine uuid
+    // column with a ManyToOne relation (see digest.entity.ts). leftJoin, not inner: userId is
+    // nullable on the entity even though every row created going forward always has one.
+    const qb = this.digestRepo
+      .createQueryBuilder('digest')
+      .leftJoinAndSelect('digest.user', 'user');
 
     if (query.type) {
       qb.andWhere('digest.type = :type', { type: query.type });
     }
     if (query.status) {
       qb.andWhere('digest.status = :status', { status: query.status });
+    }
+    if (query.email) {
+      qb.andWhere('user.email ILIKE :email', { email: `%${query.email}%` });
     }
 
     const [digests, total] = await qb
@@ -49,21 +57,10 @@ export class DigestQueryService {
   async findByIdWithItems(id: string): Promise<Digest> {
     const digest = await this.digestRepo.findOne({
       where: { id },
-      relations: ['items', 'items.article'],
+      relations: ['items', 'items.article', 'user'],
     });
     if (!digest) {
       throw new NotFoundException(`Digest ${id} not found`);
-    }
-    return digest;
-  }
-
-  async findLatestBuiltOrSent(): Promise<Digest> {
-    const digest = await this.digestRepo.findOne({
-      where: { status: In([DigestStatus.DRAFT, DigestStatus.SENT]) },
-      order: { createdAt: 'DESC' },
-    });
-    if (!digest) {
-      throw new NotFoundException('No built or sent digest found');
     }
     return digest;
   }

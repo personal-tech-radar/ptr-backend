@@ -8,12 +8,14 @@ describe('UserQueryService', () => {
   let service: UserQueryService;
 
   const mockQueryBuilder = {
+    where: jest.fn().mockReturnThis(),
     withDeleted: jest.fn().mockReturnThis(),
     andWhere: jest.fn().mockReturnThis(),
     orderBy: jest.fn().mockReturnThis(),
     skip: jest.fn().mockReturnThis(),
     take: jest.fn().mockReturnThis(),
     getManyAndCount: jest.fn(),
+    getMany: jest.fn(),
   };
 
   const mockUserRepo = {
@@ -122,6 +124,48 @@ describe('UserQueryService', () => {
       await service.findAll({ includeDeleted: true });
 
       expect(mockQueryBuilder.withDeleted).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('findEligibleForDigestSweep', () => {
+    beforeEach(() => {
+      mockQueryBuilder.getMany.mockResolvedValue([{ id: validId }]);
+    });
+
+    it('excludes soft-deleted users', async () => {
+      await service.findEligibleForDigestSweep();
+
+      expect(mockQueryBuilder.where).toHaveBeenCalledWith('user.deletedAt IS NULL');
+    });
+
+    it('excludes users who have not completed onboarding', async () => {
+      await service.findEligibleForDigestSweep();
+
+      expect(mockQueryBuilder.andWhere).toHaveBeenCalledWith(
+        'user.onboardingCompletedAt IS NOT NULL',
+      );
+    });
+
+    // Decision #5 override: emailVerifiedAt IS NOT NULL is a hard gate on ANY digest, not the
+    // softer originally-recommended alternative of no gate at all.
+    it('excludes users with an unverified email', async () => {
+      await service.findEligibleForDigestSweep();
+
+      expect(mockQueryBuilder.andWhere).toHaveBeenCalledWith('user.emailVerifiedAt IS NOT NULL');
+    });
+
+    it('requires at least one of dailyDigestEnabled/weeklyDigestEnabled to be true', async () => {
+      await service.findEligibleForDigestSweep();
+
+      expect(mockQueryBuilder.andWhere).toHaveBeenCalledWith(
+        '(user.dailyDigestEnabled = true OR user.weeklyDigestEnabled = true)',
+      );
+    });
+
+    it('returns the query result', async () => {
+      const result = await service.findEligibleForDigestSweep();
+
+      expect(result).toEqual([{ id: validId }]);
     });
   });
 });

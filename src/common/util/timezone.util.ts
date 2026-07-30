@@ -54,3 +54,30 @@ export function zonedStartOfDayUTC(dateStr: string, timeZone: string): Date {
 export function zonedEndOfDayExclusiveUTC(dateStr: string, timeZone: string): Date {
   return zonedStartOfDayUTC(addDaysToDateString(dateStr, 1), timeZone);
 }
+
+export interface LocalTimeParts {
+  weekday: 'Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri' | 'Sat' | 'Sun';
+  hour: number;
+  minute: number;
+}
+
+// Local weekday/hour/minute for `date` as observed in `timeZone` — same Intl-based technique as
+// getLocalDateString/getTimeZoneOffsetMinutes above. Used by DigestSweepService to evaluate each
+// user's own local send-time window against the fixed cron sweep cadence.
+export function getLocalTimeParts(date: Date, timeZone: string): LocalTimeParts {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(date);
+
+  const weekday = parts.find((p) => p.type === 'weekday')?.value as LocalTimeParts['weekday'];
+  // hour12: false can still render midnight as "24" in some ICU implementations — normalize to 0.
+  const hourRaw = Number(parts.find((p) => p.type === 'hour')?.value ?? '0');
+  const hour = hourRaw === 24 ? 0 : hourRaw;
+  const minute = Number(parts.find((p) => p.type === 'minute')?.value ?? '0');
+
+  return { weekday, hour, minute };
+}

@@ -5,6 +5,24 @@ Each entry is tagged with the branch it was made on.
 
 ---
 
+## [feature/mvp3-p10-personal-digest-delivery] — 2026-07-31
+
+### Added
+- Personal Digest Delivery (MVP3 Part 1, Phase 10 of 11) — daily and weekly digest emails are now built and sent per user instead of as a single shared broadcast. A recurring sweep checks each user's own local time and sends their daily digest Monday–Friday only, and their weekly digest every Friday, both at times that respect the user's timezone rather than a fixed server time
+- Digest emails now include a "save for later" link on every article, alongside the existing read link
+- A user must have a verified email address to receive any digest — unverified accounts are skipped by both the automated send and a manual admin-triggered send
+
+### Updated
+- The one-off "deep dive weekly" digest type has been removed entirely, along with its underlying AI analysis fields and its email template; the two remaining digest types are daily and weekly
+- The admin-facing manual digest trigger now always sends to one specific user by email, and no longer falls back to resending a previously-sent digest
+- Digest emails no longer include the 👍/👎 feedback buttons; a signed-link replacement for capturing feedback from email is planned as a future improvement
+- All historical digest records predating per-user delivery have been cleared, since none of them carried a real per-user identity
+
+### Removed
+- `DIGEST_TO_EMAIL` (a single global recipient no longer applies) and the old fixed-time digest cron settings, replaced by a single sweep-interval setting plus a per-user local send hour
+
+---
+
 ## [chore/codex-claude-coexistence] — 2026-07-30
 
 ### Added

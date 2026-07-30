@@ -12,14 +12,8 @@ export class MailService {
     this.resend = new Resend(process.env.RESEND_API_KEY);
   }
 
-  async sendDigest(digest: Digest): Promise<void> {
+  async sendDigest(digest: Digest, to: string): Promise<void> {
     const from = process.env.DIGEST_FROM_EMAIL ?? 'digest@example.com';
-    const to = process.env.DIGEST_TO_EMAIL ?? '';
-
-    if (!to) {
-      this.logger.warn('DIGEST_TO_EMAIL is not set, skipping send');
-      return;
-    }
 
     const { error } = await this.resend.emails.send({
       from,

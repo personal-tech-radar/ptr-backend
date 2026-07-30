@@ -1,6 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
-import { IsEnum, IsInt, IsOptional, Min } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
+import { IsEnum, IsInt, IsOptional, IsString, Min } from 'class-validator';
 import { DigestStatus, DigestType } from '../entities/digest.entity';
 
 // Backs AdminDigestController's GET /admin/digests listing.
@@ -36,4 +36,13 @@ export class AdminQueryDigestDto {
   @IsOptional()
   @IsEnum(DigestStatus)
   status?: DigestStatus;
+
+  @ApiPropertyOptional({
+    description: 'Case-insensitive partial match filter on the recipient user email',
+    example: 'jane',
+  })
+  @IsOptional()
+  @IsString()
+  @Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value))
+  email?: string;
 }
