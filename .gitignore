@@ -1,6 +1,9 @@
 # Claude Code
 .claude/
 
+# Local agent task context
+.local-context/
+
 # IDE
 .idea/
 .vscode/
