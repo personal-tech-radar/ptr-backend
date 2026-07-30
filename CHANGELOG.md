@@ -5,6 +5,13 @@ Each entry is tagged with the branch it was made on.
 
 ---
 
+## [feature/mvp3-p9-admin-bootstrap] — 2026-07-30
+
+### Added
+- Admin Bootstrap (MVP3 Part 1, Phase 9 of 11) — on every startup, the app now ensures an admin account exists for `ADMIN_EMAIL`/`ADMIN_PASSWORD`. Both are required; the app now fails to boot if either is missing, the same as any other required credential. An existing admin's password is never reset by this process. If the configured admin email was previously soft-deleted, it's automatically restored (without touching its existing password) rather than left disabled
+
+---
+
 ## [feature/mvp3-p8c-admin-read-only] — 2026-07-29
 
 ### Added
