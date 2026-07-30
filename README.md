@@ -624,7 +624,7 @@ This repository supports both Claude Code and Codex CLI. Their configurations co
 | Tool | Entry point | Supporting configuration |
 |---|---|---|
 | Claude Code | `CLAUDE.md` | `.claude/agents/`, `.claude/skills/`, and `.claude/settings.json` |
-| Codex CLI | `AGENTS.md` | `.codex/config.toml` and the ignored `.local-context/` workspace |
+| Codex CLI | `AGENTS.md` | `.agents/skills/`, `.codex/config.toml`, and the ignored `.local-context/` workspace |
 
 All project artifacts and tool-to-user communication are written in English, although user requests may be provided in any language.
 
@@ -657,7 +657,7 @@ Codex reads `AGENTS.md` for durable project rules and uses a proportional workfl
 - Regular changes receive a short plan, implementation, one internal review, and relevant tests.
 - High-risk or substantial changes require an approved plan before implementation. After implementation and internal review, Codex may invoke Claude CLI exactly once for an independent review, apply fixes, and run relevant tests. There is no iterative Claude/Codex review loop.
 
-Useful project knowledge remains in the existing Claude skills. `AGENTS.md` routes Codex to a relevant `.claude/skills/*/SKILL.md` file only when needed instead of maintaining duplicated Codex copies.
+Codex discovers task-specific project knowledge as native skills under `.agents/skills/`. The skills are self-contained and do not depend on `CLAUDE.md` or `.claude/`, so the Codex workflow remains usable if Claude support is removed later.
 
 Codex stores resumable task state locally in:
 
@@ -672,7 +672,7 @@ The directory is ignored by Git. `current-task.md` is the active source of truth
 
 ## Local Verification (Docker)
 
-`docker-compose.test.yml` at the repo root spins up Postgres and Redis plus the app itself for real runtime verification before a change ships — owned by the `qa-runner` agent, separate from the mock-based unit tests in `minimal-test-strategy`. This project's stack intentionally omits MinIO/S3 (not used by any domain module) and publishes the app on host port `3300` instead of `3000` to avoid colliding with other local stacks. See the `docker-local-verification` skill for the full reasoning, required env vars, and gotchas found while verifying this end-to-end.
+`docker-compose.test.yml` at the repo root spins up Postgres and Redis plus the app itself for real runtime verification before a change ships — owned by Claude's `qa-runner` agent and available to Codex through `$verify-docker-runtime`, separate from mock-based unit tests. This project's stack intentionally omits MinIO/S3 (not used by any domain module) and publishes the app on host port `3300` instead of `3000` to avoid colliding with other local stacks.
 
 ```bash
 docker compose -f docker-compose.test.yml up -d --wait

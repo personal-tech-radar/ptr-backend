@@ -1,0 +1,4 @@
+interface:
+  display_name: "Scaffold NestJS Domain"
+  short_description: "Create project-standard NestJS domains"
+  default_prompt: "Use $scaffold-nestjs-domain to create this NestJS domain with the project structure and contracts."

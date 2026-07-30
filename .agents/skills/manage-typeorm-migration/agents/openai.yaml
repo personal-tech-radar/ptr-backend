@@ -1,0 +1,4 @@
+interface:
+  display_name: "Manage TypeORM Migration"
+  short_description: "Generate and verify TypeORM migrations"
+  default_prompt: "Use $manage-typeorm-migration to make this schema change through the approved migration workflow."
