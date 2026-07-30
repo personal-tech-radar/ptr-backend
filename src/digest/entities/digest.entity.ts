@@ -3,17 +3,20 @@ import {
   CreateDateColumn,
   DeleteDateColumn,
   Entity,
+  Index,
+  JoinColumn,
+  ManyToOne,
   OneToMany,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
+import { User } from '../../users/entities/user.entity';
 import { DigestItem } from './digest-item.entity';
 import { DigestBuildDebug } from '../digest.types';
 
 export enum DigestType {
   DAILY = 'daily',
   WEEKLY = 'weekly',
-  DEEP_DIVE_WEEKLY = 'deep_dive_weekly',
 }
 
 export enum DigestStatus {
@@ -23,9 +26,21 @@ export enum DigestStatus {
 }
 
 @Entity('digests')
+@Index(['userId', 'type', 'createdAt'])
 export class Digest {
   @PrimaryGeneratedColumn('uuid')
   id: string;
+
+  // Nullable: pre-existing digest history from before this column was introduced was hard-deleted
+  // by the migration that added it (see AddPersonalDigestDelivery), so in practice every row
+  // going forward always has a userId — nullable only because the FK column itself can't be
+  // added NOT NULL without a backfill on a table this migration already empties.
+  @Column({ type: 'uuid', nullable: true })
+  userId: string | null;
+
+  @ManyToOne(() => User, { onDelete: 'CASCADE', nullable: true })
+  @JoinColumn({ name: 'userId' })
+  user: User | null;
 
   @Column({ type: 'enum', enum: DigestType, default: DigestType.DAILY })
   type: DigestType;

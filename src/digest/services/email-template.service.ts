@@ -9,7 +9,9 @@ export interface DigestEmailItem {
   whyItMatters?: string;
   url: string;
   matchedInterests?: string[];
-  articleId?: string;
+  // Personal digests only — a signed save-from-email link (SaveLinkSignatureService), rendered
+  // as a small secondary action near the main article link.
+  saveUrl?: string;
 }
 
 const FONT_URL =
@@ -36,11 +38,8 @@ const STYLES = {
   itemWhy: 'margin:0 0 8px 0;font-size:13px;color:#6b7280;line-height:1.5;',
   interests: 'font-size:12px;color:#9ca3af;margin:0 0 8px 0;',
   link: 'font-size:12px;color:#2563eb;text-decoration:none;word-break:break-all;',
-  feedbackRow: 'margin-top:10px;',
-  feedbackBtn:
-    'display:inline-block;padding:4px 12px;border-radius:4px;font-size:12px;font-weight:500;text-decoration:none;margin-right:8px;',
-  feedbackUseful: 'background:#f0fdf4;color:#166534;border:1px solid #bbf7d0;',
-  feedbackNot: 'background:#fef2f2;color:#991b1b;border:1px solid #fecaca;',
+  saveLink:
+    'font-size:12px;color:#6b7280;text-decoration:none;margin-left:12px;white-space:nowrap;',
   stats:
     'margin-top:24px;padding:16px;background:#f9fafb;border-radius:8px;border:1px solid #f3f4f6;',
   statsLabel:
@@ -98,11 +97,9 @@ export class EmailTemplateService {
     for (const item of items) {
       lines.push(`${item.position}. ${item.title}`, item.sourceName, item.shortSummary);
       if (item.whyItMatters) lines.push(item.whyItMatters);
-      lines.push(
-        item.matchedInterests?.length ? item.matchedInterests.join(', ') : '',
-        item.url,
-        '',
-      );
+      lines.push(item.matchedInterests?.length ? item.matchedInterests.join(', ') : '', item.url);
+      if (item.saveUrl) lines.push(`Save for later: ${item.saveUrl}`);
+      lines.push('');
     }
     if (stats) {
       const label = stats.windowHours >= 168 ? 'Last 7 days' : `Last ${stats.windowHours}h`;
@@ -119,7 +116,6 @@ export class EmailTemplateService {
   }
 
   private renderItemHtml(item: DigestEmailItem): string {
-    const feedbackHtml = this.renderFeedbackButtons(item);
     return `
   <div style="${STYLES.item}">
     <p style="${STYLES.itemTitle}">${item.position}. ${escapeHtml(item.title)}</p>
@@ -127,22 +123,8 @@ export class EmailTemplateService {
     <p style="${STYLES.itemSummary}">${escapeHtml(item.shortSummary)}</p>
     ${item.whyItMatters ? `<p style="${STYLES.itemWhy}">${escapeHtml(item.whyItMatters)}</p>` : ''}
     ${item.matchedInterests?.length ? `<p style="${STYLES.interests}">${escapeHtml(item.matchedInterests.join(', '))}</p>` : ''}
-    <a href="${item.url}" style="${STYLES.link}">${item.url}</a>
-    ${feedbackHtml}
+    <a href="${item.url}" style="${STYLES.link}">${item.url}</a>${item.saveUrl ? `<a href="${item.saveUrl}" style="${STYLES.saveLink}">Save for later</a>` : ''}
   </div>`;
-  }
-
-  private renderFeedbackButtons(item: DigestEmailItem): string {
-    const appUrl = process.env.APP_URL;
-    const token = process.env.FEEDBACK_TOKEN;
-    if (!appUrl || !token || !item.articleId) return '';
-
-    const base = `${appUrl}/articles/${item.articleId}/feedback/click?token=${encodeURIComponent(token)}`;
-    return `
-    <div style="${STYLES.feedbackRow}">
-      <a href="${base}&type=useful" style="${STYLES.feedbackBtn}${STYLES.feedbackUseful}">👍 Useful</a>
-      <a href="${base}&type=not_useful" style="${STYLES.feedbackBtn}${STYLES.feedbackNot}">👎 Not for me</a>
-    </div>`;
   }
 
   private renderStatsHtml(stats: DigestStats): string {

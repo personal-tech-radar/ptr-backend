@@ -1,6 +1,7 @@
 import { InjectQueue } from '@nestjs/bullmq';
 import { Injectable } from '@nestjs/common';
 import { Queue } from 'bullmq';
+import { DigestType } from '../digest/entities/digest.entity';
 
 export const QUEUE_FEED_FETCH = 'feed-fetch';
 export const QUEUE_ARTICLE_ANALYSIS = 'article-analysis';
@@ -31,6 +32,13 @@ export const TAXONOMY_SOURCE_DISCOVERY_QUEUE_CONCURRENCY = parseInt(
   10,
 );
 
+// Consumed by DigestProcessor's `@Processor(..., { concurrency })` worker options, mirroring
+// PLAYWRIGHT_QUEUE_CONCURRENCY/TAXONOMY_SOURCE_DISCOVERY_QUEUE_CONCURRENCY above. Bounds how many
+// send-personal-digest/digest-sweep jobs run concurrently — each personal digest build fans out
+// several DB queries plus an OpenAI call, so an unbounded worker could overwhelm both under a
+// large eligible-user sweep.
+export const DIGEST_QUEUE_CONCURRENCY = parseInt(process.env.DIGEST_QUEUE_CONCURRENCY || '5', 10);
+
 @Injectable()
 export class QueueService {
   constructor(
@@ -56,20 +64,12 @@ export class QueueService {
     await this.articleAnalysisQueue.add('analyze-article', { articleId });
   }
 
-  async addBuildDailyDigestJob(): Promise<void> {
-    await this.digestQueue.add('build-daily-digest', {});
+  async addDigestSweepJob(): Promise<void> {
+    await this.digestQueue.add('digest-sweep', {});
   }
 
-  async addBuildWeeklyDigestJob(): Promise<void> {
-    await this.digestQueue.add('build-weekly-digest', {});
-  }
-
-  async addBuildDeepDiveWeeklyDigestJob(): Promise<void> {
-    await this.digestQueue.add('build-deep-dive-weekly-digest', {});
-  }
-
-  async addSendDailyDigestJob(digestId: string): Promise<void> {
-    await this.digestQueue.add('send-daily-digest', { digestId });
+  async addSendPersonalDigestJob(userId: string, type: DigestType): Promise<void> {
+    await this.digestQueue.add('send-personal-digest', { userId, type });
   }
 
   async addBrowserFetchSourceJob(sourceId: string): Promise<void> {

@@ -37,11 +37,45 @@ services:
       timeout: 3s
       retries: 15
 
+  # Local-only capture endpoint for outbound mail, added for Phase 10 (Personal Digest Delivery)
+  # verification: the `resend` SDK itself honors a RESEND_BASE_URL env override (see
+  # node_modules/resend/dist/index.js), so pointing it here instead of api.resend.com lets us
+  # observe the real per-recipient `to` address MailService.sendDigest sends, without touching
+  # MailService or any other source file. Logs every request body it receives and always replies
+  # 200 with a Resend-shaped success body.
+  mock-mail:
+    image: node:20-alpine
+    command:
+      - node
+      - -e
+      - |
+        const http = require('http');
+        http.createServer((req, res) => {
+          let body = '';
+          req.on('data', (c) => (body += c));
+          req.on('end', () => {
+            let payload = {};
+            try { payload = JSON.parse(body); } catch (e) {}
+            console.log('MOCK_MAIL_RECEIVED ' + JSON.stringify({ to: payload.to, from: payload.from, subject: payload.subject }));
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ id: 'mock-email-id' }));
+          });
+        }).listen(4000, () => console.log('mock mail server listening on 4000'));
+
   app:
     image: node:20-alpine
     working_dir: /app
     volumes:
       - .:/app
+      # Named (not anonymous) volume: this project's qa-runner pass needs several separate
+      # `docker compose run` invocations against the same installed node_modules (pre-migration
+      # seeding, migration up/down, then the long-lived app process) — an anonymous volume is
+      # re-created empty on every `run`, a named one persists across them. Also keeps this
+      # container's own linux node_modules from ever being written back onto the developer's host
+      # bind mount (this project's one native dependency, bcrypt, ships prebuilds for every
+      # platform so it likely wouldn't matter in practice — but isolating it is the safer default
+      # for any future dependency that isn't as forgiving).
+      - node_modules:/app/node_modules
     command: sh -c "npm ci && npm run build && npm run migration:run && npm run start:prod"
     environment:
       APP_NAME: ptr-backend
@@ -64,13 +98,29 @@ services:
       JWT_REFRESH_EXPIRES_IN: 30d
       EMAIL_VERIFICATION_TOKEN_TTL_HOURS: 48
       PASSWORD_RESET_TOKEN_TTL_HOURS: 2
+      # Phase 9's admin-bootstrap fail-fast path (AdminBootstrapService) requires both of these to
+      # be set or the app refuses to boot — standing qa-runner requirement, exercised here.
+      ADMIN_EMAIL: admin@local-test.example.com
+      ADMIN_PASSWORD: local-test-admin-password
       OPENAI_API_KEY: sk-local-test-placeholder
       OPENAI_MODEL: gpt-4o-mini
       TAXONOMY_SIMILARITY_THRESHOLD: 0.6
       TAXONOMY_SOURCE_DISCOVERY_QUEUE_CONCURRENCY: 2
       RESEND_API_KEY: re_local_test_placeholder
+      RESEND_BASE_URL: http://mock-mail:4000
       DIGEST_FROM_EMAIL: digest@example.com
-      DIGEST_TO_EMAIL: test@example.com
+      DAILY_DIGEST_ARTICLES_LIMIT: 3
+      WEEKLY_DIGEST_ARTICLES_LIMIT: 5
+      DIGEST_QUEUE_CONCURRENCY: 5
+      # Tightened from the app default (*/15 * * * *) to every minute, only in this local
+      # verification harness, so Phase 10's sweep pipeline can be observed live within a short
+      # window instead of waiting up to 15 minutes for a tick.
+      DIGEST_SWEEP_CRON: '* * * * *'
+      # Overridden per-run to match whatever real local send-time window this verification pass
+      # needs to land in — see the qa-runner's report for the exact value used and why. Set to 22
+      # for this run: at time of writing (2026-07-30, ~15:42 UTC), Asia/Kolkata (UTC+5:30) hits its
+      # next :00-:15 local-minute window at 22:00-22:14 local == 16:30-16:44 UTC.
+      DAILY_DIGEST_SEND_HOUR: 22
       FEED_CACHE_TTL_SECONDS: 600
       FEED_MAX_DAYS: 30
       PUBLIC_FEED_CACHE_TTL_SECONDS: 600
@@ -83,3 +133,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      mock-mail:
+        condition: service_started
+
+volumes:
+  node_modules:

@@ -21,7 +21,6 @@ Return JSON with:
 - tags: array of short, freeform display tags (max 5) — not part of the taxonomy, just a label
 - relevanceScore: integer from 0 to 100
 - qualityScore: integer from 0 to 100
-- deepDiveScore: integer from 0 to 100
 - complexityLevel: one of [beginner, intermediate, advanced, architect]
 - materialType: one of [article, tutorial, release_notes, announcement, opinion, case_study, reference]
 - urgencyScore: integer from 0 to 100 — how time-sensitive the material is (e.g. a security advisory or a breaking release note scores high; an evergreen deep dive scores low)
@@ -35,7 +34,6 @@ Return JSON with:
 - interestSignals: array of broader topical concepts the article covers (e.g. "distributed systems", "observability", "incident response")
 - shouldIncludeInDailyDigest: boolean
 - shouldIncludeInWeeklyDigest: boolean
-- shouldIncludeInDeepDiveDigest: boolean
 
 Guidelines for digest inclusion:
 
@@ -47,11 +45,6 @@ Daily digest:
 Weekly digest:
 - Include materials with broader engineering value, recurring themes, important trends, architectural patterns, operational lessons, or ecosystem changes.
 - Prefer materials that remain useful beyond a single day.
-
-Deep dive digest:
-- Include only highly technical materials with meaningful engineering depth.
-- Prefer architecture case studies, scaling stories, infrastructure migrations, reliability engineering, distributed systems analysis, incident write-ups, performance optimization, and detailed implementation trade-offs.
-- Exclude lightweight tutorials, marketing content, generic announcements, and shallow summaries.
 
 Rules for technologySignals/interestSignals:
 - only include items explicitly present in or clearly implied by the article's own content

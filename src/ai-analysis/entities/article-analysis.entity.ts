@@ -88,12 +88,6 @@ export class ArticleAnalysis {
   @Column({ default: false })
   shouldIncludeInWeeklyDigest: boolean;
 
-  @Column({ default: false })
-  shouldIncludeInDeepDiveDigest: boolean;
-
-  @Column({ type: 'decimal', precision: 5, scale: 2, nullable: true })
-  deepDiveScore: number | null;
-
   @Column({ type: 'enum', enum: ArticleComplexityLevel, nullable: true })
   complexityLevel: ArticleComplexityLevel | null;
 

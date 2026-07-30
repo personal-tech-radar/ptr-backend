@@ -1,3 +1,4 @@
+import { DigestType } from '../digest/entities/digest.entity';
 import {
   PLAYWRIGHT_QUEUE_CONCURRENCY,
   QUEUE_ARTICLE_ANALYSIS,
@@ -97,5 +98,20 @@ describe('QueueService', () => {
 
     expect(mockFeedFetchQueue.add).toHaveBeenCalledWith('fetch-all-sources', {});
     expect(mockWebSourceBrowserFetchQueue.add).not.toHaveBeenCalled();
+  });
+
+  it('enqueues a digest-sweep job with no payload', async () => {
+    await service.addDigestSweepJob();
+
+    expect(mockDigestQueue.add).toHaveBeenCalledWith('digest-sweep', {});
+  });
+
+  it('enqueues a send-personal-digest job with userId and type', async () => {
+    await service.addSendPersonalDigestJob('user-1', DigestType.DAILY);
+
+    expect(mockDigestQueue.add).toHaveBeenCalledWith('send-personal-digest', {
+      userId: 'user-1',
+      type: DigestType.DAILY,
+    });
   });
 });

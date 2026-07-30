@@ -11,9 +11,9 @@ A NestJS service that automatically curates a daily engineering digest. It fetch
 3. Each fresh article (≤ 78 h old, not a duplicate) triggers an `analyze-article` job. Analysis is global (no per-user dimension) and runs in two stages against a single `ArticleAnalysis` row per article:
    - **Pre-screen (Stage 1)** — a lightweight OpenAI call using only the article title and feed description. Returns `preScreenIsRelevant` + `preScreenReason`. This stage acts as a cheap relevance gate and avoids spending tokens on full analysis for clearly irrelevant content.
    - **Full analysis (Stage 2)** — runs only when `preScreenIsRelevant = true`. Calls OpenAI with the full article context, produces `relevanceScore`, `qualityScore`, scoring flags, taxonomy signals, and a digest summary, and stamps `fullAnalysisAt`. Full analysis is skipped (idempotent resume) if it already ran for the article.
-4. A second cron job fires daily (default 07:00 UTC) and dispatches `build-daily-digest`. The digest builder selects only fully-analyzed, pre-screen-relevant articles (`ArticleAnalysis.preScreenIsRelevant = true` and `fullAnalysisAt IS NOT NULL`) and attempts to find at least `DAILY_DIGEST_ARTICLES_LIMIT` (default 3) using a time-window fallback: 24 h → 48 h → 72 h. Articles already included in any previously built or sent digest are excluded. Ranking: relevance × 0.45 + quality × 0.30 + source trust × 0.15 + recency × 0.10. Source/category diversification is applied and up to `DAILY_DIGEST_ARTICLES_LIMIT` items are selected. Build metadata is stored in `buildDebug`.
-5. The digest is saved as a draft, then the email is rendered and sent through Resend. The digest status is updated to `sent`.
-6. At any time, `POST /digests/daily/resend-latest` re-sends the most recently built digest without rebuilding it.
+4. A `digest-sweep` cron job fires every 15 minutes (`DIGEST_SWEEP_CRON`) and evaluates every eligible user's own local send-time window (`DigestSweepService`) — daily fires Mon-Fri only at `DAILY_DIGEST_SEND_HOUR` local time, weekly fires Friday 14:00 local (fixed). A matching, not-yet-sent-today user gets a `send-personal-digest` job enqueued. `PersonalDigestBuilderService` then selects the best `DAILY_DIGEST_ARTICLES_LIMIT`/`WEEKLY_DIGEST_ARTICLES_LIMIT` articles for that one user, scored via `ScoringModule` against their own taxonomy selections, using a time-window fallback if the first window is under target. Articles already sent to that user in a prior digest are excluded.
+5. The digest is saved as a draft, scoped to that `userId`, then the email is rendered and sent through Resend to that user's own email. The digest status is updated to `sent`.
+6. At any time, `POST /digests/trigger` builds and sends a single, specific user's digest on demand (admin only).
 
 ---
 
@@ -234,7 +234,7 @@ Fully global, two-stage pipeline against a single `ArticleAnalysis` row per arti
 - Runs only when `preScreenIsRelevant = true` and `fullAnalysisAt` is still null (idempotent — a row that already completed Stage 2 is never recomputed)
 - Input: title, URL, author, feed summary
 - Prompt: `src/ai-analysis/instructions/analyze-article.txt`
-- Output fields on `ArticleAnalysis`: `shortSummary`, `whyItMatters`, `practicalValue`, `tags`, `relevanceScore`, `qualityScore`, `finalScore`, `deepDiveScore`, `complexityLevel` (`beginner`/`intermediate`/`advanced`/`architect`), `materialType` (`article`/`tutorial`/`release_notes`/`announcement`/`opinion`/`case_study`/`reference`), `urgencyScore`, `evergreen`, `breakingChanges`, `releaseData`/`securityData` (loose JSONB, only populated when relevant), `mainStreamId`, and the three `shouldIncludeIn*Digest` flags. Every Stage-2-only field is nullable, since the row exists from Stage 1 onward.
+- Output fields on `ArticleAnalysis`: `shortSummary`, `whyItMatters`, `practicalValue`, `tags`, `relevanceScore`, `qualityScore`, `finalScore`, `complexityLevel` (`beginner`/`intermediate`/`advanced`/`architect`), `materialType` (`article`/`tutorial`/`release_notes`/`announcement`/`opinion`/`case_study`/`reference`), `urgencyScore`, `evergreen`, `breakingChanges`, `releaseData`/`securityData` (loose JSONB, only populated when relevant), `mainStreamId`, and the `shouldIncludeInDailyDigest`/`shouldIncludeInWeeklyDigest` flags (retained on the entity but not read by `PersonalDigestBuilderService`, which scores every candidate through `ScoringModule` instead — see DigestModule below). Every Stage-2-only field is nullable, since the row exists from Stage 1 onward.
 - Taxonomy resolution is read-only against the existing catalog: the LLM's `technologySignals`/`interestSignals` are each resolved via `TechnologyInterestResolverService.resolveExisting()` (exact + alias match only — never creates a new catalog row); matched signals become `ArticleTechnologyInterest` join rows, unmatched signals are dropped silently. The LLM's `mainStreamKey` (required) and up to 2 `secondaryStreamKeys` are resolved via `ContentStreamQueryService.findByKey()` against the fixed 5-key catalog. `ArticleAnalysis.mainStreamId` and the corresponding `ArticleStream` rows (`isPrimary: true` for main, `false` for secondary) are written together inside one `DataSource.transaction()`, so the denormalized column and the join-table flag can never disagree — enforced at the DB level too via a partial unique index (`IDX_article_streams_primary_per_article`, at most one `isPrimary = true` row per article).
 
 **New join tables:**
@@ -257,7 +257,7 @@ techInterestOverlap: 0 matches (article has tags but none overlap) -> 0
                      1 match -> 60 | 2 matches -> 80 | 3+ matches -> 100
 complexityMatch = COMPLEXITY_MATCH_TABLE[user.level][article.complexityLevel] (either side null -> 50)
 qualityScore = ArticleAnalysis.qualityScore, or 50 if null
-recencyScore = shared bucketed recency score (100 fresh / 80 recent / 50 older-or-unknown), same bucketing DigestModule uses (DEFAULT_SCORING_CONFIG specifically uses the daily digest's 12h/24h window, not weekly's 24h/72h or deep-dive's 48h/96h)
+recencyScore = shared bucketed recency score (100 fresh / 80 recent / 50 older-or-unknown), same bucketing DigestModule uses (DEFAULT_SCORING_CONFIG specifically uses the daily digest's 12h/24h window)
 
 coreScore = techInterestOverlap × 0.45 + complexityMatch × 0.20 + qualityScore × 0.25 + recencyScore × 0.10
 score = coreScore + sourcePreferenceAdjustment + directFeedbackAdjustment   // additive, not re-clamped after summing
@@ -275,18 +275,18 @@ Complexity-match table (row = user level, column = article complexity):
 
 **Per-article feedback is a soft adjustment, not a hard exclusion — this is a deliberate product decision, not an oversight.** A `not_useful` vote on the exact article applies a `-8` penalty; a `useful` vote applies a `+8` bonus; no vote applies `0`. Either way the article remains eligible and is still scored and ranked — mirroring the existing source-level `UserSourcePreference.feedbackAdjustment` treatment in `DigestModule`, which is also additive rather than gating.
 
-`sourcePreferenceAdjustment` reuses `UserSourcePreferenceService.getAdjustmentsForSources(userId, sourceIds)` (the same ±8-clamped, additively-smoothed value `DigestModule` uses). `directFeedbackAdjustment` reads the user's own `ArticleFeedback` row for that exact article (`useful`/`not_useful`). **Both `UserSourcePreference` and `ArticleFeedback` are keyed by a `varchar` `userId` (not yet a real FK)** — calling either with a real user id is expected to return empty/neutral results until Phases 5/10/11 populate real per-user feedback data. That's expected behavior for this phase, not a gap.
+`sourcePreferenceAdjustment` reuses `UserSourcePreferenceService.getAdjustmentsForSources(userId, sourceIds)` (the same ±8-clamped, additively-smoothed value `DigestModule` uses). `directFeedbackAdjustment` reads the user's own `ArticleFeedback` row for that exact article (`useful`/`not_useful`). **Both `UserSourcePreference` and `ArticleFeedback` remain keyed by a `varchar` `userId` (not yet a real FK) even after Phase 10** — this conversion was explicitly out of scope for Personal Digest Delivery — so calling either with a real user id is expected to return empty/neutral results until a later phase populates real per-user feedback data. That's expected behavior, not a gap.
 
 `UserScoringProfileService.buildProfile(userId, candidateSourceIds, candidateArticleIds)` batch-assembles a `ScoringProfile` for a user: selected technology/interest ids and content-stream ids (via `TechnologyInterestQueryService.findSelectedByUser`/`ContentStreamQueryService.findSelectedByUser`), `level` (via `UserQueryService.findById`), `sourcePreferenceAdjustments` (via `UserSourcePreferenceService.getAdjustmentsForSources`), and `articleFeedback` (a batched `ArticleFeedback` repository query). Empty candidate ID arrays return empty maps without erroring.
 
-The bucketed recency scoring itself (`getRecencyScore(publishedAt, freshHours, recentHours)`) was extracted out of `DigestBuilderService` into a shared pure utility at `src/common/util/recency-score.util.ts`, reused by both `DigestModule` and `ScoringModule`. `DigestBuilderService.getRecencyScore`'s own public signature is unchanged and now just delegates to the shared util.
+The bucketed recency scoring itself (`getRecencyScore(publishedAt, freshHours, recentHours)`) is a shared pure utility at `src/common/util/recency-score.util.ts`, reused by `ScoringModule`'s `RelevanceScoringService` — the same engine `PersonalDigestBuilderService` scores every digest candidate through (see DigestModule below).
 
 ### UserActionsModule
 Real, per-user (`userId: uuid` FK to `User`) actions on articles — deliberately separate from the legacy, still-`varchar`-keyed `ArticleFeedback`/`UserSourcePreference` tables, which this module does not touch (their `userId` typing conversion is a later phase's job).
 
 **Entities:**
 - `SavedArticle` (`saved_articles`) — `(userId, articleId)` unique, cascades on delete of either side. A simple "bookmark" join row; no status beyond existing/not-existing.
-- `PersonalArticleLink` (`personal_article_links`) — `(userId, articleId, context)` unique. A permanent, reusable per-user link id (the row's own `id`) used as the `/go/:linkId` redirect target, plus `firstOpenedAt` (nullable, set once) for idempotent first-open tracking. `context` is `PersonalArticleLinkContext` (`feed` / `daily_digest` / `weekly_digest` / `deep_dive_weekly_digest`) — mirrors `DigestType`'s three real values 1:1, plus `feed` (not a digest type, so not in `DigestType`).
+- `PersonalArticleLink` (`personal_article_links`) — `(userId, articleId, context)` unique. A permanent, reusable per-user link id (the row's own `id`) used as the `/go/:linkId` redirect target, plus `firstOpenedAt` (nullable, set once) for idempotent first-open tracking. `context` is `PersonalArticleLinkContext` (`feed` / `daily_digest` / `weekly_digest`) — mirrors `DigestType`'s two real values 1:1, plus `feed` (not a digest type, so not in `DigestType`).
 
 **Endpoints:**
 - `POST /saved-articles/:articleId` — save an article for the current user (JWT-guarded). Idempotent find-or-create; saving an already-saved article returns the existing row rather than erroring.
@@ -301,7 +301,7 @@ Real, per-user (`userId: uuid` FK to `User`) actions on articles — deliberatel
 
 **HMAC signing scheme** (`SaveLinkSignatureService`): `signature = HMAC-SHA256(SAVE_LINK_SECRET, "save-article:v1:" + userId + ":" + articleId)`, hex-encoded. Verification guards on buffer length before calling `crypto.timingSafeEqual` (which throws rather than returning `false` on mismatched-length input), so a malformed or wrong-length signature fails closed instead of crashing the request. `SAVE_LINK_SECRET` is required at first use — an unset value throws immediately (`src/user-actions/utils/save-link-secret.util.ts`), mirroring `JWT_SECRET`'s fail-fast pattern.
 
-**Not yet wired up:** `PersonalArticleLinkService.findOrCreateLink` and `SaveLinkSignatureService.buildSaveFromEmailUrl` are shipped but unconsumed — no feed or digest email template generates a `/go/:linkId` or save-from-email link yet. That wiring is a later phase's job (feed/digest email personalization); this phase only builds the mechanism.
+**Wired up as of MVP3 Phase 10:** `PersonalArticleLinkService.findOrCreateLinksBatch` generates every article link rendered in a personal digest email (`context: daily_digest`/`weekly_digest`, batch-created once against the final selected set only), and `SaveLinkSignatureService.buildSaveFromEmailUrl` backs the per-item "Save for later" link — see DigestModule below.
 
 ### FeedModule
 `GET /feed` — the current user's personal feed: real DB queries scored via `ScoringModule` and rendered through `UserActionsModule`'s permanent per-user redirect links, day-grouped and cached in Redis. JWT-guarded, and additionally gated by `OnboardingCompletedGuard` (`src/feed/guards/`) — `@UseGuards(JwtAuthGuard, OnboardingCompletedGuard)`, in that order, since the guard reads `request.user.onboardingCompletedAt`, populated by `JwtAuthGuard`/`JwtStrategy`. A user who hasn't completed onboarding gets `403` with `errorCode: ONBOARDING_NOT_COMPLETED`.
@@ -352,7 +352,7 @@ Any unknown/invalid `stream` key, `technology`/`interest`/`source` id is a `400 
 ### PublicFeedModule
 Two fully public, unauthenticated endpoints — **no guards at all** (`GET /public/feed`, `POST /public/feed/preview`). A separate `src/public-feed/` module, not an extension of `FeedModule`: it consumes `ScoringModule` and `TaxonomyModule` directly and never imports `UsersModule`/`UserActionsModule` — nothing here touches users or per-user actions. The preview endpoint builds its own `ScoringProfile` directly from request input rather than going through `UserScoringProfileService`.
 
-**`GET /public/feed`** (`QueryPublicFeedDto`: `page`/`limit` [capped at 100, lower than the personal feed's implicit ceiling, since this endpoint is unauthenticated], repeatable `stream` keys, optional `dateFrom`/`dateTo` in `YYYY-MM-DD`) — a flat, paginated list, strictly ordered `publishedAt DESC`. **No day-grouping and no scoring** — `RelevanceScoringService` is never called for this endpoint. Candidate predicate: `ArticleAnalysis` inner-joined to `Article` (`status = 'analyzed'`, `deletedAt IS NULL`) and `Source` (`deletedAt IS NULL`), filtered to `fullAnalysisAt IS NOT NULL AND preScreenIsRelevant = true`, plus a hardcoded `qualityScore >= 50` gate (named constant `PUBLIC_FEED_MIN_QUALITY_SCORE` in `public-feed-query.service.ts`, not env-configurable — mirrors `DigestBuilderService`'s existing primary-tier threshold precedent) and an `EXISTS` subquery against `article_streams` requiring at least one stream-membership row (optionally scoped to the requested `stream` keys). An unknown `stream` key is a `400`. **No freshness floor** — unlike the personal feed and preview, this endpoint has no 30-day (or any) lower bound unless the caller explicitly supplies `dateFrom`. Each item renders `Article.url` **raw** — never a `/go/{linkId}` redirect, since that mechanism requires a real authenticated `userId` that an anonymous caller doesn't have.
+**`GET /public/feed`** (`QueryPublicFeedDto`: `page`/`limit` [capped at 100, lower than the personal feed's implicit ceiling, since this endpoint is unauthenticated], repeatable `stream` keys, optional `dateFrom`/`dateTo` in `YYYY-MM-DD`) — a flat, paginated list, strictly ordered `publishedAt DESC`. **No day-grouping and no scoring** — `RelevanceScoringService` is never called for this endpoint. Candidate predicate: `ArticleAnalysis` inner-joined to `Article` (`status = 'analyzed'`, `deletedAt IS NULL`) and `Source` (`deletedAt IS NULL`), filtered to `fullAnalysisAt IS NOT NULL AND preScreenIsRelevant = true`, plus a hardcoded `qualityScore >= 50` gate (named constant `PUBLIC_FEED_MIN_QUALITY_SCORE` in `public-feed-query.service.ts`, not env-configurable) and an `EXISTS` subquery against `article_streams` requiring at least one stream-membership row (optionally scoped to the requested `stream` keys). An unknown `stream` key is a `400`. **No freshness floor** — unlike the personal feed and preview, this endpoint has no 30-day (or any) lower bound unless the caller explicitly supplies `dateFrom`. Each item renders `Article.url` **raw** — never a `/go/{linkId}` redirect, since that mechanism requires a real authenticated `userId` that an anonymous caller doesn't have.
 
 **`POST /public/feed/preview`** (`PreviewFeedDto`: `technologyInterestIds` [optional, existing ids only], `contentStreamIds` [required, at least one, existing ids only]) — previews what a personal feed would look like for a given taxonomy selection, without creating an account. Every id must reference an existing `TechnologyInterest`/`ContentStream` row — unknown ids are a `400` (mirrors `OnboardingService`'s "unknown id" validation pattern) — and **never** creates a new catalog row; the preview service only calls the read-only `findByIds` lookups, never `TechnologyInterestResolverService`/`TechnologyInterestCommandService`'s create-or-reuse path. Candidate predicate is the same "successfully analyzed" join as the personal feed's non-saved path, floored to the personal feed's own 30-day window (`FEED_MAX_DAYS` env var, default 30) computed against a fixed `'UTC'` zone — there's no per-request timezone for an anonymous caller. **Deliberately no quality-score hard gate** — quality is already one of `RelevanceScoringService.computeScore`'s weighted scoring inputs, so gating on it a second time here would double-penalize low-quality articles. Each candidate is scored via the real `RelevanceScoringService.computeScore` against a `ScoringProfile` built directly from the request body (`{ technologyInterestIds, contentStreamIds, level: null }`, no `sourcePreferenceAdjustments`/`articleFeedback`); `eligible: false` results (content-stream mismatch) are dropped, and the response is a **flat, top-30-by-score list** — not `FeedQueryService`'s per-stream round-robin distribution/capping algorithm. Like the public feed, item URLs are raw, never `/go/{linkId}`.
 
@@ -361,51 +361,43 @@ Two fully public, unauthenticated endpoints — **no guards at all** (`GET /publ
 **Known limitation — no rate limiting yet:** neither endpoint has any request throttling (`ThrottlerGuard`/`@Throttle`) applied. This is a deliberate, deferred gap for a future cross-cutting throttling pass across the whole app, not an oversight specific to this module.
 
 ### DigestModule
-Selects the best `DAILY_DIGEST_ARTICLES_LIMIT` articles (default 3) for the daily digest, and 5 articles each for the weekly and deep-dive digests, using a time-window fallback (24 h → 48 h → 72 h for daily; a relaxed-threshold fallback for weekly/deep-dive). Articles already present in any digest with status `draft` or `sent` are excluded. Ranking formula:
+**MVP3 Phase 10 — Personal Digest Delivery.** Digests are now single-recipient and per-user: every `Digest` row has a real `userId` FK (`digests.userId` → `users.id`, `ON DELETE CASCADE`), and `PersonalDigestBuilderService.buildForUser(user, type)` builds one digest for exactly one user at a time. There is no more global/multi-recipient digest.
 
-```
-baseScore = relevanceScore × 0.45 + qualityScore × 0.30 + trustScore × 0.15 + recencyScore × 0.10
-finalScore = baseScore + feedbackAdjustment
-```
+**Sweep-based, per-user-local-time cron model** (replaces the old fixed-UTC per-cadence crons entirely): a single `digest-sweep` cron job (`DIGEST_SWEEP_CRON`, default every 15 minutes) dispatches `DigestSweepService.runSweep()`, which loads every eligible user and evaluates their own local time (`getLocalTimeParts`, IANA-timezone-aware, DST-correct) against two fixed windows:
+- **Daily** — Monday through Friday **only** (never Saturday/Sunday), local hour `DAILY_DIGEST_SEND_HOUR` (default 8), a 15-minute window.
+- **Weekly** — Friday, local hour 14:00, fixed and **not configurable** (no weekly cron env var).
 
-`trustScore` remains editorial-only (set on the source, not touched by feedback). `feedbackAdjustment` comes from the user's `UserSourcePreference` row for the article's source (0 if none exists) and is applied additively on top of `baseScore`. Recency: 100 (≤12h), 80 (≤24h), 50 (older). Diversification: max 2 articles per source, preferably max 2 per category.
+A user is only swept if `user.dailyDigestEnabled`/`user.weeklyDigestEnabled` is true for that cadence. Idempotency: a user is skipped if a `Digest` of that type already exists for their current local calendar day (an indexed `(userId, type, createdAt)` range query, not a full scan). A match enqueues a `send-personal-digest` job (`{ userId, type }`) — the sweep never builds inline.
 
-Each built digest stores a `buildDebug` JSONB column with:
-- `requestedItemCount` — minimum items required
-- `fallbackUsed` — whether a wider window was needed
-- `attempts[]` — per-window stats: `windowHours`, `candidatesFound`, `eligibleFound`
-- `finalWindowHours` — the window that was ultimately used
-- `finalSelectedCount` — actual items in the digest
+**Eligibility gate** (`UserQueryService.findEligibleForDigestSweep`) — a deliberate product decision for this phase: `deletedAt IS NULL AND onboardingCompletedAt IS NOT NULL AND emailVerifiedAt IS NOT NULL AND (dailyDigestEnabled = true OR weeklyDigestEnabled = true)`. **`emailVerifiedAt IS NOT NULL` is a hard requirement to receive ANY digest** — a user must have verified their email before the first digest is ever sent to them.
 
-Each `DigestItem` also stores a `scoreBreakdown` JSONB column (`{ baseScore, feedbackAdjustment, finalScore }`) for explainability.
+**Candidate selection and ranking** reuse `ScoringModule` exactly — `PersonalDigestBuilderService` scores every candidate through the same `RelevanceScoringService.computeScore`/`UserScoringProfileService.buildProfile` engine as `FeedModule`/`PublicFeedModule` (content-stream mismatch is the only hard exclusion; see ScoringModule above for the full formula). Candidates come from `ArticleAnalysis` (`fullAnalysisAt IS NOT NULL`, `preScreenIsRelevant = true`, `status = 'analyzed'`) within a lookback window, widened if under target count: `[24h, 48h, 72h]` for daily, `[7d, 14d]` for weekly. Articles already sent to that specific user in a prior digest (draft or sent) are excluded — scoped by `Digest.userId`, so one user's digest history never blocks another's. Selection is capped at `DAILY_DIGEST_ARTICLES_LIMIT` (default 3) / `WEEKLY_DIGEST_ARTICLES_LIMIT` (default 5), with the same source/category diversification as before (max 2 per source, preferably max 2 per category). **Zero eligible candidates after fallback → no `Digest` row is created and no email is sent** (`buildForUser` returns `null`).
 
-Daily digest emails omit the `whyItMatters` paragraph per article; weekly and deep-dive digests still include it.
+Each built digest stores a `buildDebug` JSONB column (`requestedItemCount`, `fallbackUsed`, `attempts[]` — per-window `windowHours`/`candidatesFound`/`eligibleFound`, `finalWindowHours`, `finalSelectedCount`) and each `DigestItem` stores a `scoreBreakdown` JSONB column — now `ScoringResultBreakdown` (`techInterestOverlap`, `complexityMatch`, `qualityScore`, `recencyScore`, `sourcePreferenceAdjustment`, `directFeedbackAdjustment`), the same shape `ScoringModule` produces elsewhere.
 
-**Footer statistics block:** every digest email's footer carries two stats blocks side by side. The pipeline block (pre-MVP3) reports `articlesIngested`/`articlesPassedPreanalysis`/`articlesAnalyzed` over the digest's time window (from `ArticleAnalysis.preScreenIsRelevant = true` and `fullAnalysisAt IS NOT NULL` counts, respectively) plus running DB totals (`totalArticlesInDb`, `totalSourcesActive`). Alongside it, a sources block reports `feedSourcesActive` (enabled `Source` rows of type `rss`/`atom`/`github_release`), `webSourcesActive` (enabled `Source` rows of type `web`), and `sourceCandidatesPending` (`SourceCandidate` rows with status `pending` or `needs_review` — explicitly excluding `rejected`/`promoted`). Both blocks are computed in `DigestBuilderService.gatherStats` and rendered by `EmailTemplateService` in both the HTML and plain-text variants.
+Personal article links (`PersonalArticleLinkService.findOrCreateLinksBatch`) are created once, scoped to the **final selected set only** (never the full candidate pool), with `context: daily_digest`/`weekly_digest`. Each rendered email item also carries a per-article "Save for later" link (`SaveLinkSignatureService.buildSaveFromEmailUrl`). Daily digest emails omit the `whyItMatters` paragraph per article; weekly includes it. **The 👍/👎 feedback-vote buttons have been dropped from digest emails entirely** (a deliberate product decision — no HMAC-signed replacement in this phase; per-article feedback can still be recorded, just not via an email button). Personal digest emails also omit the ops-facing pipeline-health footer stats block.
 
-Each selected digest item's `matchedInterests` in the rendered email is resolved via a batched query joining `ArticleTechnologyInterest` → `TechnologyInterest.name` for the articles actually selected (built in `DigestBuilderService.buildMatchedInterestsMap`) — not read directly off `ArticleAnalysis` (which no longer has a `matchedInterests` column).
+- `POST /digests/trigger` — admin-only, **single-recipient**: body now requires `userId` (in addition to `type`). Resolves the target `User` (`404` if missing), builds a fresh digest for that one user via the same `PersonalDigestBuilderService` path the sweep uses, and sends it. Returns `404` if the user has no eligible candidates (nothing to send). `HybridAuthGuard` + `RolesGuard` + `@Roles(UserRole.ADMIN)` — `X-API-KEY` still works unchanged.
 
-- `POST /digests/trigger` — fetch, analyze, build, and send a digest of the selected type. **MVP3 Phase 8a:** now `HybridAuthGuard` + `RolesGuard` + `@Roles(UserRole.ADMIN)` at the controller level (previously `ApiKeyGuard`) — `X-API-KEY` still works unchanged (see the guard-migration note under AuthModule/UsersModule above).
-
-**Admin Digests endpoints** (`AdminDigestController`, `/admin/digests`, same admin guard, MVP3 Phase 8c, view-only — no PATCH/DELETE):
-- `GET /admin/digests?page=&limit=&type=&status=` — paginated listing (`DigestResponseDto`), filterable by `type`/`status`.
+**Admin Digests endpoints** (`AdminDigestController`, `/admin/digests`, same admin guard, view-only — no PATCH/DELETE):
+- `GET /admin/digests?page=&limit=&type=&status=&email=` — paginated listing (`DigestResponseDto`, now including `userId`/`userEmail` via a real join to `users` — not a cast-join trick), filterable by `type`/`status`/recipient `email` (`ILIKE` partial match).
 - `GET /admin/digests/:id` — single digest with its `DigestItem`s expanded (`DigestDetailResponseDto`, each item including its joined `Article`, `position`, and `scoreBreakdown`).
 
 ### MailModule
-Sends digest emails via Resend SDK. Uses `DIGEST_FROM_EMAIL` and `DIGEST_TO_EMAIL` env vars.
+Sends digest emails via Resend SDK. `MailService.sendDigest(digest, to)` takes an explicit recipient — there is no more `DIGEST_TO_EMAIL` fallback env var (digests are single-recipient and per-user now). `DIGEST_FROM_EMAIL` is still used as the sender.
 
 ### QueueModule
 Five BullMQ queues backed by Redis:
 - `feed-fetch` — `fetch-all-sources`, `fetch-source`
 - `article-analysis` — `analyze-article`
-- `digest` — `build-daily-digest`, `send-daily-digest`
+- `digest` — `digest-sweep`, `send-personal-digest`. Concurrency-bounded (`DIGEST_QUEUE_CONCURRENCY`, default `5`) — each personal digest build fans out several DB queries plus an OpenAI call, so an unbounded worker could overwhelm both under a large eligible-user sweep.
 - `web-source-browser-fetch` — `browser-fetch-source`. Isolated from the others: its own queue/worker, its own concurrency ceiling (`PLAYWRIGHT_QUEUE_CONCURRENCY`, default `1`), and its own hard job timeout derived from `PLAYWRIGHT_TIMEOUT_MS`, so a slow/hung Playwright fetch can never block `feed-fetch` or `article-analysis`. Processed by `PlaywrightFetchProcessor`.
 - `taxonomy-source-discovery` — `discover-technology-source`. Isolated for the same reason: its own queue/worker and its own concurrency ceiling (`TAXONOMY_SOURCE_DISCOVERY_QUEUE_CONCURRENCY`, default `2`). Enqueued by `TechnologyInterestCommandService.createOrReuse` only when a genuinely new `TechnologyInterest` is created. `TaxonomySourceDiscoveryProcessor` is a deliberate stub in this phase — no real keyword-based web search exists or is approved yet (a separate future decision); it only writes one `TaxonomySourceDiscoveryRequest` row per job (status `pending_manual_review`) plus a structured log line, for an operator to action manually.
 
 ### SchedulerModule
 Cron jobs registered dynamically from env vars:
 - `FETCH_CRON` (default `0 * * * *`) — dispatch `fetch-all-sources` every hour
-- `DIGEST_CRON` (default `0 7 * * *`) — dispatch `build-daily-digest` daily at 07:00 UTC
+- `DIGEST_SWEEP_CRON` (default `*/15 * * * *`) — dispatch `digest-sweep`, which evaluates every eligible user's own local send-time window (see DigestModule above)
 
 ---
 
@@ -491,13 +483,15 @@ Health check: `http://localhost:3000/health`
 | `TAXONOMY_SOURCE_DISCOVERY_QUEUE_CONCURRENCY` | Concurrency for the `taxonomy-source-discovery` queue worker | `2` |
 | `RESEND_API_KEY` | Resend API key | — |
 | `DIGEST_FROM_EMAIL` | Sender email (verified in Resend) | — |
-| `DIGEST_TO_EMAIL` | Digest recipient email | — |
-| `DAILY_DIGEST_ARTICLES_LIMIT` | Number of articles included in the daily digest | `3` |
+| `DAILY_DIGEST_ARTICLES_LIMIT` | Number of articles included in a user's daily digest | `3` |
+| `WEEKLY_DIGEST_ARTICLES_LIMIT` | Number of articles included in a user's weekly digest | `5` |
+| `DIGEST_QUEUE_CONCURRENCY` | Concurrency for the `digest` queue worker (`digest-sweep`/`send-personal-digest`) | `5` |
 | `FEED_CACHE_TTL_SECONDS` | TTL for a cached computed Personal Feed response (`FeedCacheService`) | `600` |
 | `FEED_MAX_DAYS` | Max `days` query param for `GET /feed`, and the width of the permanent non-saved-feed date floor | `30` |
 | `PUBLIC_FEED_CACHE_TTL_SECONDS` | TTL for cached `GET /public/feed` and `POST /public/feed/preview` responses (`PublicFeedCacheService`) | `600` |
 | `FETCH_CRON` | Cron for feed fetching | `0 * * * *` |
-| `DIGEST_CRON` | Cron for daily digest | `0 7 * * *` |
+| `DIGEST_SWEEP_CRON` | Cron for the digest sweep (per-user-local-time window evaluation — see DigestModule) | `*/15 * * * *` |
+| `DAILY_DIGEST_SEND_HOUR` | Local hour (0-23, Mon-Fri only) at which a user's daily digest is sent | `8` |
 | `CORS_ORIGINS` | Allowed origins (production) | — |
 | `SWAGGER_SERVER_URL` | Swagger server URL (production) | — |
 
@@ -554,7 +548,7 @@ npm run test          # Unit tests
 npm run test:cov      # Coverage report
 ```
 
-Unit tests cover `DigestBuilderService` scoring and diversification logic.
+Unit tests cover `PersonalDigestBuilderService` scoring/eligibility delegation and diversification logic, and `DigestSweepService`'s per-user-local-time window matching.
 
 ---
 
@@ -613,7 +607,7 @@ Or as a separate one-off container using the same image.
 npm run seed:sources:sync:prod
 ```
 
-**This is now an explicit, required post-deploy step — run it once after `migration:run:prod` on any environment whose `sources` table is empty** (a brand-new deployment, or a restored/reset database). There is no more implicit auto-seed: `DigestBootstrapService` used to seed from the manifest itself the first time a digest was built against an empty `sources` table, but that implicit path was removed in MVP3 phase 5. A fresh/empty database now has **zero** sources until this command is run — this is an intentional operational behavior change, not a regression: `DigestBuilderService.buildDailyDigest` already returns `null` gracefully when there are no candidates, and `DigestProcessor` already logs-and-skips a `null` digest, so nothing crashes; digests are simply empty (and no email is sent) until sources are synced. See "Syncing Sources" above for the full manifest/sync semantics.
+**This is now an explicit, required post-deploy step — run it once after `migration:run:prod` on any environment whose `sources` table is empty** (a brand-new deployment, or a restored/reset database). There is no more implicit auto-seed: `DigestBootstrapService` used to seed from the manifest itself the first time a digest was built against an empty `sources` table, but that implicit path was removed in MVP3 phase 5. A fresh/empty database now has **zero** sources until this command is run — this is an intentional operational behavior change, not a regression: `PersonalDigestBuilderService.buildForUser` already returns `null` gracefully when there are no candidates for a user, and `DigestProcessor` already logs-and-skips a `null` digest, so nothing crashes; digests are simply empty (and no email is sent) until sources are synced. See "Syncing Sources" above for the full manifest/sync semantics.
 
 ---
 

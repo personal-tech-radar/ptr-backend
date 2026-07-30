@@ -10,14 +10,13 @@ import {
 import { Article } from '../../articles/entities/article.entity';
 import { User } from '../../users/entities/user.entity';
 
-// Mirrors DigestType's real values (daily/weekly/deep_dive_weekly, see digest.entity.ts) 1:1,
-// plus FEED — a personal link context that isn't a digest at all — so link analytics can tell
-// where a permanent per-user article link was generated from.
+// Mirrors DigestType's real values (daily/weekly, see digest.entity.ts) 1:1, plus FEED — a
+// personal link context that isn't a digest at all — so link analytics can tell where a
+// permanent per-user article link was generated from.
 export enum PersonalArticleLinkContext {
   FEED = 'feed',
   DAILY_DIGEST = 'daily_digest',
   WEEKLY_DIGEST = 'weekly_digest',
-  DEEP_DIVE_WEEKLY_DIGEST = 'deep_dive_weekly_digest',
 }
 
 @Entity('personal_article_links')

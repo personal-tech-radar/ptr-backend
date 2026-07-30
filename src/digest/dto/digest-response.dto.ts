@@ -1,13 +1,21 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEnum } from 'class-validator';
+import { IsEnum, IsUUID } from 'class-validator';
 import { ArticleResponseDto } from '../../articles/dto/article-response.dto';
+import { ScoringResultBreakdown } from '../../scoring/scoring.types';
 import { Digest, DigestStatus, DigestType } from '../entities/digest.entity';
 import { DigestItem } from '../entities/digest-item.entity';
-import { DigestItemScoreBreakdown } from '../digest.types';
 
 export class DigestResponseDto {
   @ApiProperty()
   id: string;
+
+  @ApiPropertyOptional({
+    description: 'Recipient user id — real FK to users.id (nullable only for pre-Phase-10 rows)',
+  })
+  userId: string | null;
+
+  @ApiPropertyOptional({ description: 'Recipient user email, joined from users.email' })
+  userEmail: string | null;
 
   @ApiProperty({ enum: DigestType })
   type: DigestType;
@@ -45,7 +53,7 @@ export class DigestItemResponseDto {
   position: number;
 
   @ApiPropertyOptional({ description: 'Ranking score breakdown for this item, if recorded' })
-  scoreBreakdown: DigestItemScoreBreakdown | null;
+  scoreBreakdown: ScoringResultBreakdown | null;
 }
 
 export class DigestDetailResponseDto extends DigestResponseDto {
@@ -53,9 +61,13 @@ export class DigestDetailResponseDto extends DigestResponseDto {
   items: DigestItemResponseDto[];
 }
 
+// digest.user must be loaded (joined) for userEmail to resolve — see
+// DigestQueryService.findAll/findByIdWithItems.
 export function toDigestResponseDto(digest: Digest): DigestResponseDto {
   return {
     id: digest.id,
+    userId: digest.userId,
+    userEmail: digest.user?.email ?? null,
     type: digest.type,
     periodStart: digest.periodStart,
     periodEnd: digest.periodEnd,
@@ -98,10 +110,14 @@ export function toDigestDetailResponseDto(digest: Digest): DigestDetailResponseD
 }
 
 export class TriggerDigestDto {
+  @ApiProperty({ description: 'Recipient user id — a single-recipient personal digest trigger' })
+  @IsUUID()
+  userId: string;
+
   @ApiProperty({
     enum: DigestType,
     enumName: 'DigestType',
-    description: 'Digest type to build and send. Options: daily, weekly, deep_dive_weekly',
+    description: 'Digest type to build and send. Options: daily, weekly',
   })
   @IsEnum(DigestType)
   type: DigestType;

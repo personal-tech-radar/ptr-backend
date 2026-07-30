@@ -67,7 +67,7 @@ describe('EmailTemplateService', () => {
       expect(html).not.toContain('It matters a lot.');
     });
 
-    it('includes the whyItMatters block in HTML when present (weekly/deep-dive digest)', () => {
+    it('includes the whyItMatters block in HTML when present (weekly digest)', () => {
       const html = service.renderHtml('Subject', 'Intro text', [weeklyItem]);
 
       expect(html).toContain('It matters a lot.');
@@ -79,7 +79,7 @@ describe('EmailTemplateService', () => {
       expect(text).not.toContain('It matters a lot.');
     });
 
-    it('includes the whyItMatters line in plain text when present (weekly/deep-dive digest)', () => {
+    it('includes the whyItMatters line in plain text when present (weekly digest)', () => {
       const text = service.renderText('Subject', 'Intro text', [weeklyItem]);
 
       expect(text).toContain('It matters a lot.');
@@ -129,6 +129,41 @@ describe('EmailTemplateService', () => {
 
       expect(html).not.toContain('candidates pending');
       expect(text).not.toContain('candidates pending');
+    });
+  });
+
+  describe('saveUrl rendering (personal digests)', () => {
+    const saveUrl =
+      'https://app.example.com/articles/abc-123/save-from-email?userId=u1&signature=sig';
+    const itemWithSaveUrl: DigestEmailItem = { ...item, saveUrl };
+
+    it('renders a "Save for later" link in HTML when saveUrl is present', () => {
+      const html = service.renderHtml('Subject', 'Intro text', [itemWithSaveUrl]);
+
+      expect(html).toContain(saveUrl);
+      expect(html).toContain('Save for later');
+    });
+
+    it('omits the save link in HTML when saveUrl is not present', () => {
+      const html = service.renderHtml('Subject', 'Intro text', [item]);
+
+      expect(html).not.toContain('Save for later');
+    });
+
+    it('renders a "Save for later" line in plain text when saveUrl is present', () => {
+      const text = service.renderText('Subject', 'Intro text', [itemWithSaveUrl]);
+
+      expect(text).toContain(`Save for later: ${saveUrl}`);
+    });
+  });
+
+  describe('feedback buttons (dropped for personal digests)', () => {
+    it('never renders feedback buttons — the markup was removed entirely (decision #4)', () => {
+      const html = service.renderHtml('Subject', 'Intro text', [item]);
+
+      expect(html).not.toContain('👍');
+      expect(html).not.toContain('👎');
+      expect(html).not.toContain('feedback/click');
     });
   });
 });

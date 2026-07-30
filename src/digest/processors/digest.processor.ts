@@ -2,18 +2,27 @@ import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { LoggingService } from '../../common/logging/logging.service';
 import { MailService } from '../../mail/services/mail.service';
-import { QUEUE_DIGEST } from '../../queue/queue.service';
-import { Digest } from '../entities/digest.entity';
-import { DigestBuilderService } from '../services/digest-builder.service';
+import { DIGEST_QUEUE_CONCURRENCY, QUEUE_DIGEST } from '../../queue/queue.service';
+import { UserQueryService } from '../../users/services/user-query.service';
+import { Digest, DigestType } from '../entities/digest.entity';
+import { DigestBootstrapService } from '../services/digest-bootstrap.service';
 import { DigestQueryService } from '../services/digest-query.service';
+import { DigestSweepService } from '../services/digest-sweep.service';
 
-@Processor(QUEUE_DIGEST)
+interface SendPersonalDigestJobData {
+  userId: string;
+  type: DigestType;
+}
+
+@Processor(QUEUE_DIGEST, { concurrency: DIGEST_QUEUE_CONCURRENCY })
 export class DigestProcessor extends WorkerHost {
   private readonly logger = new LoggingService(DigestProcessor.name);
 
   constructor(
-    private readonly digestBuilderService: DigestBuilderService,
+    private readonly digestSweepService: DigestSweepService,
+    private readonly digestBootstrapService: DigestBootstrapService,
     private readonly digestQueryService: DigestQueryService,
+    private readonly userQueryService: UserQueryService,
     private readonly mailService: MailService,
   ) {
     super();
@@ -21,50 +30,37 @@ export class DigestProcessor extends WorkerHost {
 
   async process(job: Job): Promise<void> {
     switch (job.name) {
-      case 'build-daily-digest':
-        await this.handleBuildAndSend(() =>
-          this.digestBuilderService.buildDailyDigest(),
-        );
+      case 'digest-sweep':
+        await this.digestSweepService.runSweep();
         break;
-      case 'build-weekly-digest':
-        await this.handleBuildAndSend(() =>
-          this.digestBuilderService.buildWeeklyDigest(),
-        );
-        break;
-      case 'build-deep-dive-weekly-digest':
-        await this.handleBuildAndSend(() =>
-          this.digestBuilderService.buildDeepDiveWeeklyDigest(),
-        );
-        break;
-      case 'send-daily-digest':
-        await this.handleSend(job.data.digestId as string | undefined);
+      case 'send-personal-digest':
+        await this.handleSendPersonalDigest(job.data as SendPersonalDigestJobData);
         break;
       default:
         this.logger.warn(`Unknown digest job: ${job.name}`);
     }
   }
 
-  private async handleBuildAndSend(
-    buildFn: () => Promise<Digest | null>,
-  ): Promise<void> {
-    const digest = await buildFn();
+  private async handleSendPersonalDigest(data: SendPersonalDigestJobData): Promise<void> {
+    const { userId, type } = data;
+    const user = await this.userQueryService.findById(userId);
+
+    const digest =
+      type === DigestType.DAILY
+        ? await this.digestBootstrapService.buildDailyDigest(userId)
+        : await this.digestBootstrapService.buildWeeklyDigest(userId);
+
     if (!digest) {
-      this.logger.info('No articles found, digest skipped');
+      this.logger.info('No candidates found, personal digest skipped', { userId, type });
       return;
     }
-    await this.trySend(digest);
+
+    await this.trySend(digest, user.email);
   }
 
-  private async handleSend(digestId?: string): Promise<void> {
-    const digest = digestId
-      ? await this.digestQueryService.findById(digestId)
-      : await this.digestQueryService.findLatestBuiltOrSent();
-    await this.trySend(digest);
-  }
-
-  private async trySend(digest: Digest): Promise<void> {
+  private async trySend(digest: Digest, to: string): Promise<void> {
     try {
-      await this.mailService.sendDigest(digest);
+      await this.mailService.sendDigest(digest, to);
       await this.digestQueryService.markSent(digest.id);
     } catch (err) {
       this.logger.error('Failed to send digest', err, { digestId: digest.id });

@@ -1,6 +1,7 @@
 import {
   addDaysToDateString,
   getLocalDateString,
+  getLocalTimeParts,
   zonedEndOfDayExclusiveUTC,
   zonedStartOfDayUTC,
 } from './timezone.util';
@@ -62,6 +63,43 @@ describe('timezone.util', () => {
         const start = zonedStartOfDayUTC('2026-07-25', tz);
         expect(getLocalDateString(start, tz)).toBe('2026-07-25');
       }
+    });
+  });
+
+  describe('getLocalTimeParts', () => {
+    it('rolls the weekday back a day in a negative-offset timezone crossing local midnight', () => {
+      // 2026-07-25T02:00:00Z is Sat 02:00 UTC but still Fri 19:00 the day before in
+      // America/Los_Angeles (UTC-7 in July).
+      const instant = new Date('2026-07-25T02:00:00Z');
+
+      expect(getLocalTimeParts(instant, 'UTC')).toEqual({ weekday: 'Sat', hour: 2, minute: 0 });
+      expect(getLocalTimeParts(instant, 'America/Los_Angeles')).toEqual({
+        weekday: 'Fri',
+        hour: 19,
+        minute: 0,
+      });
+    });
+
+    it('rolls the weekday forward a day in a positive-offset timezone', () => {
+      // 2026-07-25T22:00:00Z is Sat 22:00 UTC but already Sun 07:00 in Asia/Tokyo (UTC+9).
+      const instant = new Date('2026-07-25T22:00:00Z');
+
+      expect(getLocalTimeParts(instant, 'Asia/Tokyo')).toEqual({
+        weekday: 'Sun',
+        hour: 7,
+        minute: 0,
+      });
+    });
+
+    it('resolves a half-hour-offset timezone correctly', () => {
+      // 2026-07-31T12:00:00Z is Fri 12:00 UTC, Fri 17:30 in Asia/Kolkata (UTC+5:30).
+      const instant = new Date('2026-07-31T12:00:00Z');
+
+      expect(getLocalTimeParts(instant, 'Asia/Kolkata')).toEqual({
+        weekday: 'Fri',
+        hour: 17,
+        minute: 30,
+      });
     });
   });
 });

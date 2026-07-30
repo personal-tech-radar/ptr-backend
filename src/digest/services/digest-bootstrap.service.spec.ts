@@ -11,8 +11,10 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { AiAnalysisService } from '../../ai-analysis/services/ai-analysis.service';
 import { ArticlesService } from '../../articles/services/articles.service';
 import { FeedFetcherService } from '../../feed-fetcher/services/feed-fetcher.service';
+import { UserQueryService } from '../../users/services/user-query.service';
+import { DigestType } from '../entities/digest.entity';
 import { DigestBootstrapService } from './digest-bootstrap.service';
-import { DigestBuilderService } from './digest-builder.service';
+import { PersonalDigestBuilderService } from './personal-digest-builder.service';
 
 // Regression coverage for the MVP3 phase 5 change: DigestBootstrapService must never implicitly
 // seed sources from config/sources.manifest.json anymore. A fresh/empty sources table is now an
@@ -24,6 +26,9 @@ import { DigestBuilderService } from './digest-builder.service';
 // even ran. That failure mode is itself the strongest regression guard here.
 describe('DigestBootstrapService', () => {
   let service: DigestBootstrapService;
+
+  const userId = '123e4567-e89b-12d3-a456-426614174000';
+  const mockUser = { id: userId, email: 'user@example.com' };
 
   const mockFeedFetcherService = {
     fetchAllSources: jest.fn().mockResolvedValue(undefined),
@@ -37,19 +42,20 @@ describe('DigestBootstrapService', () => {
     analyzeArticle: jest.fn().mockResolvedValue(undefined),
   };
 
-  const mockDigestBuilderService = {
-    buildDailyDigest: jest.fn().mockResolvedValue(null),
-    buildWeeklyDigest: jest.fn().mockResolvedValue(null),
-    buildDeepDiveWeeklyDigest: jest.fn().mockResolvedValue(null),
+  const mockPersonalDigestBuilderService = {
+    buildForUser: jest.fn().mockResolvedValue(null),
+  };
+
+  const mockUserQueryService = {
+    findById: jest.fn().mockResolvedValue(mockUser),
   };
 
   beforeEach(async () => {
     jest.clearAllMocks();
     mockFeedFetcherService.fetchAllSources.mockResolvedValue(undefined);
     mockArticlesService.findPendingAnalysis.mockResolvedValue([]);
-    mockDigestBuilderService.buildDailyDigest.mockResolvedValue(null);
-    mockDigestBuilderService.buildWeeklyDigest.mockResolvedValue(null);
-    mockDigestBuilderService.buildDeepDiveWeeklyDigest.mockResolvedValue(null);
+    mockPersonalDigestBuilderService.buildForUser.mockResolvedValue(null);
+    mockUserQueryService.findById.mockResolvedValue(mockUser);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -57,7 +63,8 @@ describe('DigestBootstrapService', () => {
         { provide: FeedFetcherService, useValue: mockFeedFetcherService },
         { provide: ArticlesService, useValue: mockArticlesService },
         { provide: AiAnalysisService, useValue: mockAiAnalysisService },
-        { provide: DigestBuilderService, useValue: mockDigestBuilderService },
+        { provide: PersonalDigestBuilderService, useValue: mockPersonalDigestBuilderService },
+        { provide: UserQueryService, useValue: mockUserQueryService },
       ],
     }).compile();
 
@@ -65,28 +72,29 @@ describe('DigestBootstrapService', () => {
   });
 
   it('does not seed any Source rows when building the daily digest against an empty sources table', async () => {
-    await service.buildDailyDigest();
+    await service.buildDailyDigest(userId);
 
     expect(mockFeedFetcherService.fetchAllSources).toHaveBeenCalledTimes(1);
-    expect(mockDigestBuilderService.buildDailyDigest).toHaveBeenCalledTimes(1);
+    expect(mockUserQueryService.findById).toHaveBeenCalledWith(userId);
+    expect(mockPersonalDigestBuilderService.buildForUser).toHaveBeenCalledWith(
+      mockUser,
+      DigestType.DAILY,
+    );
   });
 
   it('does not seed any Source rows when building the weekly digest', async () => {
-    await service.buildWeeklyDigest();
+    await service.buildWeeklyDigest(userId);
 
-    expect(mockDigestBuilderService.buildWeeklyDigest).toHaveBeenCalledTimes(1);
-  });
-
-  it('does not seed any Source rows when building the deep-dive weekly digest', async () => {
-    await service.buildDeepDiveWeeklyDigest();
-
-    expect(mockDigestBuilderService.buildDeepDiveWeeklyDigest).toHaveBeenCalledTimes(1);
+    expect(mockPersonalDigestBuilderService.buildForUser).toHaveBeenCalledWith(
+      mockUser,
+      DigestType.WEEKLY,
+    );
   });
 
   it('still analyzes pending articles before building (unaffected responsibility)', async () => {
     mockArticlesService.findPendingAnalysis.mockResolvedValue([{ id: 'article-1' }]);
 
-    await service.buildDailyDigest();
+    await service.buildDailyDigest(userId);
 
     expect(mockAiAnalysisService.analyzeArticle).toHaveBeenCalledWith('article-1');
   });
