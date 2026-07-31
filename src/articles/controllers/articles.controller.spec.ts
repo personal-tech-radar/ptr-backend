@@ -1,16 +1,19 @@
 import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { ROLES_KEY } from '../../auth/decorators/roles.decorator';
 import { ApiKeyGuard } from '../../common/guards/api-key.guard';
-import { HybridAuthGuard } from '../../auth/guards/hybrid-auth.guard';
+import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../auth/guards/roles.guard';
 import { UserRole } from '../../users/entities/user.entity';
+import { ArticleFeedbackType } from '../entities/article-feedback.entity';
 import { ArticlesController } from './articles.controller';
 
 /* eslint-disable @typescript-eslint/unbound-method */
 
-// Metadata-level checks confirming Decision A of MVP3 Phase 8a: findAll/findOne stay
-// API-key-only (moved from class-level to method-level with zero behavior change), while
-// addFeedback alone moves to the admin guard chain (HybridAuthGuard + RolesGuard + @Roles('admin')).
+// Metadata-level checks confirming Decision A of MVP3 Phase 8a (extended in Phase 11):
+// findAll/findOne stay API-key-only (moved from class-level to method-level with zero behavior
+// change), while addFeedback alone moves to the admin guard chain — narrowed in Phase 11 from
+// HybridAuthGuard to JwtAuthGuard (JwtAuthGuard + RolesGuard + @Roles('admin')), since feedback
+// submission now requires a real authenticated user id, not a machine API-key client.
 // Follows the guard-test pattern from src/taxonomy/controllers/technology-interest.controller.spec.ts.
 describe('ArticlesController guard wiring', () => {
   it('does not apply any guard at the class level', () => {
@@ -34,17 +37,44 @@ describe('ArticlesController guard wiring', () => {
     expect(guards).toEqual([ApiKeyGuard]);
   });
 
-  it('protects POST /articles/:id/feedback with HybridAuthGuard + RolesGuard, admin only', () => {
+  it('protects POST /articles/:id/feedback with JwtAuthGuard + RolesGuard, admin only', () => {
     const guards: unknown = Reflect.getMetadata(
       GUARDS_METADATA,
       ArticlesController.prototype.addFeedback,
     );
-    expect(guards).toEqual([HybridAuthGuard, RolesGuard]);
+    expect(guards).toEqual([JwtAuthGuard, RolesGuard]);
 
     const requiredRoles: unknown = Reflect.getMetadata(
       ROLES_KEY,
       ArticlesController.prototype.addFeedback,
     );
     expect(requiredRoles).toEqual([UserRole.ADMIN]);
+  });
+});
+
+describe('ArticlesController.addFeedback', () => {
+  const mockArticlesService = {};
+  const mockArticleFeedbackService = { upsertFeedback: jest.fn() };
+
+  it('passes the authenticated user id through to the service, not a default/placeholder', async () => {
+    const controller = new ArticlesController(
+      mockArticlesService as never,
+      mockArticleFeedbackService as never,
+    );
+    const currentUser = {
+      id: '123e4567-e89b-12d3-a456-426614174000',
+      email: 'jane@example.com',
+      role: UserRole.ADMIN,
+      onboardingCompletedAt: new Date(),
+    };
+    mockArticleFeedbackService.upsertFeedback.mockResolvedValue({ id: 'fb-1' });
+
+    await controller.addFeedback('article-1', { type: ArticleFeedbackType.USEFUL }, currentUser);
+
+    expect(mockArticleFeedbackService.upsertFeedback).toHaveBeenCalledWith(
+      'article-1',
+      ArticleFeedbackType.USEFUL,
+      currentUser.id,
+    );
   });
 });

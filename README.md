@@ -49,7 +49,8 @@ src/
 │   ├── guards/            # ApiKeyGuard
 │   └── dto/               # PaginatedResponseDto
 ├── config/
-│   └── user-interests.yaml  # AI analysis interest profile
+│   ├── sources.manifest.json    # Declarative Source seed manifest (see "Syncing Sources" below)
+│   └── legacy-user.manifest.json  # Legacy single-owner account seed (see "Syncing the Legacy User" below)
 ├── auth/                  # Register/login/refresh/logout, email verification, password reset
 ├── users/                 # User entity + profile/onboarding endpoints (GET/PATCH/DELETE /users/me, POST /users/me/onboarding, GET /users/me/taxonomy)
 ├── taxonomy/              # TechnologyInterest/ContentStream taxonomy, dedup resolver, merge endpoint
@@ -149,7 +150,7 @@ Manages feed sources. Admin-only endpoints, protected by `HybridAuthGuard` + `Ro
 - `DELETE /sources/:id` — soft-delete (sets `deletedAt`)
 
 **Admin User Source Preferences endpoint** (`AdminUserSourcePreferenceController`, `/admin/user-source-preferences`, same admin guard, MVP3 Phase 8c, view-only — no PATCH/DELETE):
-- `GET /admin/user-source-preferences?page=&limit=&email=&sourceId=` — flattened, paginated listing across all users (`userId`, `userEmail`, `sourceId`, `sourceName`, `usefulCount`, `notUsefulCount`, `feedbackAdjustment`, `createdAt`, `updatedAt`). Same best-effort `user.id::text = pref.userId` cast as the article-feedback listing above (no declared `User` relation on `UserSourcePreference`) — **every existing row today resolves `userEmail: null`** for the same `DEFAULT_USER_ID` reason (see ArticlesModule above), until Phase 11.
+- `GET /admin/user-source-preferences?page=&limit=&email=&sourceId=` — flattened, paginated listing across all users (`userId`, `userEmail`, `sourceId`, `sourceName`, `usefulCount`, `notUsefulCount`, `feedbackAdjustment`, `createdAt`, `updatedAt`). `userId` is a real `uuid` FK to `User` (MVP3 Phase 11 — see ArticlesModule below), so `userEmail` is a genuine joined column and always resolves.
 
 Source categories: `backend_architecture_infra`, `engineering_deep_dives`, `node_typescript_nestjs`, `ai_engineering`
 
@@ -198,8 +199,7 @@ Stores articles fetched from sources.
 
 - `GET /articles` — paginated list (filter by `status`, `sourceId`). `ApiKeyGuard` only, unchanged (moved from class-level to method-level in MVP3 Phase 8a — no behavior change).
 - `GET /articles/:id` — single article. `ApiKeyGuard` only, unchanged (same method-level move as above).
-- `POST /articles/:id/feedback` — submit `useful` / `not_useful` feedback; upserts the user's per-source `UserSourcePreference` row. **MVP3 Phase 8a:** now `HybridAuthGuard` + `RolesGuard` + `@Roles(UserRole.ADMIN)` (previously `ApiKeyGuard`) — `X-API-KEY` still works unchanged (see the guard-migration note under AuthModule/UsersModule above).
-- `GET /articles/:id/feedback/click?type=useful|not_useful&token=TOKEN` — unguarded endpoint for email digest links; saves feedback and updates the same per-source preference
+- `POST /articles/:id/feedback` — submit `useful` / `not_useful` feedback for the current authenticated user; upserts their per-source `UserSourcePreference` row. **MVP3 Phase 11:** narrowed from `HybridAuthGuard` to `JwtAuthGuard` + `RolesGuard` + `@Roles(UserRole.ADMIN)` (`X-API-KEY` no longer works here) — the endpoint now resolves a real `userId` from the authenticated JWT user (`@CurrentUser()`) rather than the retired `DEFAULT_USER_ID` placeholder, so a machine API-key caller with no real user identity can no longer submit feedback.
 
 **Admin Articles endpoints** (`AdminArticlesController`, `/admin/articles`, `HybridAuthGuard` + `RolesGuard` + `@Roles(UserRole.ADMIN)`, MVP3 Phase 8a):
 - `GET /admin/articles` — same pagination/filtering as `GET /articles` (`ArticlesService.findAll`/`ArticleListQueryDto`, reused as-is), behind the admin guard instead of `ApiKeyGuard`.
@@ -207,9 +207,9 @@ Stores articles fetched from sources.
 - `DELETE /admin/articles/:id` — soft-delete an article (`ArticlesService.remove`, new in this phase — sets `Article.deletedAt` via `softDelete`, does not trigger `ArticleAnalysis`'s `onDelete: CASCADE`, which only fires on a hard delete).
 
 **Admin Article Feedback endpoint** (`AdminArticleFeedbackController`, `/admin/article-feedback`, same admin guard, MVP3 Phase 8c, view-only — no PATCH/DELETE):
-- `GET /admin/article-feedback?page=&limit=&email=&articleId=&type=` — flattened, paginated listing of feedback across all users (`articleId`, `articleTitle`, `userId`, `userEmail`, `type`, `createdAt`, `updatedAt`). `userId` has no real FK to `User` (see below), so the join to resolve `userEmail` is a best-effort `user.id::text = feedback.userId` cast, not a declared relation — **every existing row today resolves `userEmail: null`**, since `userId` is still the legacy `DEFAULT_USER_ID` literal (see the next paragraph); this will start resolving real emails once Phase 11 gives feedback submission a real per-user identity.
+- `GET /admin/article-feedback?page=&limit=&email=&articleId=&type=` — flattened, paginated listing of feedback across all users (`articleId`, `articleTitle`, `userId`, `userEmail`, `type`, `createdAt`, `updatedAt`). `userId` is a real `uuid` FK to `User` (MVP3 Phase 11), so the join to resolve `userEmail` is a genuine declared relation and always resolves.
 
-Feedback no longer touches `Source.trustScore`. Each `useful`/`not_useful` vote updates a `UserSourcePreference` row (`usefulCount`, `notUsefulCount`, `feedbackAdjustment`) for that `(userId, sourceId)` pair — `feedbackAdjustment` is a dampened score in the range ±8 that feeds into digest ranking (see DigestModule below). Feedback is single-user (`DEFAULT_USER_ID = 'default_user'`). The `article_feedbacks` table has a `userId` column and a `(articleId, userId)` unique constraint, so the schema is ready for multi-user when needed — the feedback and preference logic will need to be updated to aggregate per-user at that point.
+Feedback no longer touches `Source.trustScore`. Each `useful`/`not_useful` vote updates a `UserSourcePreference` row (`usefulCount`, `notUsefulCount`, `feedbackAdjustment`) for that `(userId, sourceId)` pair — `feedbackAdjustment` is a dampened score in the range ±8 that feeds into digest ranking (see DigestModule below). The `article_feedbacks` table has a `userId` column and a `(articleId, userId)` unique constraint.
 
 Statuses: `new` → `pending_analysis` → `analyzed` | `duplicate` | `rejected` | `failed`
 
@@ -240,8 +240,6 @@ Fully global, two-stage pipeline against a single `ArticleAnalysis` row per arti
 **New join tables:**
 - `article_technology_interests` — `(articleId, technologyInterestId)`, FKs directly against `Article`/`TechnologyInterest` (mirrors `ArticleFeedback`'s shape), valid even before Stage 2 runs.
 - `article_streams` — `(articleId, streamId, isPrimary)`, same FK pattern.
-
-`DEFAULT_USER_ID` lives at `src/articles/constants/default-user.constant.ts` (relocated out of this module, since analysis is no longer user-scoped) and is still used by `ArticleFeedbackService`/`UserSourcePreferenceService`/digest recipient personalization until later multi-tenant phases.
 
 ### ScoringModule
 Services-only module (no controller, no HTTP endpoint, no schema change) implementing deterministic, no-LLM personal relevance scoring against the global `ArticleAnalysis`/taxonomy data. Consumed by later phases (Personal Feed, Public Preview) that don't exist yet.
@@ -275,7 +273,7 @@ Complexity-match table (row = user level, column = article complexity):
 
 **Per-article feedback is a soft adjustment, not a hard exclusion — this is a deliberate product decision, not an oversight.** A `not_useful` vote on the exact article applies a `-8` penalty; a `useful` vote applies a `+8` bonus; no vote applies `0`. Either way the article remains eligible and is still scored and ranked — mirroring the existing source-level `UserSourcePreference.feedbackAdjustment` treatment in `DigestModule`, which is also additive rather than gating.
 
-`sourcePreferenceAdjustment` reuses `UserSourcePreferenceService.getAdjustmentsForSources(userId, sourceIds)` (the same ±8-clamped, additively-smoothed value `DigestModule` uses). `directFeedbackAdjustment` reads the user's own `ArticleFeedback` row for that exact article (`useful`/`not_useful`). **Both `UserSourcePreference` and `ArticleFeedback` remain keyed by a `varchar` `userId` (not yet a real FK) even after Phase 10** — this conversion was explicitly out of scope for Personal Digest Delivery — so calling either with a real user id is expected to return empty/neutral results until a later phase populates real per-user feedback data. That's expected behavior, not a gap.
+`sourcePreferenceAdjustment` reuses `UserSourcePreferenceService.getAdjustmentsForSources(userId, sourceIds)` (the same ±8-clamped, additively-smoothed value `DigestModule` uses). `directFeedbackAdjustment` reads the user's own `ArticleFeedback` row for that exact article (`useful`/`not_useful`). **`UserSourcePreference` and `ArticleFeedback` are keyed by a real `uuid` FK to `User` as of MVP3 Phase 11** (previously `varchar`, carrying only the legacy `DEFAULT_USER_ID` literal) — see ArticlesModule/SourcesModule below.
 
 `UserScoringProfileService.buildProfile(userId, candidateSourceIds, candidateArticleIds)` batch-assembles a `ScoringProfile` for a user: selected technology/interest ids and content-stream ids (via `TechnologyInterestQueryService.findSelectedByUser`/`ContentStreamQueryService.findSelectedByUser`), `level` (via `UserQueryService.findById`), `sourcePreferenceAdjustments` (via `UserSourcePreferenceService.getAdjustmentsForSources`), and `articleFeedback` (a batched `ArticleFeedback` repository query). Empty candidate ID arrays return empty maps without erroring.
 
@@ -292,7 +290,7 @@ Real, per-user (`userId: uuid` FK to `User`) actions on articles — deliberatel
 - `POST /saved-articles/:articleId` — save an article for the current user (JWT-guarded). Idempotent find-or-create; saving an already-saved article returns the existing row rather than erroring.
 - `DELETE /saved-articles/:articleId` — unsave (JWT-guarded). Idempotent: returns `204` even if the article wasn't currently saved — never `404` for "already not saved".
 - `GET /saved-articles` — paginated list of the current user's saved articles (JWT-guarded), joined to `Article`.
-- `GET /articles/:articleId/save-from-email?userId=&signature=` — unguarded, reached from an email link. Always renders a small HTML result page (success or failure), never a raw JSON error, matching `FeedbackClickController`'s existing contract. On success, saves the article (idempotent — safe to click twice).
+- `GET /articles/:articleId/save-from-email?userId=&signature=` — unguarded, reached from an email link. Always renders a small HTML result page (success or failure), never a raw JSON error. On success, saves the article (idempotent — safe to click twice).
 - `GET /go/:linkId` — unguarded pure redirect (`@Redirect()`) to the linked article's URL. Records `firstOpenedAt` on the first resolve only; repeat visits redirect without touching it again (idempotent, no locking — a benign race on a near-simultaneous first open is acceptable). An unresolved `linkId` is a standard JSON `404`.
 
 **Admin endpoints** (`HybridAuthGuard` + `RolesGuard` + `@Roles(UserRole.ADMIN)`, MVP3 Phase 8c, view-only — no PATCH/DELETE; both entities here have real `uuid` FKs to `User`, so — unlike the article-feedback/user-source-preference admin listings above — `userEmail` is a genuine joined column and is never null):
@@ -345,7 +343,7 @@ Any unknown/invalid `stream` key, `technology`/`interest`/`source` id is a `400 
 - **Onboarding completed/updated** (`OnboardingService.completeOnboarding`) — covers technology-interest, content-stream, and level changes in one call site.
 - **Profile update** (`UserCommandService.updateProfile`) — unconditional on any profile field change (not diffed to "was `level` specifically present"), since a per-field diff added meaningful complexity for a cheap, idempotent, no-op-when-nothing-cached cache drop. Also covers `timezone` changes, which affect the feed's own day-boundary computation.
 - **Article ingestion completing analysis** — deliberately **not** wired to a targeted call site. Relies purely on the `FEED_CACHE_TTL_SECONDS` TTL backstop, per an explicit product decision — newly-analyzed articles become visible in the feed within one TTL window (≤10 min by default) without a dedicated invalidation call in `AiAnalysisService` or anywhere in the ingestion/analysis pipeline.
-- **Feedback submission** (`ArticleFeedbackService.upsertFeedback` / `UserSourcePreferenceService.applyFeedback`) — **not wired**. Its only current call site, `FeedbackClickController`, is a token-authenticated (not JWT-authenticated) email-link endpoint with no real per-user identity — it always calls `upsertFeedback` with the legacy `DEFAULT_USER_ID`, not a real user id. There is no real per-user feedback-submission call site to invalidate against yet; forcing one in would mean inventing an identity the flow doesn't actually have. TTL backstop applies here too until a later phase gives feedback submission a real authenticated identity.
+- **Feedback submission** (`ArticleFeedbackService.upsertFeedback` / `UserSourcePreferenceService.applyFeedback`) — **not wired**. `POST /articles/:id/feedback` gained a real per-user identity in MVP3 Phase 11 (JWT-authenticated, `@CurrentUser()`), but invalidating the feed cache on every feedback submission was out of scope for that phase. TTL backstop applies here too until a later phase wires this trigger.
 
 **Index:** `Article(publishedAt, status)` composite index (migration `AddArticlePublishedAtStatusIndex`) — this is the first live per-request query against `articles`, unlike the batch/cron-driven digest and ingestion queries.
 
@@ -462,8 +460,7 @@ Health check: `http://localhost:3000/health`
 | `REDIS_PORT` | Redis port | `6379` |
 | `REDIS_PASSWORD` | Redis password | — |
 | `API_KEY` | Admin API key for `X-API-KEY` header | — |
-| `APP_URL` | Public base URL of this API (used in digest email feedback links, and in verification/password-reset email links) | — |
-| `FEEDBACK_TOKEN` | Secret token validated when feedback links in emails are clicked | — |
+| `APP_URL` | Public base URL of this API (used in digest email article/save links, and in verification/password-reset email links) | — |
 | `SAVE_LINK_SECRET` | HMAC secret signing save-from-email links (`SaveLinkSignatureService`) | — |
 | `JWT_SECRET` | Secret used to sign access JWTs | — |
 | `JWT_EXPIRES_IN` | Access JWT lifetime | `15m` |
@@ -512,6 +509,8 @@ Name migrations descriptively per domain: `CreateSources`, `CreateArticles`, `Ad
 
 Production: `npm run migration:run:prod` (requires `npm run build` first)
 
+**Ordering dependency (MVP3 Phase 11):** `LinkArticleFeedbackAndUserSourcePreferencesToUsers` converts `article_feedbacks.userId`/`user_source_preferences.userId` from `varchar` to a real `uuid` FK. It will fail loudly (`invalid input syntax for type uuid`) if any row still holds the legacy `'default_user'` literal — run `npm run seed:legacy-user:sync` first (see "Syncing the Legacy User" above), which retags every such row onto the real legacy user's `uuid` before this migration ever runs.
+
 ---
 
 ## Syncing Sources (`config/sources.manifest.json`)
@@ -538,6 +537,22 @@ Replaces the old `seed:sources`/`seeds/seed.ts` one-shot insert script (deleted)
 **Legacy format support:** if `config/sources.manifest.json` doesn't exist at all, sync falls back to `config/sources.seed.json` in the old bare-array shape, for the migration window only. If `config/sources.manifest.json` exists but contains a bare array (renamed but not yet converted), that's read as legacy too. Either way, each legacy entry is converted to a v2 entry with `discovery: { mode: 'rss' }` and a slug generated from its `name`.
 
 **Operational note:** a fresh/empty database now has **zero** sources until `npm run seed:sources:sync` is run explicitly — there is no more implicit auto-seed (see Deployment below).
+
+---
+
+## Syncing the Legacy User (`config/legacy-user.manifest.json`)
+
+```bash
+npm run seed:legacy-user:sync
+```
+
+`src/seeds/sync-legacy-user.ts` mirrors `sync-sources.ts`'s shape exactly — a thin CLI entrypoint that bootstraps the full Nest application context and delegates to `LegacyUserSyncService` (`src/users/services/legacy-user-sync.service.ts`).
+
+**What it does (MVP3 Phase 11 — Legacy User Migration):** idempotently find-or-creates the one legacy single-owner `User` account, mirroring `AdminBootstrapService`'s find/create/resurrect-if-soft-deleted pattern — but always with `role: 'user'`, never `'admin'`. Profile fields (`timezone`, `level`, `githubUrl`) sync via `UserCommandService.updateProfile`; `emailVerifiedAt` (only if not already set) and the two digest toggles sync via a direct repository write; technology/interest selections and content-stream selections sync via `OnboardingService.completeOnboarding` (the same resolver/dedup logic onboarding uses). An existing account's password hash is never touched.
+
+**Also performs the one-off legacy-row retag:** every `article_feedbacks`/`user_source_preferences` row still holding the pre-multi-tenant literal `'default_user'` in its `userId` column is updated to this account's real `uuid`, via `ArticleFeedbackService.retagLegacyUser`/`UserSourcePreferenceService.retagLegacyUser`. This is ordinary idempotent application code (a no-op on re-run), not a migration — **it MUST run before `LinkArticleFeedbackAndUserSourcePreferencesToUsers`** (see Database Migrations below), which converts those tables' `userId` columns from `varchar` to a real `uuid` FK and fails loudly if any row still holds a non-uuid string.
+
+**Password:** the initial password for this account is a fixed, known value (not env-configurable, unlike `ADMIN_PASSWORD`) — hashed via the same `hashPassword()` helper the real registration/`AdminBootstrapService` flow uses before ever touching the database. It is not stored in `config/legacy-user.manifest.json`, since that manifest is reference data, not a secret. See `src/users/services/legacy-user-sync.service.ts` for the literal value; the account holder should change it after first login.
 
 ---
 
@@ -600,6 +615,8 @@ Configure Dokploy's migration service to run:
 node dist/main && npm run migration:run:prod
 ```
 Or as a separate one-off container using the same image.
+
+**One-time exception for the `LinkArticleFeedbackAndUserSourcePreferencesToUsers` migration (MVP3 Phase 11):** unlike the normal migrate-then-seed order below, `npm run seed:legacy-user:sync:prod` must run **before** `migration:run:prod` reaches this specific migration — it will fail loudly otherwise (see "Database Migrations" above). Run it once, manually, ahead of that deploy.
 
 ### Post-deploy: sync sources
 

@@ -4,20 +4,18 @@ import { ArticleFeedbackType } from '../../articles/entities/article-feedback.en
 import { UserSourcePreference } from '../entities/user-source-preference.entity';
 import { UserSourcePreferenceService } from './user-source-preference.service';
 
-const userId = 'default_user';
+const userId = '123e4567-e89b-12d3-a456-426614174000';
 const sourceId = 'src-1';
 
 const mockAdminQueryBuilder = {
   innerJoinAndSelect: jest.fn().mockReturnThis(),
-  leftJoin: jest.fn().mockReturnThis(),
-  addSelect: jest.fn().mockReturnThis(),
   andWhere: jest.fn().mockReturnThis(),
   orderBy: jest.fn().mockReturnThis(),
   skip: jest.fn().mockReturnThis(),
   take: jest.fn().mockReturnThis(),
   clone: jest.fn().mockReturnThis(),
   getCount: jest.fn(),
-  getRawAndEntities: jest.fn(),
+  getMany: jest.fn(),
 };
 
 const mockPreferenceRepo = {
@@ -32,6 +30,7 @@ const mockPreferenceRepo = {
       feedbackAdjustment: data.feedbackAdjustment ?? 0,
     }),
   ),
+  update: jest.fn(),
   createQueryBuilder: jest.fn(() => mockAdminQueryBuilder),
 };
 
@@ -189,6 +188,7 @@ describe('UserSourcePreferenceService', () => {
     const preferenceEntity = {
       id: 'pref-1',
       userId,
+      user: { id: userId, email: 'jane@example.com' },
       sourceId,
       source: { id: sourceId, name: 'The New Stack' },
       usefulCount: 3,
@@ -198,37 +198,18 @@ describe('UserSourcePreferenceService', () => {
       updatedAt: new Date('2026-01-02'),
     };
 
-    it('joins User via an id::text cast rather than a declared relation', async () => {
+    it('joins User via a real declared relation', async () => {
       mockAdminQueryBuilder.getCount.mockResolvedValue(0);
-      mockAdminQueryBuilder.getRawAndEntities.mockResolvedValue({ entities: [], raw: [] });
+      mockAdminQueryBuilder.getMany.mockResolvedValue([]);
 
       await service.findAllAdmin({ page: 1, limit: 20 });
 
-      expect(mockAdminQueryBuilder.leftJoin).toHaveBeenCalledWith(
-        expect.anything(),
-        'user',
-        'user.id::text = pref.userId',
-      );
+      expect(mockAdminQueryBuilder.innerJoinAndSelect).toHaveBeenCalledWith('pref.user', 'user');
     });
 
-    it('maps a row with no matching user to userEmail: null, not undefined', async () => {
+    it('maps a row to its joined user email, source name, and adjustment', async () => {
       mockAdminQueryBuilder.getCount.mockResolvedValue(1);
-      mockAdminQueryBuilder.getRawAndEntities.mockResolvedValue({
-        entities: [preferenceEntity],
-        raw: [{ user_email: undefined }],
-      });
-
-      const result = await service.findAllAdmin({ page: 1, limit: 20 });
-
-      expect(result.data[0].userEmail).toBeNull();
-    });
-
-    it('maps a row with a matching user to the resolved email', async () => {
-      mockAdminQueryBuilder.getCount.mockResolvedValue(1);
-      mockAdminQueryBuilder.getRawAndEntities.mockResolvedValue({
-        entities: [preferenceEntity],
-        raw: [{ user_email: 'jane@example.com' }],
-      });
+      mockAdminQueryBuilder.getMany.mockResolvedValue([preferenceEntity]);
 
       const result = await service.findAllAdmin({ page: 1, limit: 20 });
 
@@ -239,7 +220,7 @@ describe('UserSourcePreferenceService', () => {
 
     it('applies email and sourceId filters only when provided', async () => {
       mockAdminQueryBuilder.getCount.mockResolvedValue(0);
-      mockAdminQueryBuilder.getRawAndEntities.mockResolvedValue({ entities: [], raw: [] });
+      mockAdminQueryBuilder.getMany.mockResolvedValue([]);
 
       await service.findAllAdmin({ page: 1, limit: 20, email: 'jane', sourceId: 'src-2' });
 
@@ -253,7 +234,7 @@ describe('UserSourcePreferenceService', () => {
 
     it('does not apply filters when neither email nor sourceId is provided', async () => {
       mockAdminQueryBuilder.getCount.mockResolvedValue(0);
-      mockAdminQueryBuilder.getRawAndEntities.mockResolvedValue({ entities: [], raw: [] });
+      mockAdminQueryBuilder.getMany.mockResolvedValue([]);
 
       await service.findAllAdmin({ page: 1, limit: 20 });
 
@@ -262,7 +243,7 @@ describe('UserSourcePreferenceService', () => {
 
     it('derives the count from a cloned query builder and paginates the main query with skip/take', async () => {
       mockAdminQueryBuilder.getCount.mockResolvedValue(45);
-      mockAdminQueryBuilder.getRawAndEntities.mockResolvedValue({ entities: [], raw: [] });
+      mockAdminQueryBuilder.getMany.mockResolvedValue([]);
 
       const result = await service.findAllAdmin({ page: 3, limit: 20 });
 
@@ -270,6 +251,50 @@ describe('UserSourcePreferenceService', () => {
       expect(mockAdminQueryBuilder.skip).toHaveBeenCalledWith(40);
       expect(mockAdminQueryBuilder.take).toHaveBeenCalledWith(20);
       expect(result.meta).toEqual({ total: 45, page: 3, limit: 20, totalPages: 3 });
+    });
+  });
+
+  describe('retagLegacyUser', () => {
+    it('updates every row matching the legacy userId to the new real userId', async () => {
+      mockPreferenceRepo.update.mockResolvedValue({ affected: 2 });
+
+      const result = await service.retagLegacyUser('default_user', userId);
+
+      expect(mockPreferenceRepo.update).toHaveBeenCalledWith(
+        { userId: 'default_user' },
+        { userId },
+      );
+      expect(result).toBe(2);
+    });
+
+    it('is a no-op returning 0 when no rows match (idempotent re-run)', async () => {
+      mockPreferenceRepo.update.mockResolvedValue({ affected: 0 });
+
+      const result = await service.retagLegacyUser('default_user', userId);
+
+      expect(result).toBe(0);
+    });
+
+    it('returns 0 without rethrowing when the userId column has already been converted to uuid', async () => {
+      const uuidCastError = Object.assign(new Error('invalid input syntax for type uuid'), {
+        code: '22P02',
+      });
+      mockPreferenceRepo.update.mockRejectedValue(uuidCastError);
+
+      const result = await service.retagLegacyUser('default_user', userId);
+
+      expect(result).toBe(0);
+    });
+
+    it('rethrows an unexpected database error instead of swallowing it', async () => {
+      const unexpectedError = Object.assign(new Error('connection terminated'), {
+        code: '08006',
+      });
+      mockPreferenceRepo.update.mockRejectedValue(unexpectedError);
+
+      await expect(service.retagLegacyUser('default_user', userId)).rejects.toThrow(
+        unexpectedError,
+      );
     });
   });
 });
