@@ -26,7 +26,9 @@
     "migration:show": "typeorm-ts-node-commonjs migration:show -d src/common/database/data-source.ts",
     "migration:show:prod": "typeorm migration:show -d dist/common/database/data-source-prod.js",
     "seed:sources:sync": "ts-node -r tsconfig-paths/register src/seeds/sync-sources.ts",
-    "seed:sources:sync:prod": "node dist/seeds/sync-sources.js"
+    "seed:sources:sync:prod": "node dist/seeds/sync-sources.js",
+    "seed:legacy-user:sync": "ts-node -r tsconfig-paths/register src/seeds/sync-legacy-user.ts",
+    "seed:legacy-user:sync:prod": "node dist/seeds/sync-legacy-user.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.955.0",

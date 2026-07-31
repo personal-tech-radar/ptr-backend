@@ -5,6 +5,23 @@ Each entry is tagged with the branch it was made on.
 
 ---
 
+## [feature/mvp3-p11-legacy-user-migration] — 2026-07-31
+
+### Added
+- Legacy User Migration (MVP3 Part 1, Phase 11 of 11, final phase) — the original single-operator setup now has a real account of its own, created and kept in sync by a repeatable command rather than a one-off manual step, with its technology interests, content streams, timezone, and digest preferences all filled in
+- Article feedback and per-source preference records that were left over from the single-user era are now automatically linked to that same real account instead of an anonymous placeholder
+
+### Updated
+- Submitting feedback on an article now requires being signed in as yourself, rather than also being reachable through the general API-key access used for automation
+- Admin listings for article feedback and source preferences now always show a real person's email instead of sometimes showing nothing
+
+### Removed
+- The original YAML configuration file this service started with, and the small amount of legacy plumbing that only existed to support it, are gone — every user's setup, including the very first one, now lives in the same real database tables
+
+This is the last of the 11 planned phases for MVP3 Part 1. A single consolidated PR from `dev/mvp3` into `main` will follow as its own separate step.
+
+---
+
 ## [feature/mvp3-p10-personal-digest-delivery] — 2026-07-31
 
 ### Added

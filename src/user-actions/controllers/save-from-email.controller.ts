@@ -9,7 +9,7 @@ import { SaveLinkSignatureService } from '../services/save-link-signature.servic
 import { SavedArticleService } from '../services/saved-article.service';
 
 // Unguarded, token-based endpoint reached from an email link — always renders HTML, on both
-// success and failure, matching FeedbackClickController's contract. Never throws a raw exception.
+// success and failure, never a raw JSON error/exception.
 @ApiExcludeController()
 @Controller('articles')
 export class SaveFromEmailController {

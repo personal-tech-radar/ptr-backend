@@ -1,4 +1,4 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty } from '@nestjs/swagger';
 import { ArticleFeedbackType } from '../entities/article-feedback.entity';
 
 // Distinct from the self-service ArticleFeedbackResponseDto (article-feedback-response.dto.ts) —
@@ -15,21 +15,16 @@ export class AdminArticleFeedbackResponseDto {
   articleTitle: string;
 
   @ApiProperty({
-    description:
-      'Raw user identifier as stored on the feedback row — still the legacy DEFAULT_USER_ID ' +
-      'literal for every existing row until Phase 11 introduces a real per-user write path.',
-    example: 'default_user',
+    description: 'User id, a real FK to the users table.',
+    example: '111e4567-e89b-12d3-a456-426614174000',
   })
   userId: string;
 
-  @ApiPropertyOptional({
-    description:
-      'Email of the user matching userId, resolved via a best-effort id cast. Null when userId ' +
-      'does not correspond to a real user row (expected for all rows today, see userId).',
+  @ApiProperty({
+    description: 'Email of the user identified by userId, resolved via a real joined relation.',
     example: 'jane@example.com',
-    nullable: true,
   })
-  userEmail: string | null;
+  userEmail: string;
 
   @ApiProperty({ enum: ArticleFeedbackType })
   type: ArticleFeedbackType;

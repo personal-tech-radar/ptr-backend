@@ -10,8 +10,10 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiSecurity, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { CurrentUser } from '../../auth/decorators/current-user.decorator';
+import type { CurrentUserPayload } from '../../auth/decorators/current-user.decorator';
 import { Roles } from '../../auth/decorators/roles.decorator';
-import { HybridAuthGuard } from '../../auth/guards/hybrid-auth.guard';
+import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../auth/guards/roles.guard';
 import { ApiKeyGuard } from '../../common/guards/api-key.guard';
 import { PaginatedResponseDto } from '../../common/dto/paginated-response.dto';
@@ -51,7 +53,7 @@ export class ArticlesController {
 
   @Post(':id/feedback')
   @HttpCode(HttpStatus.OK)
-  @UseGuards(HybridAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Submit or update feedback for an article' })
@@ -62,7 +64,8 @@ export class ArticlesController {
   addFeedback(
     @Param('id') id: string,
     @Body() dto: CreateArticleFeedbackDto,
+    @CurrentUser() user: CurrentUserPayload,
   ): Promise<ArticleFeedbackResponseDto> {
-    return this.articleFeedbackService.upsertFeedback(id, dto.type);
+    return this.articleFeedbackService.upsertFeedback(id, dto.type, user.id);
   }
 }

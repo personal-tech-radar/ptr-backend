@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "user": {
+    "email": "miter.sidorov@gmail.com",
+    "role": "user",
+    "timezone": "Asia/Tbilisi",
+    "level": "senior",
+    "githubUrl": "https://github.com/mitersidorov",
+    "dailyDigestEnabled": true,
+    "weeklyDigestEnabled": true,
+    "contentStreamKeys": [
+      "releases_and_changes",
+      "security",
+      "industry_pulse",
+      "engineering_experience",
+      "expert_opinions_and_practices"
+    ],
+    "technologyInterests": [
+      { "kind": "technology", "name": "Node.js" },
+      { "kind": "technology", "name": "NestJS" }
+    ]
+  }
+}

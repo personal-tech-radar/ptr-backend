@@ -4,7 +4,6 @@ import { In, Repository } from 'typeorm';
 import { PaginatedResponseDto } from '../../common/dto/paginated-response.dto';
 import { LoggingService } from '../../common/logging/logging.service';
 import { ArticleFeedbackType } from '../../articles/entities/article-feedback.entity';
-import { User } from '../../users/entities/user.entity';
 import { AdminQueryUserSourcePreferenceDto } from '../dto/admin-query-user-source-preference.dto';
 import { UserSourcePreferenceResponseDto } from '../dto/user-source-preference-response.dto';
 import { UserSourcePreference } from '../entities/user-source-preference.entity';
@@ -87,10 +86,9 @@ export class UserSourcePreferenceService {
     return new Map(preferences.map((p) => [p.sourceId, Number(p.feedbackAdjustment)]));
   }
 
-  // Flattened, admin-only listing across all users' source preferences. userId has no real FK to
-  // User (see UserSourcePreference entity) — every existing row today carries the legacy
-  // DEFAULT_USER_ID literal, not a real user id — so the join to User is a best-effort id cast
-  // rather than a declared relation, and userEmail is expected to be null until Phase 11.
+  // Flattened, admin-only listing across all users' source preferences. userId is a real FK to
+  // User (see UserSourcePreference entity, MVP3 Phase 11) — the join is a declared relation, and
+  // userEmail is guaranteed to resolve for every row.
   async findAllAdmin(
     query: AdminQueryUserSourcePreferenceDto,
   ): Promise<PaginatedResponseDto<UserSourcePreferenceResponseDto>> {
@@ -100,8 +98,7 @@ export class UserSourcePreferenceService {
     const qb = this.preferenceRepo
       .createQueryBuilder('pref')
       .innerJoinAndSelect('pref.source', 'source')
-      .leftJoin(User, 'user', 'user.id::text = pref.userId')
-      .addSelect(['user.email']);
+      .innerJoinAndSelect('pref.user', 'user');
 
     if (query.email) {
       qb.andWhere('user.email ILIKE :email', { email: `%${query.email}%` });
@@ -112,15 +109,12 @@ export class UserSourcePreferenceService {
 
     const total = await qb.clone().getCount();
 
-    const { entities, raw } = await qb
+    const entities = await qb
       .orderBy('pref.updatedAt', 'DESC')
       .skip((page - 1) * limit)
       .take(limit)
-      .getRawAndEntities();
-
-    const data = entities.map((entity, index) =>
-      this.toResponseDto(entity, raw[index] as { user_email?: string | null }),
-    );
+      .getMany();
+    const data = entities.map((entity) => this.toResponseDto(entity));
 
     return {
       data,
@@ -128,14 +122,45 @@ export class UserSourcePreferenceService {
     };
   }
 
-  private toResponseDto(
-    entity: UserSourcePreference,
-    raw: { user_email?: string | null },
-  ): UserSourcePreferenceResponseDto {
+  // One-off MVP3 Phase 11 data migration: retags every user_source_preferences row still holding
+  // a legacy userId literal (fromUserId) to the new real per-user identity (toUserId). Idempotent
+  // across two scenarios: (1) no matching rows left — a normal no-op update, and (2) the
+  // LinkArticleFeedbackAndUserSourcePreferencesToUsers migration has already converted userId to
+  // a uuid column — the legacy string literal can no longer match anything, and Postgres rejects
+  // it at bind time (22P02) before any row could be touched, which we treat the same as "0 rows
+  // matched" rather than an error. Must run before that migration converts userId to a uuid FK
+  // column, which fails loudly if any row still holds a non-uuid string.
+  // See LegacyUserSyncService (src/users/services/legacy-user-sync.service.ts), the sole caller.
+  async retagLegacyUser(fromUserId: string, toUserId: string): Promise<number> {
+    let result;
+    try {
+      result = await this.preferenceRepo.update({ userId: fromUserId }, { userId: toUserId });
+    } catch (err) {
+      if (err?.code === '22P02') {
+        this.logger.info(
+          'Skipped legacy user source preference retag — userId column is no longer varchar, legacy literal cannot match',
+          { fromUserId, toUserId },
+        );
+        return 0;
+      }
+      throw err;
+    }
+    const affected = result.affected ?? 0;
+    if (affected > 0) {
+      this.logger.info('Retagged legacy user source preference rows to real user', {
+        fromUserId,
+        toUserId,
+        affected,
+      });
+    }
+    return affected;
+  }
+
+  private toResponseDto(entity: UserSourcePreference): UserSourcePreferenceResponseDto {
     return {
       id: entity.id,
       userId: entity.userId,
-      userEmail: raw.user_email ?? null,
+      userEmail: entity.user.email,
       sourceId: entity.sourceId,
       sourceName: entity.source.name,
       usefulCount: entity.usefulCount,
