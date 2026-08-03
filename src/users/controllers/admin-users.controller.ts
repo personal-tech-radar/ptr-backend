@@ -13,26 +13,20 @@ import {
   ApiBearerAuth,
   ApiOperation,
   ApiResponse,
-  ApiSecurity,
   ApiTags,
 } from '@nestjs/swagger';
-import { Roles } from '../../auth/decorators/roles.decorator';
-import { HybridAuthGuard } from '../../auth/guards/hybrid-auth.guard';
-import { RolesGuard } from '../../auth/guards/roles.guard';
+import { AdministratorAuthGuard } from '../../administrators/guards/administrator-auth.guard';
 import { PaginatedResponseDto } from '../../common/dto/paginated-response.dto';
 import { ErrorResponseDto } from '../../common/error/error-response.dto';
 import { QueryUserDto } from '../dto/query-user.dto';
 import { toUserResponseDto, UserResponseDto } from '../dto/user-response.dto';
-import { UserRole } from '../entities/user.entity';
 import { UserCommandService } from '../services/user-command.service';
 import { UserQueryService } from '../services/user-query.service';
 
 @ApiTags('Admin - Users')
-@ApiBearerAuth()
-@ApiSecurity('api-key')
+@ApiBearerAuth('administrator-bearer')
 @ApiBadRequestResponse({ type: ErrorResponseDto })
-@UseGuards(HybridAuthGuard, RolesGuard)
-@Roles(UserRole.ADMIN)
+@UseGuards(AdministratorAuthGuard)
 @Controller('admin/users')
 export class AdminUsersController {
   constructor(
@@ -41,7 +35,11 @@ export class AdminUsersController {
   ) {}
 
   @Get()
-  @ApiOperation({ summary: 'List users with pagination and filtering (admin only)' })
+  @ApiOperation({
+    summary: 'List users with pagination and filtering',
+    description:
+      'Returns normal-user accounts with profile, verification, onboarding, and lifecycle data. Administrator accounts are stored separately and never appear here.',
+  })
   @ApiResponse({ status: 200, type: PaginatedResponseDto })
   @ApiResponse({ status: 401, type: ErrorResponseDto })
   @ApiResponse({ status: 403, type: ErrorResponseDto })
@@ -54,7 +52,11 @@ export class AdminUsersController {
   }
 
   @Get(':id')
-  @ApiOperation({ summary: 'Get a single user by ID (admin only)' })
+  @ApiOperation({
+    summary: 'Get a single user by ID',
+    description:
+      'Returns one normal-user account and its profile state. This endpoint cannot resolve administrator identities.',
+  })
   @ApiResponse({ status: 200, type: UserResponseDto })
   @ApiResponse({ status: 401, type: ErrorResponseDto })
   @ApiResponse({ status: 403, type: ErrorResponseDto })
@@ -66,7 +68,11 @@ export class AdminUsersController {
 
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: 'Soft-delete a user (admin only)' })
+  @ApiOperation({
+    summary: 'Soft-delete a user',
+    description:
+      'Soft-deletes a normal-user account while preserving business history and referential integrity. It does not affect administrator accounts.',
+  })
   @ApiResponse({ status: 204 })
   @ApiResponse({ status: 401, type: ErrorResponseDto })
   @ApiResponse({ status: 403, type: ErrorResponseDto })

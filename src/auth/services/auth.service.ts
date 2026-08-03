@@ -59,7 +59,9 @@ export class AuthService {
       email: dto.email,
       passwordHash,
       displayName: dto.displayName,
-      timezone: dto.timezone,
+      // Browser timezone is captured during onboarding. A null value cannot be mistaken for a
+      // user-selected timezone and is safe because feeds/digests require completed onboarding.
+      timezone: null,
     });
 
     const rawToken = this.generateRawToken();
@@ -215,10 +217,11 @@ export class AuthService {
 
   private async issueTokens(user: User): Promise<AuthTokensResponseDto> {
     const accessToken = this.jwtService.sign(
-      { sub: user.id, email: user.email, role: user.role },
+      { sub: user.id, email: user.email, subjectType: 'user' },
       {
         secret: getJwtSecret(),
         expiresIn: toExpiresIn(process.env.JWT_EXPIRES_IN || '15m'),
+        audience: 'ptr-user',
       },
     );
 

@@ -7,11 +7,6 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 
-export enum UserRole {
-  USER = 'user',
-  ADMIN = 'admin',
-}
-
 export enum UserLevel {
   JUNIOR = 'junior',
   MIDDLE = 'middle',
@@ -33,17 +28,13 @@ export class User {
   displayName: string;
 
   // IANA timezone string, e.g. "Europe/Berlin".
-  @Column({ type: 'varchar' })
-  timezone: string;
-
-  @Column({ type: 'enum', enum: UserRole, default: UserRole.USER })
-  role: UserRole;
+  @Column({ type: 'varchar', nullable: true })
+  timezone: string | null;
 
   @Column({ type: 'varchar', nullable: true })
   githubUrl: string | null;
 
-  // Wired up here so Phase 2 (Onboarding) doesn't need a second migration for basic profile
-  // fields. Not user-settable via any endpoint in this phase.
+  // Onboarding maps this profile level to article difficulty.
   @Column({ type: 'enum', enum: UserLevel, nullable: true })
   level: UserLevel | null;
 
@@ -56,7 +47,7 @@ export class User {
   @Column({ type: 'timestamp', nullable: true, default: null })
   emailVerifiedAt: Date | null;
 
-  // Set by Phase 2's onboarding endpoint, not by anything in this phase.
+  // Feed and digest eligibility requires this timestamp.
   @Column({ type: 'timestamp', nullable: true, default: null })
   onboardingCompletedAt: Date | null;
 

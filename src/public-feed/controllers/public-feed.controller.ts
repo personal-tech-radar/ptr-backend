@@ -1,5 +1,12 @@
-import { Body, Controller, Get, Post, Query } from '@nestjs/common';
-import { ApiBadRequestResponse, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  ApiBadRequestResponse,
+  ApiOperation,
+  ApiResponse,
+  ApiSecurity,
+  ApiTags,
+} from '@nestjs/swagger';
+import { ApiKeyGuard } from '../../common/guards/api-key.guard';
 import { ErrorResponseDto } from '../../common/error/error-response.dto';
 import { PreviewFeedDto } from '../dto/preview-feed.dto';
 import { PreviewFeedResponseDto } from '../dto/preview-feed-response.dto';
@@ -8,10 +15,11 @@ import { QueryPublicFeedDto } from '../dto/query-public-feed.dto';
 import { PublicFeedCacheService } from '../services/public-feed-cache.service';
 import { PublicFeedPreviewService } from '../services/public-feed-preview.service';
 import { PublicFeedQueryService } from '../services/public-feed-query.service';
+import { ContentStreamQueryService } from '../../taxonomy/services/content-stream-query.service';
 
 // Fully public — no guards anywhere in this controller (no rate limiting either, deliberately
 // deferred to a future cross-cutting throttling pass).
-@ApiTags('Public Feed')
+@ApiTags('Public Content')
 @ApiBadRequestResponse({ type: ErrorResponseDto })
 @Controller('public/feed')
 export class PublicFeedController {
@@ -19,18 +27,25 @@ export class PublicFeedController {
     private readonly publicFeedQueryService: PublicFeedQueryService,
     private readonly publicFeedPreviewService: PublicFeedPreviewService,
     private readonly publicFeedCacheService: PublicFeedCacheService,
+    private readonly contentStreamQueryService: ContentStreamQueryService,
   ) {}
 
   @Get()
+  @UseGuards(ApiKeyGuard)
+  @ApiSecurity('api-key')
   @ApiOperation({
-    summary:
-      'Public, unauthenticated article feed — flat, paginated, strictly ordered by publishedAt ' +
-      'descending. No scoring, no day-grouping. See README for the eligibility criteria.',
+    summary: 'List the public article feed',
+    description:
+      'API-key content endpoint returning a flat, paginated feed of eligible globally analyzed articles, strictly ordered by publishedAt descending. Supports stream and date-range filters and contains no personalization, saved state, feedback, or user identity.',
   })
   @ApiResponse({ status: 200, type: PublicFeedResponseDto })
   @ApiResponse({ status: 400, type: ErrorResponseDto })
   async getFeed(@Query() query: QueryPublicFeedDto): Promise<PublicFeedResponseDto> {
-    const cacheKey = this.publicFeedCacheService.buildListKey(query);
+    const streams = await this.contentStreamQueryService.findAll();
+    const streamIds = query.stream?.length
+      ? streams.filter((stream) => query.stream?.includes(stream.key)).map((stream) => stream.id)
+      : streams.map((stream) => stream.id);
+    const cacheKey = await this.publicFeedCacheService.buildVersionedListKey(query, streamIds);
     const cached = await this.publicFeedCacheService.getList(cacheKey);
     if (cached) {
       return cached;
@@ -43,10 +58,9 @@ export class PublicFeedController {
 
   @Post('preview')
   @ApiOperation({
-    summary:
-      'Preview what a personal feed would look like for a given set of existing taxonomy ' +
-      'selections, without creating an account. Flat, top-30-by-score list — no day-grouping or ' +
-      'per-stream distribution. Caching is handled internally by PublicFeedPreviewService.',
+    summary: 'Preview a personalized feed before registration',
+    description:
+      'Anonymous rate-limited preview using selected existing technologies, interests, streams, and experience level without creating a user. Returns a cached flat top-30 result rather than day groups and does not persist personal interaction state.',
   })
   @ApiResponse({ status: 200, type: PreviewFeedResponseDto })
   @ApiResponse({ status: 400, type: ErrorResponseDto })

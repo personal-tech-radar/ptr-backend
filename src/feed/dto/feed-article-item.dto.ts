@@ -13,9 +13,9 @@ export class FeedArticleItemDto {
 
   @ApiProperty({
     description:
-      'Personal redirect link (${APP_URL}/go/{linkId}) — resolves to the real article URL and ' +
+      'Personal redirect link (${APP_URL}/r/{linkId}) — resolves to the real article URL and ' +
       'records the first open. Never the raw article URL.',
-    example: 'https://app.example.com/go/9b2f6b2e-4c7b-4e4a-9c2e-6f2b3a1d9e10',
+    example: 'https://app.example.com/r/9b2f6b2e-4c7b-4e4a-9c2e-6f2b3a1d9e10',
   })
   url: string;
 

@@ -1,693 +1,251 @@
-# Personal Tech Radar — Backend
-
-A NestJS service that automatically curates a daily engineering digest. It fetches articles from RSS/Atom feeds and GitHub release pages, runs a two-stage AI analysis pipeline optimised for token usage, and delivers a clean email digest via Resend.
-
-![C4 Context Diagram](./diagram/context/c4-context.png)
-
-**How it works:**
-
-1. A cron job fires every hour and dispatches a `fetch-all-sources` BullMQ job.
-2. The feed fetcher downloads each enabled source, parses RSS/Atom/GitHub releases, and saves all new articles to PostgreSQL. Duplicates are detected by URL hash; near-duplicates by title hash within 7 days. Articles older than 78 hours are stored but not queued for analysis.
-3. Each fresh article (≤ 78 h old, not a duplicate) triggers an `analyze-article` job. Analysis is global (no per-user dimension) and runs in two stages against a single `ArticleAnalysis` row per article:
-   - **Pre-screen (Stage 1)** — a lightweight OpenAI call using only the article title and feed description. Returns `preScreenIsRelevant` + `preScreenReason`. This stage acts as a cheap relevance gate and avoids spending tokens on full analysis for clearly irrelevant content.
-   - **Full analysis (Stage 2)** — runs only when `preScreenIsRelevant = true`. Calls OpenAI with the full article context, produces `relevanceScore`, `qualityScore`, scoring flags, taxonomy signals, and a digest summary, and stamps `fullAnalysisAt`. Full analysis is skipped (idempotent resume) if it already ran for the article.
-4. A `digest-sweep` cron job fires every 15 minutes (`DIGEST_SWEEP_CRON`) and evaluates every eligible user's own local send-time window (`DigestSweepService`) — daily fires Mon-Fri only at `DAILY_DIGEST_SEND_HOUR` local time, weekly fires Friday 14:00 local (fixed). A matching, not-yet-sent-today user gets a `send-personal-digest` job enqueued. `PersonalDigestBuilderService` then selects the best `DAILY_DIGEST_ARTICLES_LIMIT`/`WEEKLY_DIGEST_ARTICLES_LIMIT` articles for that one user, scored via `ScoringModule` against their own taxonomy selections, using a time-window fallback if the first window is under target. Articles already sent to that user in a prior digest are excluded.
-5. The digest is saved as a draft, scoped to that `userId`, then the email is rendered and sent through Resend to that user's own email. The digest status is updated to `sent`.
-6. At any time, `POST /digests/trigger` builds and sends a single, specific user's digest on demand (admin only).
-
----
-
-## Tech Stack
-
-| Layer | Technology |
-|---|---|
-| Framework | NestJS 11 (Express) |
-| Language | TypeScript 5.7 |
-| Database | PostgreSQL + TypeORM 0.3 |
-| Cache / Queues | Redis + BullMQ |
-| AI Analysis | OpenAI API |
-| Email | Resend SDK |
-| Feed Parsing | rss-parser |
-| Scheduler | @nestjs/schedule |
-| Validation | class-validator + class-transformer |
-| Documentation | Swagger / OpenAPI (`/docs`) |
-| Auth | API key guard (`X-API-KEY` header) for admin endpoints; JWT (access + persisted/hashed refresh tokens) for human users via `AuthModule` |
-
----
-
-## Project Structure
-
-```
-src/
-├── common/
-│   ├── database/          # TypeORM module + DataSource for migrations
-│   ├── redis/             # Global RedisService
-│   ├── s3/                # Global S3StorageService
-│   ├── http/              # HttpService — fetch wrapper with retry/backoff
-│   ├── error/             # Global exception filter + ErrorResponseDto
-│   ├── logging/           # LoggingService (thin NestJS Logger wrapper)
-│   ├── guards/            # ApiKeyGuard
-│   └── dto/               # PaginatedResponseDto
-├── config/
-│   ├── sources.manifest.json    # Declarative Source seed manifest (see "Syncing Sources" below)
-│   └── legacy-user.manifest.json  # Legacy single-owner account seed (see "Syncing the Legacy User" below)
-├── auth/                  # Register/login/refresh/logout, email verification, password reset
-├── users/                 # User entity + profile/onboarding endpoints (GET/PATCH/DELETE /users/me, POST /users/me/onboarding, GET /users/me/taxonomy)
-├── taxonomy/              # TechnologyInterest/ContentStream taxonomy, dedup resolver, merge endpoint
-├── sources/               # Source CRUD — RSS/Atom/GitHub feeds + web source discovery/extraction
-├── articles/              # Article storage and querying
-├── user-actions/          # SavedArticle + PersonalArticleLink — real per-user save/redirect/open-tracking
-├── feed/                  # Personal Feed API — day-grouped, scored, capped/distributed feed + Redis cache
-├── public-feed/           # Public, unauthenticated feed listing + taxonomy-based preview scoring
-├── feed-fetcher/          # Fetches and parses feeds, creates articles
-├── ai-analysis/           # OpenAI article analysis, ArticleAnalysis entity
-├── digest/                # Digest building, scoring, email body generation
-├── mail/                  # Resend email delivery
-├── queue/                 # BullMQ setup and QueueService
-├── scheduler/             # Cron jobs: fetch hourly, digest daily
-├── health/                # GET /health
-├── seeds/                 # Manifest sync CLI (config/sources.manifest.json -> Source/SourceCandidate)
-└── migrations/            # TypeORM migration files
-```
-
----
-
-## Domain Modules
-
-### AuthModule + UsersModule
-Multi-tenant account infrastructure. `User` (`src/users/entities/user.entity.ts`) holds `email`/`passwordHash`/`displayName`/`timezone`/`role` (`user` | `admin`) plus profile fields (`githubUrl`, `level`, digest opt-ins, `emailVerifiedAt`) and an `onboardingCompletedAt` column. `UserCommandService`/`UserQueryService` follow this repo's command/query split.
-
-**Auth flow** (`POST`/`GET /auth/*`, `AuthController`):
-1. `POST /auth/register` — creates the user immediately (email/password/displayName/timezone all required), persists an `EmailVerificationToken`, and sends a verification email via `MailService` — best-effort, matching the existing digest-send non-fatal-failure pattern (registration succeeds even if the email fails to send).
-2. `GET /auth/verify-email?token=` — consumes the token and sets `emailVerifiedAt`. Does not mark onboarding complete.
-3. `POST /auth/login` — email + password (validated via Passport `LocalStrategy` + `bcrypt.compare`), returns a short-lived JWT access token and a persisted, hashed, revocable refresh token (`RefreshToken` entity) — not a stateless JWT-only refresh.
-4. `POST /auth/refresh` — rotates the refresh token: the presented token is looked up by its SHA-256 hash, revoked, and a new access/refresh pair is issued. `JwtStrategy.validate()` rejects a token whose user has been soft-deleted (relies on TypeORM's default `deletedAt IS NULL` exclusion).
-5. `POST /auth/logout` — revokes the presented refresh token (idempotent).
-6. `POST /auth/password/forgot` / `POST /auth/password/reset` — `PasswordResetToken` issuance and consumption; a successful reset also revokes every other active refresh token for that user. `PATCH /auth/password` changes the password while logged in (current password required, JWT-protected).
-
-**Guards** (`src/auth/guards/`): `JwtAuthGuard` (JWT only), `HybridAuthGuard` (accepts either `X-API-KEY` — reusing `ApiKeyGuard`'s validation, and synthesizing an admin `request.user` principal (`role: UserRole.ADMIN`) when the key matches — or a JWT, for routes meant to serve both machine and human callers), `RolesGuard` + `@Roles(...)` decorator (role-gated routes), `@CurrentUser()` decorator (reads `request.user`).
-
-**MVP3 Phase 9 — Admin Bootstrap** (`AdminBootstrapService`, `src/auth/services/admin-bootstrap.service.ts`). Runs on every application startup (`OnModuleInit`) to guarantee a working admin login always exists. `ADMIN_EMAIL` and `ADMIN_PASSWORD` are both **required** — the app fails to boot if either is unset, a deliberately stricter-than-originally-planned choice that treats them exactly like other required secrets (`JWT_SECRET`, `API_KEY`; see `getJwtSecret`'s fail-fast pattern), no warn-and-skip fallback. Three outcomes at boot:
-- No user occupies `ADMIN_EMAIL` — a new admin is created (`role: ADMIN`, `emailVerifiedAt`/`onboardingCompletedAt` both set, password hashed via the new shared `hashPassword`/`BCRYPT_SALT_ROUNDS` util in `src/auth/utils/password-hash.util.ts`, also now used by `AuthService`).
-- An active (non-deleted) user already occupies `ADMIN_EMAIL` — no-op; its password is never reset, regardless of its current role.
-- A soft-deleted user occupies `ADMIN_EMAIL` — automatically resurrected as an admin (`UserCommandService.resurrectAsAdmin`: clears `deletedAt`, sets `role: ADMIN`, sets `emailVerifiedAt`/`onboardingCompletedAt` only if they were still `null`) — also without touching its existing password hash. This undoes a prior `DELETE /admin/users/:id` soft delete on every restart, so "the admin login always works" holds unconditionally.
-
-**MVP3 Phase 8a — Admin API guard migration.** `HybridAuthGuard` + `RolesGuard` + `@Roles(UserRole.ADMIN)` now also protect:
-- `SourcesController` (whole controller, `GET`/`POST`/`PATCH`/`DELETE /sources`, `GET`/`POST /source-candidates`)
-- `DigestController` (`POST /digests/trigger`)
-- `ArticlesController.addFeedback` only (`POST /articles/:id/feedback`) — `findAll`/`findOne` on that controller (`GET /articles`, `GET /articles/:id`) intentionally stay on `ApiKeyGuard` alone, unchanged
-
-Because `HybridAuthGuard` synthesizes an admin principal for a valid `X-API-KEY`, **existing `X-API-KEY`-only ops/automation callers keep working unchanged** against all four migrated routes — no client-side change required. The only new capability is that an admin JWT can now be used in place of the API key on these routes.
-
-**Profile endpoints** (`UsersController`, JWT-protected): `GET /users/me`, `PATCH /users/me` (displayName/timezone/githubUrl/level — role and verification/onboarding-completion state are not user-editable), `DELETE /users/me` (soft delete).
-
-**Onboarding endpoints** (`UsersController` + `OnboardingService`, JWT-protected):
-- `POST /users/me/onboarding` — body `{ level, technologyInterests: [{ kind, name }], contentStreamIds: [] }`. Each `technologyInterests` entry is resolved against the taxonomy via `TechnologyInterestCommandService.createOrReuse` (see TaxonomyModule below) and linked to the user; each `contentStreamIds` entry must reference an existing, enabled `ContentStream` or the whole request is rejected with `BadRequestException` before anything is linked. `user.level` is always updated; `user.onboardingCompletedAt` is set only if it was previously `null` — **safely re-callable**: calling it again after completion updates the level/selections but never un-sets the completion timestamp, so it doubles as "change my selections later" with no separate endpoint. Deliberately not wrapped in a single DB transaction: selections are persisted before the level/completion flag, so a mid-way failure leaves the user safely "not yet onboarded" and retryable. **Known limitation — additive-only:** re-submitting adds new technology/interest/content-stream selections but does not remove previously selected ones. Intentionally deferred since no consumer (Personal Feed, digest delivery) currently depends on removal semantics; revisit once Personal Feed or a dedicated subscription-management endpoint needs to support removing a selection.
-- `GET /users/me/taxonomy` — returns `{ level, technologyInterests, contentStreams, onboardingCompletedAt }` for the current user.
-
-**Admin Users endpoints** (`AdminUsersController`, `HybridAuthGuard` + `RolesGuard` + `@Roles(UserRole.ADMIN)`, MVP3 Phase 8a):
-- `GET /admin/users?page=&limit=&email=&role=&includeDeleted=` — paginated list; `email` is a case-insensitive partial (`ILIKE`) match, `role` an exact match, `includeDeleted` (default `false`) opts soft-deleted users back into the results.
-- `GET /admin/users/:id` — single user by id.
-- `DELETE /admin/users/:id` — soft-delete any user by id (reuses `UserCommandService.softDelete`, not restricted to "self" the way `DELETE /users/me` is).
-
-**Admin Taxonomy endpoints** (MVP3 Phase 8b, all `HybridAuthGuard` + `RolesGuard` + `@Roles(UserRole.ADMIN)`, all under `TaxonomyModule` — see below for entity/dedup detail):
-- `GET /admin/technology-interests?page=&limit=&kind=&includeDeleted=` (`AdminTechnologyInterestsController`) — paginated admin listing; `includeDeleted` (default `false`) opts soft-deleted (merged-away) rows back into the results via `.withDeleted()`.
-- `PATCH /admin/technology-interests/:id` — edit `name`/`aliases` only. `kind` is immutable and deliberately absent from `UpdateTechnologyInterestDto`; sending it anyway is rejected with `400` by the global `ValidationPipe`'s `forbidNonWhitelisted` (no extra guard code needed). A `name` change is checked for a `(kind, normalizedName)` collision via a query that explicitly calls `.withDeleted()` — that unique constraint is **not** a partial index (confirmed in the `CreateTaxonomyTables` migration), so a soft-deleted (merged-away) row still occupies its slot and would otherwise cause an uncaught DB unique-violation instead of a clean `409`. On collision, responds `409` with a message pointing at the existing merge endpoint instead.
-- `GET /admin/content-streams?includeDisabled=` (`AdminContentStreamsController`) — flat array (matches the public endpoint's shape, no pagination — fixed catalog of 5); `includeDisabled` (default `false`) opts disabled streams back into the results.
-- `PATCH /admin/content-streams/:id` — edit `name`/`description`/`sortOrder`/`enabled`. `key` is immutable and deliberately absent from `UpdateContentStreamDto`, rejected the same way as `kind` above. There is still no delete endpoint for content streams — they are never deleted at all (see `ContentStream` entity).
-- `GET /admin/user-technology-interests?page=&limit=&email=` (`AdminUserTechnologyInterestsController`) — flattened, paginated listing of every user's technology/interest selections (`userId`, `userEmail`, `technologyInterestId`, `technologyInterestName`, `technologyInterestKind`, `createdAt`); `email` is an `ILIKE` partial match on the linked user.
-- `GET /admin/user-content-streams?page=&limit=&email=` (`AdminUserContentStreamsController`) — same shape for content-stream selections (`contentStreamId`, `contentStreamKey`, `contentStreamName` in place of the technology-interest fields).
-
-The two user-selection listings above join through `UserTechnologyInterest`/`UserContentStream`'s existing entity relations (`.innerJoinAndSelect('uti.user', 'user')`, etc.) rather than importing `UsersModule`'s `User` repository into `TaxonomyModule` — `UsersModule` already imports `TaxonomyModule` (for `OnboardingService`), so importing it back would create a circular module dependency. **Deliberately placed in Phase 8b** (this sub-delivery) rather than Phase 8c (the upcoming read-only admin sub-delivery): both listings are joins over `TaxonomyModule`'s own join tables, so they live with the rest of the technology/interest and content-stream admin surface for domain locality, per the approved plan.
-
-### TaxonomyModule
-Personalization taxonomy, separate from `Source.category` (which classifies where content comes from, not what a user is interested in). Four entities: `TechnologyInterest` (`kind: 'technology' | 'interest'`, deduplicated by a resolver — see below), `ContentStream` (a fixed, curated set of 5 rows seeded by the `CreateTaxonomyTables` migration — never created/updated/deleted via the API in this phase), and their join tables `UserTechnologyInterest`/`UserContentStream`.
-
-**Deduplication pipeline** (`TechnologyInterestResolverService.resolve(kind, rawName)`), run for every onboarding selection:
-1. Normalize the input (`normalizeTechnologyInterestName` — lowercase/trim/collapse whitespace, but `.`/`#`/`+` are preserved since they're meaningful to a name's identity: "Node.js", "C#", ".NET").
-2. Exact `normalizedName` match on `(kind, normalizedName)`.
-3. Alias match — `aliases jsonb` containment (`@>`).
-4. Similarity match via Postgres `pg_trgm`'s `similarity()`, gated by `TAXONOMY_SIMILARITY_THRESHOLD` (default `0.6`), using a GIN trigram index on `normalizedName`. A match here gets the input string appended to its `aliases` if not already present.
-5. Otherwise, a new `TechnologyInterest` row is created.
-
-`TechnologyInterestCommandService.createOrReuse(userId, kind, name)` wraps the resolver: links the resolved/created row to the calling user (upsert-ignore — never errors if already linked), and — only when a genuinely new row was created — enqueues a job on the isolated `taxonomy-source-discovery` queue (see QueueModule below).
-
-`TechnologyInterestResolverService.resolveExisting(kind, rawName)` and `ContentStreamQueryService.findByKey(key)` are read-only lookups (exact + alias match only for the former, no similarity search, no create-on-miss) consumed by `AiAnalysisModule`'s Stage 2 full analysis to resolve an article's LLM-suggested technology/interest/stream signals against the existing catalog — an article's analysis output must never grow the taxonomy, so only `resolve()` (called exclusively from onboarding) ever creates a new `TechnologyInterest` row.
-
-**Endpoints:**
-- `GET /technology-interests?kind=&q=&page=&limit=` — paginated typeahead search, `JwtAuthGuard`. **MVP3 Phase 8b:** `TechnologyInterestResponseDto` now also includes `aliases: string[]` — additive only, every previously-existing field is unchanged.
-- `GET /content-streams` — the 5 enabled streams, `JwtAuthGuard`.
-- `POST /technology-interests/merge` — body `{ winnerId, loserId }`. Guards: `HybridAuthGuard` + `RolesGuard` + `@Roles('admin')` — the first route in the codebase to combine these (a low-blast-radius proof of the pattern ahead of a later, broader Admin API migration off `ApiKeyGuard`). `TechnologyInterestCommandService.merge` runs inside a single `dataSource.transaction()`: every `UserTechnologyInterest` row pointing at the loser is checked against the winner first — if the user already has both selected, the loser's join row is deleted instead of reassigned (avoiding a mid-transaction unique-constraint violation, which would otherwise abort the whole Postgres transaction and fail even the delete-fallback); otherwise it's reassigned to the winner. The loser is then soft-deleted with `mergedIntoId` set to the winner — technologies/interests are edited or merged, never hard-deleted.
-
-See "Admin Taxonomy endpoints" under AuthModule/UsersModule above for the Phase 8b admin edit/listing surface (`AdminTechnologyInterestsController`, `AdminContentStreamsController`, `AdminUserTechnologyInterestsController`, `AdminUserContentStreamsController`).
-
-### SourcesModule
-Manages feed sources. Admin-only endpoints, protected by `HybridAuthGuard` + `RolesGuard` + `@Roles(UserRole.ADMIN)` (`X-API-KEY` still works unchanged — see the guard-migration note under AuthModule/UsersModule above; previously plain `ApiKeyGuard`). When a source is created (via `POST /sources` or `npm run seed:sources:sync`), the URL is validated: for `rss`/`atom`/`github_release` sources the feed must return HTTP 200, parse as valid RSS/Atom, and contain at least one item; for `web` sources, a deterministic discovery pass (below) must find at least one working entry point before the source and its `WebSourceConfig` are saved. Sources that fail validation are rejected without being saved.
-
-- `GET /sources?page=&limit=&type=&category=&enabled=&includeDeleted=` — **MVP3 Phase 8a breaking change:** now returns `{ data: SourceResponseDto[], meta: { total, page, limit, totalPages } }` instead of a bare array. Filterable by `type`, `category`, `enabled`; `includeDeleted` (default `false`) opts soft-deleted sources back into the results. The only known consumer, `npm run seed:sources:sync`, calls `SourcesService`/`SourceSyncService` directly in-process and never through HTTP, so it is unaffected by this change.
-- `POST /sources` — add a source (validates feed URL, or runs web discovery, before saving)
-- `PATCH /sources/:id` — update a source
-- `DELETE /sources/:id` — soft-delete (sets `deletedAt`)
-
-**Admin User Source Preferences endpoint** (`AdminUserSourcePreferenceController`, `/admin/user-source-preferences`, same admin guard, MVP3 Phase 8c, view-only — no PATCH/DELETE):
-- `GET /admin/user-source-preferences?page=&limit=&email=&sourceId=` — flattened, paginated listing across all users (`userId`, `userEmail`, `sourceId`, `sourceName`, `usefulCount`, `notUsefulCount`, `feedbackAdjustment`, `createdAt`, `updatedAt`). `userId` is a real `uuid` FK to `User` (MVP3 Phase 11 — see ArticlesModule below), so `userEmail` is a genuine joined column and always resolves.
-
-Source categories: `backend_architecture_infra`, `engineering_deep_dives`, `node_typescript_nestjs`, `ai_engineering`
-
-Source types: `rss`, `atom`, `github_release`, `web`.
-
-#### Web source discovery (`SourceDiscoveryService`)
-For `type: 'web'` sources, entry points and article links are found via a deterministic fallback chain, now with a bounded headless-browser step and an opt-in AI structural fallback as the last two resorts:
-
-1. **robots.txt** — fetch `/robots.txt` and parse `Sitemap:` directives.
-2. **Common sitemap paths** — `/sitemap.xml`, `/sitemap_index.xml`, `/wp-sitemap.xml`, parsed with `fast-xml-parser` (handles both a sitemap index and a plain `urlset`, recursing one level into nested sitemaps). Candidate URLs are filtered with simple heuristics (date-like segments, multi-word slug-like segments) and a denylist of known non-article paths — both generic CMS/blog-engine junk (`/tag/`, `/category/`, `/page/`, etc.) and common non-blog site sections (`/careers/`, `/products/`, `/services/`, etc.) — and bounded to 20.
-3. **RSS/Atom** — checks `<link rel="alternate" type="application/rss+xml|atom+xml">` in the page HTML plus common paths (`/feed`, `/rss`, `/atom.xml`), validated through the *same* `fetchAndValidateFeed` helper (`src/common/util/feed-validator.util.ts`) used by `SourcesService.create` for `rss`/`atom` sources — no duplicated fetch/parse logic.
-4. **Cheerio entry-page link discovery** — fetches the configured entry URL(s), strips nav/header/footer/aside, groups remaining links by their nearest parent selector, and picks the largest qualifying group as the article-listing container.
-5. **Playwright-rendered link discovery** (`PlaywrightFetchService`) — for listing pages whose article links only appear after JavaScript runs. Launches a bounded, plain headless Chromium context (no stealth/evasion, no header spoofing — see the constraint below), renders the same entry URL(s), and runs the *same* link-grouping logic as step 4 against the rendered DOM. Gated by `PLAYWRIGHT_ENABLED` (default `false`); bounded by `PLAYWRIGHT_TIMEOUT_MS` as a hard navigation timeout.
-6. **OpenAI structural fallback** (`SourceStructureAiService`) — only reached once steps 1–5 have all failed. Assembles a small, bounded snapshot of the entry page (title, headings, feed links found, sitemap URLs found even if filtered out, JSON-LD fragments, a few HTML fragments, candidate links + anchor text, and why the chain failed — never full page content), asks OpenAI for a suggested method (`cheerio` or `playwright`) and selector, and **re-runs that suggestion through the real deterministic/Playwright discovery path before treating it as usable**. A suggestion that doesn't survive re-validation is discarded, never persisted. Gated by `SOURCE_DISCOVERY_AI_FALLBACK_ENABLED` (default `false`) and capped by `SOURCE_DISCOVERY_AI_FALLBACK_MAX_PER_DAY` (default `10`) via a Redis-backed daily counter.
-
-**Playwright product/legal constraint:** `PlaywrightFetchService` must never be used to bypass robots.txt directives, paywalls, auth walls, or anti-bot measures. It renders exactly what a plain headless Chromium instance would see — no stealth plugins, no fingerprint evasion, no injected cookies/sessions. If a site blocks a plain headless browser, that's the correct, intended outcome.
-
-**Where Playwright runs:** source creation/validation (`POST /sources`) runs it inline, synchronously, bounded by `PLAYWRIGHT_TIMEOUT_MS` — a one-off, low-frequency admin action. The hourly re-fetch cycle (`WebSourceFetcherService`, driven by `FeedFetcherService.fetchSource`) never runs it inline: when the deterministic chain is exhausted for an existing source, it enqueues a job onto the isolated `web-source-browser-fetch` queue instead (see QueueModule below), so a slow/hung site can never stall the rest of that cycle. `PlaywrightFetchProcessor` performs the actual browser fetch there and feeds the result back into the same ingestion path (dedup, publish-date priority, self-healing) that `WebSourceFetcherService.fetchSource` already uses.
-
-Each step returns a normalized `DiscoveryResult` (method, entry URLs, confidence, and — for the Cheerio/Playwright steps — the inferred `articleLinkSelector`).
-
-Content extraction (`ContentExtractionService`) uses its own ladder per article: JSON-LD (`Article`/`BlogPosting`) → OpenGraph meta tags → Readability+JSDOM → an optionally configured `articleContentSelector`.
-
-#### Source candidates + promotion (`SourceCandidatesService`)
-A `SourceCandidate` (`source_candidates` table) is a not-yet-vetted URL — created via `SourceCandidatesService.create(url, ...)`, which upserts by `normalizedUrl` (idempotent: re-discovering the same URL refreshes the existing row's `proposedConfig`/`lastValidatedAt` instead of duplicating it). Nothing currently calls `create` over HTTP; it exists for the seed-manifest sync flow to call directly.
-
-- `GET /source-candidates` — paginated list, filterable by `status` (`pending`, `validated`, `rejected`, `promoted`, `needs_review`). Same admin guard as the rest of `SourceCandidatesController` (`HybridAuthGuard` + `RolesGuard` + `@Roles(UserRole.ADMIN)`, previously plain `ApiKeyGuard`).
-- `POST /source-candidates/:id/promote` — runs discovery + sampled pre-analysis and promotes if enough samples are relevant
-- `POST /source-candidates/:id/reject` — manual rejection with an optional `reason`
-
-`SourceCandidatesService.promote(id)`:
-1. Runs the same `SourceDiscoveryService` fallback chain (sitemap → RSS/Atom → Cheerio → Playwright) against the candidate's `normalizedUrl`. Outright discovery failure marks the candidate `rejected` with the failure reason — no `Source` row is ever created.
-2. On success, creates a **provisional** `Source` with `enabled: false` (so the normal fetch cycle's `findAllEnabled` never picks it up mid-evaluation). When `detectedType` is `rss`/`atom` and discovery captured the actual working feed URL, a genuine `rss`/`atom` `Source` is created (no `WebSourceConfig`) — the same lean shape a real feed source would get. Otherwise (web-detected, or a feed URL wasn't captured) it creates `type: 'web'` plus a `WebSourceConfig` recipe, seeded with the candidate's own URL as the entry point (not discovery's output — using discovered article permalinks as the recurring crawl seed would break future re-discovery cycles). `SourceCandidate.detectedType` always records the real underlying mechanism as metadata regardless of which path was taken.
-3. Samples up to 5 of the entry URLs discovery already found (no separate crawl), fetches and extracts each via `ContentExtractionService`, and creates a minimal `Article` row per sample tied to the provisional source.
-4. Runs **pre-analysis only** (`AiAnalysisService.preAnalyzeArticle`) on each sampled article — never full analysis, preserving the token-economy pattern above.
-5. If ≥ 2 sampled articles come back `preScreenIsRelevant`, the provisional `Source` is flipped to `enabled: true` and the candidate is marked `promoted`. Otherwise the provisional `Source` is deleted (`ON DELETE CASCADE` removes its `WebSourceConfig` and sample `Article` rows with it) and the candidate is marked `needs_review` with a `validationError` explaining the relevant/sampled count — a candidate is never silently discarded.
-
-A candidate's `proposedConfig` (jsonb) can carry a `name`/`category` hint for the eventual `Source`; absent that, the domain is used as the name and a generic default category is applied.
-
-`WebSourceFetcherService` (in `FeedFetcherModule`) tries the source's stored `preferredDiscoveryMethod`/`preferredExtractionMethod` first; if that recipe no longer works, it walks the full fallback chain and — if a different method succeeds — persists the new method back onto `WebSourceConfig` along with `lastValidatedAt` (self-healing). Ingested web articles go through the same `urlHash`/`titleHash` dedup path as RSS articles. No raw HTML is archived; only extracted text and extraction metadata are stored on the `Article` row, so extraction is simply re-run from the network if needed.
-
-**Publish-date extraction:** `Article.publishedAt` for web-ingested articles is resolved in priority order — sitemap `<lastmod>` (captured during discovery) → `datePublished`/`dateCreated` from JSON-LD → OpenGraph `article:published_time` → ingestion time as a last resort. Perfect extraction isn't guaranteed for every site (a page with no structured data and a sitemap with no `<lastmod>` falls all the way through to "just discovered = just published"), but this makes the fallback the rare case rather than the default, which matters for the 24h/48h/72h digest window fallback and the 78h analysis staleness gate — both of which previously treated every web article as maximally fresh.
-
-### ArticlesModule
-Stores articles fetched from sources.
-
-- `GET /articles` — paginated list (filter by `status`, `sourceId`). `ApiKeyGuard` only, unchanged (moved from class-level to method-level in MVP3 Phase 8a — no behavior change).
-- `GET /articles/:id` — single article. `ApiKeyGuard` only, unchanged (same method-level move as above).
-- `POST /articles/:id/feedback` — submit `useful` / `not_useful` feedback for the current authenticated user; upserts their per-source `UserSourcePreference` row. **MVP3 Phase 11:** narrowed from `HybridAuthGuard` to `JwtAuthGuard` + `RolesGuard` + `@Roles(UserRole.ADMIN)` (`X-API-KEY` no longer works here) — the endpoint now resolves a real `userId` from the authenticated JWT user (`@CurrentUser()`) rather than the retired `DEFAULT_USER_ID` placeholder, so a machine API-key caller with no real user identity can no longer submit feedback.
-
-**Admin Articles endpoints** (`AdminArticlesController`, `/admin/articles`, `HybridAuthGuard` + `RolesGuard` + `@Roles(UserRole.ADMIN)`, MVP3 Phase 8a):
-- `GET /admin/articles` — same pagination/filtering as `GET /articles` (`ArticlesService.findAll`/`ArticleListQueryDto`, reused as-is), behind the admin guard instead of `ApiKeyGuard`.
-- `GET /admin/articles/:id` — single article (`ArticlesService.findOne`, reused as-is).
-- `DELETE /admin/articles/:id` — soft-delete an article (`ArticlesService.remove`, new in this phase — sets `Article.deletedAt` via `softDelete`, does not trigger `ArticleAnalysis`'s `onDelete: CASCADE`, which only fires on a hard delete).
-
-**Admin Article Feedback endpoint** (`AdminArticleFeedbackController`, `/admin/article-feedback`, same admin guard, MVP3 Phase 8c, view-only — no PATCH/DELETE):
-- `GET /admin/article-feedback?page=&limit=&email=&articleId=&type=` — flattened, paginated listing of feedback across all users (`articleId`, `articleTitle`, `userId`, `userEmail`, `type`, `createdAt`, `updatedAt`). `userId` is a real `uuid` FK to `User` (MVP3 Phase 11), so the join to resolve `userEmail` is a genuine declared relation and always resolves.
-
-Feedback no longer touches `Source.trustScore`. Each `useful`/`not_useful` vote updates a `UserSourcePreference` row (`usefulCount`, `notUsefulCount`, `feedbackAdjustment`) for that `(userId, sourceId)` pair — `feedbackAdjustment` is a dampened score in the range ±8 that feeds into digest ranking (see DigestModule below). The `article_feedbacks` table has a `userId` column and a `(articleId, userId)` unique constraint.
-
-Statuses: `new` → `pending_analysis` → `analyzed` | `duplicate` | `rejected` | `failed`
-
-Articles are always stored on ingest. The 78 h analysis gate operates at queue time (in `FeedFetcherService`), not at storage time — old articles remain in the database with status `new`.
-
-### FeedFetcherModule
-Fetches RSS/Atom/GitHub release feeds using `rss-parser`. Deduplicates by `urlHash` (SHA-256 of URL). Articles with a matching `titleHash` from the last 7 days are saved as `duplicate`. New articles are dispatched to the `article-analysis` queue automatically.
-
-`FeedFetcherService.fetchSource` branches on `source.type`: `web` sources are delegated entirely to `WebSourceFetcherService` (see SourcesModule above for the discovery/extraction chain); every other type keeps the original `rss-parser` path unchanged. Both paths run on the same `feed-fetch` cadence/queue — except the Playwright browser-fetch fallback, which runs on its own isolated `web-source-browser-fetch` queue (see QueueModule below) so a slow/hung site can never stall the rest of the hourly cycle. Article URLs are normalized (UTM/tracking params and fragments stripped, hostname lowercased, trailing slash removed — `src/common/util/url-normalize.util.ts`) before hashing/dedup.
-
-### AiAnalysisModule
-Fully global, two-stage pipeline against a single `ArticleAnalysis` row per article — no per-user dimension (the old per-user `ArticleRelevance` pre-screen gate was removed; `article_relevances` no longer exists). The row is created at Stage 1 and completed in place by Stage 2; `fullAnalysisAt` is the single source of truth for "has Stage 2 run".
-
-**Stage 1 — Pre-screen** (`ArticleAnalysis.preScreenIsRelevant`/`preScreenReason`/`preScreenAt`):
-- Input: article title + feed description only (no full content, no URL)
-- Output: `preScreenIsRelevant` (boolean) + `preScreenReason` (one sentence)
-- Prompt: `src/ai-analysis/instructions/pre-analyze-article.txt`
-- Creates the `ArticleAnalysis` row if none exists yet. If `false`: article marked `ANALYZED`, pipeline stops.
-- `AiAnalysisService.preAnalyzeArticle(articleId)` runs this stage in isolation (used by `SourceCandidatesService` to sample candidate articles without spending full-analysis tokens) and is idempotent — returns the existing row if one is already there.
-
-**Stage 2 — Full analysis** (fills in the same `ArticleAnalysis` row, stamps `fullAnalysisAt`):
-- Runs only when `preScreenIsRelevant = true` and `fullAnalysisAt` is still null (idempotent — a row that already completed Stage 2 is never recomputed)
-- Input: title, URL, author, feed summary
-- Prompt: `src/ai-analysis/instructions/analyze-article.txt`
-- Output fields on `ArticleAnalysis`: `shortSummary`, `whyItMatters`, `practicalValue`, `tags`, `relevanceScore`, `qualityScore`, `finalScore`, `complexityLevel` (`beginner`/`intermediate`/`advanced`/`architect`), `materialType` (`article`/`tutorial`/`release_notes`/`announcement`/`opinion`/`case_study`/`reference`), `urgencyScore`, `evergreen`, `breakingChanges`, `releaseData`/`securityData` (loose JSONB, only populated when relevant), `mainStreamId`, and the `shouldIncludeInDailyDigest`/`shouldIncludeInWeeklyDigest` flags (retained on the entity but not read by `PersonalDigestBuilderService`, which scores every candidate through `ScoringModule` instead — see DigestModule below). Every Stage-2-only field is nullable, since the row exists from Stage 1 onward.
-- Taxonomy resolution is read-only against the existing catalog: the LLM's `technologySignals`/`interestSignals` are each resolved via `TechnologyInterestResolverService.resolveExisting()` (exact + alias match only — never creates a new catalog row); matched signals become `ArticleTechnologyInterest` join rows, unmatched signals are dropped silently. The LLM's `mainStreamKey` (required) and up to 2 `secondaryStreamKeys` are resolved via `ContentStreamQueryService.findByKey()` against the fixed 5-key catalog. `ArticleAnalysis.mainStreamId` and the corresponding `ArticleStream` rows (`isPrimary: true` for main, `false` for secondary) are written together inside one `DataSource.transaction()`, so the denormalized column and the join-table flag can never disagree — enforced at the DB level too via a partial unique index (`IDX_article_streams_primary_per_article`, at most one `isPrimary = true` row per article).
-
-**New join tables:**
-- `article_technology_interests` — `(articleId, technologyInterestId)`, FKs directly against `Article`/`TechnologyInterest` (mirrors `ArticleFeedback`'s shape), valid even before Stage 2 runs.
-- `article_streams` — `(articleId, streamId, isPrimary)`, same FK pattern.
-
-### ScoringModule
-Services-only module (no controller, no HTTP endpoint, no schema change) implementing deterministic, no-LLM personal relevance scoring against the global `ArticleAnalysis`/taxonomy data. Consumed by later phases (Personal Feed, Public Preview) that don't exist yet.
-
-`RelevanceScoringService.computeScore(article, profile, config = DEFAULT_SCORING_CONFIG)` is pure and stateless (no repository injection). Formula:
-
-```
-eligible = article's streams (mainStreamId + secondary ArticleStream ids) intersect the user's selected content streams
-if !eligible: score = 0, all breakdown fields zero
-
-techInterestOverlap: 0 matches (article has tags but none overlap) -> 0
-                     0 matches (article has no tags at all)        -> 50 (neutral)
-                     1 match -> 60 | 2 matches -> 80 | 3+ matches -> 100
-complexityMatch = COMPLEXITY_MATCH_TABLE[user.level][article.complexityLevel] (either side null -> 50)
-qualityScore = ArticleAnalysis.qualityScore, or 50 if null
-recencyScore = shared bucketed recency score (100 fresh / 80 recent / 50 older-or-unknown), same bucketing DigestModule uses (DEFAULT_SCORING_CONFIG specifically uses the daily digest's 12h/24h window)
-
-coreScore = techInterestOverlap × 0.45 + complexityMatch × 0.20 + qualityScore × 0.25 + recencyScore × 0.10
-score = coreScore + sourcePreferenceAdjustment + directFeedbackAdjustment   // additive, not re-clamped after summing
+# Personal Tech Radar Backend
+
+NestJS backend for a multi-user technology radar. PostgreSQL stores users, the global taxonomy,
+sources, globally analyzed articles, interactions, and digests. Redis provides BullMQ queues,
+versioned feed caches, and exporter-neutral internal counters.
+
+## Architecture
+
+- `auth` and `users`: registration, verification, user JWT/refresh authentication, password
+  recovery, onboarding, profiles, and soft deletion.
+- `administrators`: separate administrator persistence, short-lived administrator JWTs, bootstrap,
+  password rotation, logout revocation, and administrator management.
+- `taxonomy`: one `TechnologyInterest` catalog with a `technology`/`interest` discriminator and
+  exactly five system streams.
+- `sources`: one discovery/onboarding coordinator, source identity resolution, candidates,
+  coverage, health, and administration.
+- `feed-fetcher` and `ai-analysis`: global ingestion, pre-analysis, and one-time full analysis.
+  The Playwright queue is an isolated slow sub-step of this same logical pipeline.
+- `scoring`, `feed`, and `public-feed`: deterministic personalization and versioned Redis caches.
+- `scheduler`, `queue`, and `digest`: one five-minute orchestrator and separate ingestion,
+  analysis, browser, discovery, and digest workers.
+- `user-actions`: saved articles, first-open tracking, and permanent email actions.
+- `common/metrics`: low-cardinality internal counters backed by Redis and structured logs. It is
+  deliberately exporter-neutral; Prometheus is not part of MVP3.
+
+Detailed operational designs:
+
+- [Source discovery and onboarding](src/sources/README.md)
+- [Scheduler and processing pipeline](src/scheduler/README.md)
+- [Users and profiles](src/users/README.md)
+- [Taxonomy](src/taxonomy/README.md)
+- [Ingestion](src/feed-fetcher/README.md)
+- [AI analysis](src/ai-analysis/README.md)
+- [Personal feed](src/feed/README.md)
+- [Digests](src/digest/README.md)
+- [Redirects and tracking](src/redirects/README.md)
+- [User article actions](src/user-actions/README.md)
+- [Production bootstrap migration](docs/production-bootstrap.md)
+
+`APP_URL` is the externally reachable origin embedded in email, tracking, action, and digest-page
+links. Local development commonly uses `http://localhost:3300`; staging and production must set
+their reachable HTTPS origin. Localhost works only when the recipient can reach that environment.
+
+The unified scheduler runs every five minutes. Daily digests are due every calendar day at 09:00
+in each user's timezone; weekly digests are due Friday at 14:00. Both verified email and completed
+onboarding are required for normal scheduled delivery.
+
+## Accounts and onboarding
+
+Registration requires email, password, and display name. Onboarding requires an IANA browser
+timezone, experience level (`junior`, `middle`, or
+`senior`), selected streams, and at least one technology or interest; GitHub URL is optional.
+Ordinary users are limited to five technologies and five interests. Administrator assignment may exceed
+those limits. Users may log in and complete onboarding before verifying their email. Personal
+feeds and scheduled digests require both verified email and completed onboarding. Before
+onboarding, timezone is null; onboarding persists the browser-provided IANA timezone.
+
+Users update display name, timezone, experience level, an optional HTTPS `github.com` profile URL,
+and daily/weekly digest opt-ins through `PATCH /users/me`. Digest delivery times remain fixed and
+are not editable. Re-submitting onboarding synchronizes (replaces) the user's taxonomy and stream
+selections rather than accumulating deselected streams.
+An identical onboarding payload is a no-op for persistence and feed-cache versioning; effective
+taxonomy and stream selections are compared as sets. Personal feed `beforeDate` accepts only a
+real calendar date in exact `YYYY-MM-DD` form. Oversized JSON responses use HTTP 413 with
+`PAYLOAD_TOO_LARGE`, while an exhausted discovery quota uses HTTP 429 with
+`DISCOVERY_LIMIT_REACHED`.
+
+The local Docker verification stack exposes its in-memory mail-capture API at
+`http://localhost:3400/api/messages`. Filter by recipient with `?to=user@example.com`. It retains
+the Resend-compatible text and HTML payloads for live verification and password-reset tests;
+production mail delivery is unchanged, and message bodies are never written to application logs.
+
+The fixed streams are `releases_and_changes`, `security`, `industry_pulse`,
+`engineering_experience`, and `expert_opinions_and_practices`.
+
+## Global analysis and personalization
+
+Every publication is stored globally. Pre-analysis accepts an article only when it matches at
+least one supported stream and at least one catalog technology or interest. A rejected pre-analysis
+is retained with `skipped` status. Full LLM analysis runs globally at most once and stores quality,
+taxonomy, streams, primary stream, normalized difficulty (`beginner`, `intermediate`, `advanced`),
+summaries, and release/security metadata. Historical `architect` difficulty values migrate to
+`advanced`.
+
+Personal feed and digest ranking use one deterministic formula:
+
+```text
+score = 0.25 × quality
+      + 0.25 × technologyMatch
+      + 0.20 × interestMatch
+      + 0.20 × difficultyMatch
+      + 0.10 × freshness
+      + personalSourceAdjustment
 ```
 
-Complexity-match table (row = user level, column = article complexity):
+Taxonomy match scores are 0 for no match, 60 for one, 80 for two, and 100 for three or more;
+an untagged dimension is neutral at 50. Difficulty uses this matrix:
 
-| User level ↓ / Article complexity → | beginner | intermediate | advanced | architect |
-|---|---|---|---|---|
-| **junior** | 100 | 70 | 30 | 10 |
-| **middle** | 60 | 100 | 70 | 30 |
-| **senior** | 20 | 50 | 100 | 90 |
+| User level | beginner | intermediate | advanced |
+| ---------- | -------: | -----------: | -------: |
+| junior     |      100 |           70 |       30 |
+| middle     |       60 |          100 |       70 |
+| senior     |       20 |           50 |      100 |
 
-**Content-stream mismatch is the only hard exclusion.** If none of the article's streams (main or secondary) are among the user's selected content streams, the article is `eligible: false` and scored 0 — it is filtered out upstream of ranking, not merely down-ranked.
+Freshness retains the existing buckets: 100 through 12 hours, 60 through 24 hours, then 20.
+Stream selection is an eligibility rule, not a score bonus.
 
-**Per-article feedback is a soft adjustment, not a hard exclusion — this is a deliberate product decision, not an oversight.** A `not_useful` vote on the exact article applies a `-8` penalty; a `useful` vote applies a `+8` bonus; no vote applies `0`. Either way the article remains eligible and is still scored and ranked — mirroring the existing source-level `UserSourcePreference.feedbackAdjustment` treatment in `DigestModule`, which is also additive rather than gating.
+Interactions affect ranking only through their source. Signal weights are useful `+4`, not useful
+`-4`, saved `+2`, and opened `+1`. With a neutral prior of 6, the personal source adjustment is:
 
-`sourcePreferenceAdjustment` reuses `UserSourcePreferenceService.getAdjustmentsForSources(userId, sourceIds)` (the same ±8-clamped, additively-smoothed value `DigestModule` uses). `directFeedbackAdjustment` reads the user's own `ArticleFeedback` row for that exact article (`useful`/`not_useful`). **`UserSourcePreference` and `ArticleFeedback` are keyed by a real `uuid` FK to `User` as of MVP3 Phase 11** (previously `varchar`, carrying only the legacy `DEFAULT_USER_ID` literal) — see ArticlesModule/SourcesModule below.
-
-`UserScoringProfileService.buildProfile(userId, candidateSourceIds, candidateArticleIds)` batch-assembles a `ScoringProfile` for a user: selected technology/interest ids and content-stream ids (via `TechnologyInterestQueryService.findSelectedByUser`/`ContentStreamQueryService.findSelectedByUser`), `level` (via `UserQueryService.findById`), `sourcePreferenceAdjustments` (via `UserSourcePreferenceService.getAdjustmentsForSources`), and `articleFeedback` (a batched `ArticleFeedback` repository query). Empty candidate ID arrays return empty maps without erroring.
-
-The bucketed recency scoring itself (`getRecencyScore(publishedAt, freshHours, recentHours)`) is a shared pure utility at `src/common/util/recency-score.util.ts`, reused by `ScoringModule`'s `RelevanceScoringService` — the same engine `PersonalDigestBuilderService` scores every digest candidate through (see DigestModule below).
-
-### UserActionsModule
-Real, per-user (`userId: uuid` FK to `User`) actions on articles — deliberately separate from the legacy, still-`varchar`-keyed `ArticleFeedback`/`UserSourcePreference` tables, which this module does not touch (their `userId` typing conversion is a later phase's job).
-
-**Entities:**
-- `SavedArticle` (`saved_articles`) — `(userId, articleId)` unique, cascades on delete of either side. A simple "bookmark" join row; no status beyond existing/not-existing.
-- `PersonalArticleLink` (`personal_article_links`) — `(userId, articleId, context)` unique. A permanent, reusable per-user link id (the row's own `id`) used as the `/go/:linkId` redirect target, plus `firstOpenedAt` (nullable, set once) for idempotent first-open tracking. `context` is `PersonalArticleLinkContext` (`feed` / `daily_digest` / `weekly_digest`) — mirrors `DigestType`'s two real values 1:1, plus `feed` (not a digest type, so not in `DigestType`).
-
-**Endpoints:**
-- `POST /saved-articles/:articleId` — save an article for the current user (JWT-guarded). Idempotent find-or-create; saving an already-saved article returns the existing row rather than erroring.
-- `DELETE /saved-articles/:articleId` — unsave (JWT-guarded). Idempotent: returns `204` even if the article wasn't currently saved — never `404` for "already not saved".
-- `GET /saved-articles` — paginated list of the current user's saved articles (JWT-guarded), joined to `Article`.
-- `GET /articles/:articleId/save-from-email?userId=&signature=` — unguarded, reached from an email link. Always renders a small HTML result page (success or failure), never a raw JSON error. On success, saves the article (idempotent — safe to click twice).
-- `GET /go/:linkId` — unguarded pure redirect (`@Redirect()`) to the linked article's URL. Records `firstOpenedAt` on the first resolve only; repeat visits redirect without touching it again (idempotent, no locking — a benign race on a near-simultaneous first open is acceptable). An unresolved `linkId` is a standard JSON `404`.
-
-**Admin endpoints** (`HybridAuthGuard` + `RolesGuard` + `@Roles(UserRole.ADMIN)`, MVP3 Phase 8c, view-only — no PATCH/DELETE; both entities here have real `uuid` FKs to `User`, so — unlike the article-feedback/user-source-preference admin listings above — `userEmail` is a genuine joined column and is never null):
-- `GET /admin/saved-articles?page=&limit=&email=&articleId=` (`AdminSavedArticleController`) — flattened, paginated listing of saved articles across all users (`userId`, `userEmail`, `articleId`, `article`, `savedAt`); `email` is an `ILIKE` partial match on the saving user.
-- `GET /admin/opens?page=&limit=&email=&context=&opened=` (`AdminOpensController`) — flattened, paginated listing of `PersonalArticleLink` rows across all users (`userId`, `userEmail`, `articleId`, `article`, `context`, `opened`, `firstOpenedAt`, `createdAt`); `opened` (derived from `firstOpenedAt !== null`) filters to opened (`true`) or never-opened (`false`) links.
-
-**HMAC signing scheme** (`SaveLinkSignatureService`): `signature = HMAC-SHA256(SAVE_LINK_SECRET, "save-article:v1:" + userId + ":" + articleId)`, hex-encoded. Verification guards on buffer length before calling `crypto.timingSafeEqual` (which throws rather than returning `false` on mismatched-length input), so a malformed or wrong-length signature fails closed instead of crashing the request. `SAVE_LINK_SECRET` is required at first use — an unset value throws immediately (`src/user-actions/utils/save-link-secret.util.ts`), mirroring `JWT_SECRET`'s fail-fast pattern.
-
-**Wired up as of MVP3 Phase 10:** `PersonalArticleLinkService.findOrCreateLinksBatch` generates every article link rendered in a personal digest email (`context: daily_digest`/`weekly_digest`, batch-created once against the final selected set only), and `SaveLinkSignatureService.buildSaveFromEmailUrl` backs the per-item "Save for later" link — see DigestModule below.
-
-### FeedModule
-`GET /feed` — the current user's personal feed: real DB queries scored via `ScoringModule` and rendered through `UserActionsModule`'s permanent per-user redirect links, day-grouped and cached in Redis. JWT-guarded, and additionally gated by `OnboardingCompletedGuard` (`src/feed/guards/`) — `@UseGuards(JwtAuthGuard, OnboardingCompletedGuard)`, in that order, since the guard reads `request.user.onboardingCompletedAt`, populated by `JwtAuthGuard`/`JwtStrategy`. A user who hasn't completed onboarding gets `403` with `errorCode: ONBOARDING_NOT_COMPLETED`.
-
-**Query params** (`QueryFeedDto`):
-- `beforeDate` (`YYYY-MM-DD`, optional, default: today in the user's own IANA timezone) — the most recent day, **inclusive**, in the returned range.
-- `days` (`1`–`30`, default `7`) — the range is `[beforeDate - days + 1, beforeDate]`, inclusive on both ends. Clamped server-side to the live `FEED_MAX_DAYS` env value even though the DTO's own `@Max` decorator is a hardcoded `30` (see "Deviations" below).
-- `stream` (repeatable, content stream **keys** e.g. `security`) — when given, per-day distribution across the user's own selected streams is skipped entirely; the day's list is just the top 50 matching articles by score.
-- `technology` / `interest` (repeatable, technology/interest **ids**) — two independent query keys, both filtering against the same underlying `TechnologyInterest` table (no `kind` cross-check is enforced — see "Deviations").
-- `source` (repeatable, source ids).
-- `saved` (`true`/`false`, default `false`) — switches to the user's own `SavedArticle` rows instead of the topical feed. **Cannot be combined with `stream`/`technology`/`interest`/`source`** — `400 Bad Request` if it is.
-
-Any unknown/invalid `stream` key, `technology`/`interest`/`source` id is a `400 Bad Request` (mirrors `OnboardingService`'s existing "unknown id" validation pattern).
-
-**The permanent 30-day floor:** every non-saved feed query is unconditionally bounded to the last `FEED_MAX_DAYS` days (default 30) from today, **regardless of the requested `beforeDate`/`days` range** — a request for an older window than that simply returns nothing for the out-of-range days. **`saved=true` is exempt from this floor** — a user's own saved articles must always be findable regardless of age; the saved path still respects an explicit `beforeDate`/`days` range if given, it just has no unconditional lower bound layered on top.
-
-**Candidate selection:**
-- *Non-saved path:* `ArticleAnalysis` inner-joined to `Article` (`status = 'analyzed'`, `deletedAt IS NULL`) and `Source` (`deletedAt IS NULL`), filtered to `fullAnalysisAt IS NOT NULL AND preScreenIsRelevant = true`, within `[floorDate, toDateExclusive)` where `floorDate = max(requestedFrom, today - FEED_MAX_DAYS + 1 days)`. `source`/`technology`/`interest` filters are applied in SQL (`technology`/`interest` via an `EXISTS` subquery against `article_technology_interests`); the `stream` filter is applied as an **in-memory post-filter** on each candidate's resolved `streamIds`, not SQL, because it also drives the per-day distribution algorithm below.
-- *Saved path (`saved=true`):* candidates come from the user's `SavedArticle` rows in range, joined the same way to `ArticleAnalysis`/`Article`/`Source` — but with no 30-day floor, and saved articles are **never excluded on stream-eligibility**; they're scored via `RelevanceScoringService.computeScore` for ranking purposes only, and included regardless of `eligible`.
-- `ArticleStream` and `ArticleTechnologyInterest` rows for the whole candidate set are then batch-fetched (`WHERE articleId IN (...)`, grouped in memory), and one `ScoringProfile` is built via `UserScoringProfileService.buildProfile(userId, candidateSourceIds, candidateArticleIds)` — all `O(1)` DB round trips regardless of candidate count, not N+1.
-- Each candidate is scored via `RelevanceScoringService.computeScore`; `eligible: false` results are dropped (non-saved path only).
-
-**Day grouping:** each candidate's local calendar date is computed via `Intl.DateTimeFormat('en-CA', { timeZone: user.timezone, ... })` — a pure, dependency-free helper in `src/common/util/timezone.util.ts` (`getLocalDateString`/`zonedStartOfDayUTC`/`zonedEndOfDayExclusiveUTC`/`addDaysToDateString`), also used to compute the SQL query's day-range boundaries in the user's own timezone rather than UTC. **Every day in the requested range appears in the response, even with zero matching articles (`articles: []`)** — chosen over omitting empty days so a client can render the full calendar range without independently recomputing it from `beforeDate`/`days`.
-
-**Capping/distribution algorithm**, applied per requested day:
-1. **`saved=true`:** no distribution logic — just the day's candidates sorted by score descending, capped at 100. Defensive only; a user is very unlikely to save 100+ articles in one day.
-2. **A `stream` filter was given:** filter the day's candidates to those whose resolved `streamIds` intersect the filter set, sort by score descending, take the top 50. This *is* the day's full list — no further 100-cap layering, since 50 ≤ 100.
-3. **No `stream` filter (distribute across the user's own selected streams, via `ContentStreamQueryService.findSelectedByUser`):**
-   - Build one capped (top 50), score-sorted sub-list ("queue") per selected stream the user has, stream order stable by `ContentStream.sortOrder`. An article matching 2+ streams (main + secondary) can appear in multiple sub-lists.
-   - **Round-robin merge:** one item at a time per stream, in stream order, highest-score-first within that stream's queue — duplicates allowed at this stage — until either every queue is exhausted or 100 items have been collected.
-   - **Dedup** the merged list by `articleId`, keeping the first occurrence.
-   - **Backfill** the slots freed by dedup from the single highest-scored, not-yet-selected candidate remaining across **all** streams' capped sub-lists (not just the stream that had the duplicate) — repeated until the freed slots are filled or the combined leftover pool is exhausted, up to the 100 cap.
-   - If the user has zero selected streams (shouldn't happen post-onboarding, which requires at least one), falls back defensively to a plain top-100-by-score list for that day.
-4. **Regardless of path:** the day's final list is re-sorted by score descending before being included in the response — the algorithm above determines *membership*, not final display order.
-
-**Redirect links:** after final day-grouping/capping, on the trimmed final article set **only** (never the full candidate pool), `PersonalArticleLinkService.findOrCreateLinksBatch(userId, finalArticleIds, PersonalArticleLinkContext.FEED)` is called exactly once — one `SELECT` for existing links, one batch `INSERT` for the missing ones (falling back per-row to the existing single-row `findOrCreateLink`'s catch-and-refetch handling only if a batch insert races a concurrent duplicate). Each `FeedArticleItem.url` renders as `${APP_URL}/go/{linkId}`, never the raw `Article.url`.
-
-**Caching (`FeedCacheService`):** key shape `feed:{userId}:{filterHash}:{beforeDate}:{days}`, where `filterHash` is a `sha1` hash (Node's built-in `crypto`, no new dependency) over the sorted/normalized `stream`/`technology`/`interest`/`source`/`saved` params — identical filters in a different query-param order hash identically. TTL is `FEED_CACHE_TTL_SECONDS` (default 600s / 10 min), read fresh on every write rather than baked into the key. `beforeDate` in the key is the raw request param (or the literal string `'today'` when omitted) rather than a fully resolved calendar date, to avoid a redundant user/timezone lookup in the controller on every request — see "Deviations" for the resulting (self-healing, TTL-bounded) trade-off. On a cache hit, the controller returns the cached response directly, skipping the query/scoring/grouping pipeline entirely.
-
-**Cache invalidation** — a small leaf module, `FeedCacheModule` (`src/feed/feed-cache.module.ts`), exports only `FeedCacheInvalidationService.invalidateForUser(userId)` (→ `RedisService.delByPattern('feed:' + userId + ':*')`, a `SCAN`-cursor-based bulk delete — never `KEYS`, which blocks Redis's single-threaded event loop under load). It's intentionally minimal (imports nothing feed-specific beyond the globally-available `RedisService`) so other modules can invalidate the cache without importing the rest of `FeedModule` (controller, query/cache services, `ScoringModule`/`TaxonomyModule` wiring) — avoiding a circular module dependency, since `FeedModule` itself imports `UsersModule`. Of the product's 6 conceptual invalidation triggers, this phase wires:
-- **Onboarding completed/updated** (`OnboardingService.completeOnboarding`) — covers technology-interest, content-stream, and level changes in one call site.
-- **Profile update** (`UserCommandService.updateProfile`) — unconditional on any profile field change (not diffed to "was `level` specifically present"), since a per-field diff added meaningful complexity for a cheap, idempotent, no-op-when-nothing-cached cache drop. Also covers `timezone` changes, which affect the feed's own day-boundary computation.
-- **Article ingestion completing analysis** — deliberately **not** wired to a targeted call site. Relies purely on the `FEED_CACHE_TTL_SECONDS` TTL backstop, per an explicit product decision — newly-analyzed articles become visible in the feed within one TTL window (≤10 min by default) without a dedicated invalidation call in `AiAnalysisService` or anywhere in the ingestion/analysis pipeline.
-- **Feedback submission** (`ArticleFeedbackService.upsertFeedback` / `UserSourcePreferenceService.applyFeedback`) — **not wired**. `POST /articles/:id/feedback` gained a real per-user identity in MVP3 Phase 11 (JWT-authenticated, `@CurrentUser()`), but invalidating the feed cache on every feedback submission was out of scope for that phase. TTL backstop applies here too until a later phase wires this trigger.
-
-**Index:** `Article(publishedAt, status)` composite index (migration `AddArticlePublishedAtStatusIndex`) — this is the first live per-request query against `articles`, unlike the batch/cron-driven digest and ingestion queries.
-
-### PublicFeedModule
-Two fully public, unauthenticated endpoints — **no guards at all** (`GET /public/feed`, `POST /public/feed/preview`). A separate `src/public-feed/` module, not an extension of `FeedModule`: it consumes `ScoringModule` and `TaxonomyModule` directly and never imports `UsersModule`/`UserActionsModule` — nothing here touches users or per-user actions. The preview endpoint builds its own `ScoringProfile` directly from request input rather than going through `UserScoringProfileService`.
-
-**`GET /public/feed`** (`QueryPublicFeedDto`: `page`/`limit` [capped at 100, lower than the personal feed's implicit ceiling, since this endpoint is unauthenticated], repeatable `stream` keys, optional `dateFrom`/`dateTo` in `YYYY-MM-DD`) — a flat, paginated list, strictly ordered `publishedAt DESC`. **No day-grouping and no scoring** — `RelevanceScoringService` is never called for this endpoint. Candidate predicate: `ArticleAnalysis` inner-joined to `Article` (`status = 'analyzed'`, `deletedAt IS NULL`) and `Source` (`deletedAt IS NULL`), filtered to `fullAnalysisAt IS NOT NULL AND preScreenIsRelevant = true`, plus a hardcoded `qualityScore >= 50` gate (named constant `PUBLIC_FEED_MIN_QUALITY_SCORE` in `public-feed-query.service.ts`, not env-configurable) and an `EXISTS` subquery against `article_streams` requiring at least one stream-membership row (optionally scoped to the requested `stream` keys). An unknown `stream` key is a `400`. **No freshness floor** — unlike the personal feed and preview, this endpoint has no 30-day (or any) lower bound unless the caller explicitly supplies `dateFrom`. Each item renders `Article.url` **raw** — never a `/go/{linkId}` redirect, since that mechanism requires a real authenticated `userId` that an anonymous caller doesn't have.
-
-**`POST /public/feed/preview`** (`PreviewFeedDto`: `technologyInterestIds` [optional, existing ids only], `contentStreamIds` [required, at least one, existing ids only]) — previews what a personal feed would look like for a given taxonomy selection, without creating an account. Every id must reference an existing `TechnologyInterest`/`ContentStream` row — unknown ids are a `400` (mirrors `OnboardingService`'s "unknown id" validation pattern) — and **never** creates a new catalog row; the preview service only calls the read-only `findByIds` lookups, never `TechnologyInterestResolverService`/`TechnologyInterestCommandService`'s create-or-reuse path. Candidate predicate is the same "successfully analyzed" join as the personal feed's non-saved path, floored to the personal feed's own 30-day window (`FEED_MAX_DAYS` env var, default 30) computed against a fixed `'UTC'` zone — there's no per-request timezone for an anonymous caller. **Deliberately no quality-score hard gate** — quality is already one of `RelevanceScoringService.computeScore`'s weighted scoring inputs, so gating on it a second time here would double-penalize low-quality articles. Each candidate is scored via the real `RelevanceScoringService.computeScore` against a `ScoringProfile` built directly from the request body (`{ technologyInterestIds, contentStreamIds, level: null }`, no `sourcePreferenceAdjustments`/`articleFeedback`); `eligible: false` results (content-stream mismatch) are dropped, and the response is a **flat, top-30-by-score list** — not `FeedQueryService`'s per-stream round-robin distribution/capping algorithm. Like the public feed, item URLs are raw, never `/go/{linkId}`.
-
-**Caching (`PublicFeedCacheService`):** key shapes `public-feed:list:{sha1 hash of sorted/normalized stream/dateFrom/dateTo/page/limit}` and `public-feed:preview:{sha1 hash of sorted technologyInterestIds + sorted contentStreamIds}` — deliberately distinct prefixes from `FeedCacheService`'s `feed:*`, so `FeedCacheInvalidationService`'s per-user `delByPattern('feed:' + userId + ':*')` can never collide with these identity-less public entries. TTL is `PUBLIC_FEED_CACHE_TTL_SECONDS` (default 600s), shared by both list and preview caching. **TTL-only — no invalidation logic**, since there's no per-caller identity to target invalidation at. For `GET /public/feed`, the cache check/write lives in `PublicFeedController` (mirroring `FeedController`'s structure); for `POST /public/feed/preview`, the cache check/write is encapsulated inside `PublicFeedPreviewService.preview` itself (after taxonomy-id validation, before the candidate query), so the controller simply delegates.
-
-**Known limitation — no rate limiting yet:** neither endpoint has any request throttling (`ThrottlerGuard`/`@Throttle`) applied. This is a deliberate, deferred gap for a future cross-cutting throttling pass across the whole app, not an oversight specific to this module.
-
-### DigestModule
-**MVP3 Phase 10 — Personal Digest Delivery.** Digests are now single-recipient and per-user: every `Digest` row has a real `userId` FK (`digests.userId` → `users.id`, `ON DELETE CASCADE`), and `PersonalDigestBuilderService.buildForUser(user, type)` builds one digest for exactly one user at a time. There is no more global/multi-recipient digest.
-
-**Sweep-based, per-user-local-time cron model** (replaces the old fixed-UTC per-cadence crons entirely): a single `digest-sweep` cron job (`DIGEST_SWEEP_CRON`, default every 15 minutes) dispatches `DigestSweepService.runSweep()`, which loads every eligible user and evaluates their own local time (`getLocalTimeParts`, IANA-timezone-aware, DST-correct) against two fixed windows:
-- **Daily** — Monday through Friday **only** (never Saturday/Sunday), local hour `DAILY_DIGEST_SEND_HOUR` (default 8), a 15-minute window.
-- **Weekly** — Friday, local hour 14:00, fixed and **not configurable** (no weekly cron env var).
-
-A user is only swept if `user.dailyDigestEnabled`/`user.weeklyDigestEnabled` is true for that cadence. Idempotency: a user is skipped if a `Digest` of that type already exists for their current local calendar day (an indexed `(userId, type, createdAt)` range query, not a full scan). A match enqueues a `send-personal-digest` job (`{ userId, type }`) — the sweep never builds inline.
-
-**Eligibility gate** (`UserQueryService.findEligibleForDigestSweep`) — a deliberate product decision for this phase: `deletedAt IS NULL AND onboardingCompletedAt IS NOT NULL AND emailVerifiedAt IS NOT NULL AND (dailyDigestEnabled = true OR weeklyDigestEnabled = true)`. **`emailVerifiedAt IS NOT NULL` is a hard requirement to receive ANY digest** — a user must have verified their email before the first digest is ever sent to them.
-
-**Candidate selection and ranking** reuse `ScoringModule` exactly — `PersonalDigestBuilderService` scores every candidate through the same `RelevanceScoringService.computeScore`/`UserScoringProfileService.buildProfile` engine as `FeedModule`/`PublicFeedModule` (content-stream mismatch is the only hard exclusion; see ScoringModule above for the full formula). Candidates come from `ArticleAnalysis` (`fullAnalysisAt IS NOT NULL`, `preScreenIsRelevant = true`, `status = 'analyzed'`) within a lookback window, widened if under target count: `[24h, 48h, 72h]` for daily, `[7d, 14d]` for weekly. Articles already sent to that specific user in a prior digest (draft or sent) are excluded — scoped by `Digest.userId`, so one user's digest history never blocks another's. Selection is capped at `DAILY_DIGEST_ARTICLES_LIMIT` (default 3) / `WEEKLY_DIGEST_ARTICLES_LIMIT` (default 5), with the same source/category diversification as before (max 2 per source, preferably max 2 per category). **Zero eligible candidates after fallback → no `Digest` row is created and no email is sent** (`buildForUser` returns `null`).
-
-Each built digest stores a `buildDebug` JSONB column (`requestedItemCount`, `fallbackUsed`, `attempts[]` — per-window `windowHours`/`candidatesFound`/`eligibleFound`, `finalWindowHours`, `finalSelectedCount`) and each `DigestItem` stores a `scoreBreakdown` JSONB column — now `ScoringResultBreakdown` (`techInterestOverlap`, `complexityMatch`, `qualityScore`, `recencyScore`, `sourcePreferenceAdjustment`, `directFeedbackAdjustment`), the same shape `ScoringModule` produces elsewhere.
-
-Personal article links (`PersonalArticleLinkService.findOrCreateLinksBatch`) are created once, scoped to the **final selected set only** (never the full candidate pool), with `context: daily_digest`/`weekly_digest`. Each rendered email item also carries a per-article "Save for later" link (`SaveLinkSignatureService.buildSaveFromEmailUrl`). Daily digest emails omit the `whyItMatters` paragraph per article; weekly includes it. **The 👍/👎 feedback-vote buttons have been dropped from digest emails entirely** (a deliberate product decision — no HMAC-signed replacement in this phase; per-article feedback can still be recorded, just not via an email button). Personal digest emails also omit the ops-facing pipeline-health footer stats block.
-
-- `POST /digests/trigger` — admin-only, **single-recipient**: body now requires `userId` (in addition to `type`). Resolves the target `User` (`404` if missing), builds a fresh digest for that one user via the same `PersonalDigestBuilderService` path the sweep uses, and sends it. Returns `404` if the user has no eligible candidates (nothing to send). `HybridAuthGuard` + `RolesGuard` + `@Roles(UserRole.ADMIN)` — `X-API-KEY` still works unchanged.
-
-**Admin Digests endpoints** (`AdminDigestController`, `/admin/digests`, same admin guard, view-only — no PATCH/DELETE):
-- `GET /admin/digests?page=&limit=&type=&status=&email=` — paginated listing (`DigestResponseDto`, now including `userId`/`userEmail` via a real join to `users` — not a cast-join trick), filterable by `type`/`status`/recipient `email` (`ILIKE` partial match).
-- `GET /admin/digests/:id` — single digest with its `DigestItem`s expanded (`DigestDetailResponseDto`, each item including its joined `Article`, `position`, and `scoreBreakdown`).
-
-### MailModule
-Sends digest emails via Resend SDK. `MailService.sendDigest(digest, to)` takes an explicit recipient — there is no more `DIGEST_TO_EMAIL` fallback env var (digests are single-recipient and per-user now). `DIGEST_FROM_EMAIL` is still used as the sender.
-
-### QueueModule
-Five BullMQ queues backed by Redis:
-- `feed-fetch` — `fetch-all-sources`, `fetch-source`
-- `article-analysis` — `analyze-article`
-- `digest` — `digest-sweep`, `send-personal-digest`. Concurrency-bounded (`DIGEST_QUEUE_CONCURRENCY`, default `5`) — each personal digest build fans out several DB queries plus an OpenAI call, so an unbounded worker could overwhelm both under a large eligible-user sweep.
-- `web-source-browser-fetch` — `browser-fetch-source`. Isolated from the others: its own queue/worker, its own concurrency ceiling (`PLAYWRIGHT_QUEUE_CONCURRENCY`, default `1`), and its own hard job timeout derived from `PLAYWRIGHT_TIMEOUT_MS`, so a slow/hung Playwright fetch can never block `feed-fetch` or `article-analysis`. Processed by `PlaywrightFetchProcessor`.
-- `taxonomy-source-discovery` — `discover-technology-source`. Isolated for the same reason: its own queue/worker and its own concurrency ceiling (`TAXONOMY_SOURCE_DISCOVERY_QUEUE_CONCURRENCY`, default `2`). Enqueued by `TechnologyInterestCommandService.createOrReuse` only when a genuinely new `TechnologyInterest` is created. `TaxonomySourceDiscoveryProcessor` is a deliberate stub in this phase — no real keyword-based web search exists or is approved yet (a separate future decision); it only writes one `TaxonomySourceDiscoveryRequest` row per job (status `pending_manual_review`) plus a structured log line, for an operator to action manually.
-
-### SchedulerModule
-Cron jobs registered dynamically from env vars:
-- `FETCH_CRON` (default `0 * * * *`) — dispatch `fetch-all-sources` every hour
-- `DIGEST_SWEEP_CRON` (default `*/15 * * * *`) — dispatch `digest-sweep`, which evaluates every eligible user's own local send-time window (see DigestModule above)
-
----
-
-## Getting Started
-
-### 1. Install dependencies
-```bash
-npm install
+```text
+clamp(-8, 8, weightedSignals / (absoluteWeightedSignals + 6) × 12)
 ```
 
-### 2. Configure environment
-```bash
-cp .env.example .env
-# Edit .env with your DB, Redis, OpenAI, and Resend credentials
+There is no direct article-feedback term, inferred taxonomy preference, time decay, or mandatory
+user-by-article relevance table. Global source aggregates use the same relative weights for admin
+operations; they never disable a source or reorder the public feed.
+
+## Feeds and caches
+
+`GET /feed` is authenticated, localized into calendar-day groups, and supports stream, technology,
+interest, source, date, and saved filters. `GET /public/feed` requires the public-content API key
+and remains ordered strictly by publication date. `POST /public/feed/preview` is anonymous and
+scores a pre-registration selection without creating a user.
+
+Analyzed articles with a genuinely absent or malformed publication date remain public-eligible for
+backward compatibility, but dated articles always sort first. Undated rows use `createdAt DESC`,
+then article ID descending, so pagination and cached/uncached ordering remain deterministic.
+
+## Access boundaries and public content
+
+The API has four non-interchangeable access mechanisms:
+
+| Access                        | Endpoints                                                                                                                                      |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| No credentials                | health, registration/verification/login/refresh/logout/password recovery, public preview, opaque redirects, email actions, digest stream pages |
+| `X-API-KEY` only              | `GET /articles`, `GET /articles/:id`, `GET /public/feed`                                                                                       |
+| User bearer JWT only          | profile/onboarding, taxonomy selection, personal feed, saved articles, feedback, source submission                                             |
+| Administrator bearer JWT only | every `/admin/**` route                                                                                                                        |
+
+Public article DTOs contain renderable analysis metadata, source, taxonomy, streams, original and
+public-redirect URLs, and separate public-click/personal-open counters. They omit processing,
+queue, debug, private scoring, saved, feedback, and identity state. The public feed uses the same
+analyzed/stream/quality eligibility and strict publication-date ordering.
+
+Administrator analysis retry uses the article's bounded deterministic BullMQ identity. Retained
+completed or failed history is explicitly replaced; an executable retry is prepared before the
+article's pending state commits, and a failed PostgreSQL transaction compensates newly prepared
+queue work. PostgreSQL and Redis are coordinated recoverably rather than described as one ACID
+transaction.
+
+Taxonomy source-discovery retry follows the same recoverable coordination model. A unique request
+row per taxonomy records lifecycle, attempt count, retry count, timestamps, and a sanitized terminal
+error; provider credentials are never retained in BullMQ failure history.
+
+Personal links use permanent `GET /r/:uuid` redirects. The first user/article opening increments
+the personal counter and opened
+source signal once. `GET /go/articles/:articleId` increments the public click counter on every
+request without creating user interaction data. Counter increments do not invalidate feed caches.
+
+Redis maintains a version for each stream and a version for each user's feed-affecting profile.
+Per-stream keys depend on their stream version; combined keys depend on every selected stream
+version. Successful ingestion increments only completed stream versions. Profile selection,
+timezone-independent feed preferences, or experience-level changes increment the user version.
+Old keys expire by TTL without enumerating all users.
+
+## Digests
+
+Daily digests are due every day at 09:00 local time. Weekly digests are due Friday at 14:00 local
+time. Times are fixed. The scheduler evaluates users every five minutes with IANA-timezone/DST-safe
+local periods.
+
+Daily periods begin at the previous successful daily delivery and are capped at 24 hours. Weekly
+periods begin at the previous successful weekly delivery and are capped at seven days. First
+digests use those same maximum windows. A unique `(user, type, localPeriod)` identity makes
+generation idempotent. Delivery retries resend the stored digest and permanent action UUIDs.
+
+Daily selection allows two articles per selected primary stream; weekly allows three. Streams with
+no result are omitted, an article appears once per digest, and opened/saved or previously delivered
+articles remain eligible. Empty results persist as `skipped_empty` and are not emailed.
+
+Both email types render one description paragraph, tracked title/publication/Open links, and
+permanent JWT-free Save, Useful, and Not useful actions. Temporary UUID digest-stream pages expose
+only selected articles and actions, never profile data. Digest statistics are immutable generation
+snapshots.
+
+Generated emails include a “Browse by stream” section linking to those temporary pages. The same
+permanent page URLs are returned as `streamPages` by administrator digest list and detail
+responses, allowing manual preview and troubleshooting without database access.
+
+Interactive saved-article management is separate and requires a normal-user JWT:
+`POST /saved-articles/:articleId`, `DELETE /saved-articles/:articleId`, and
+`GET /saved-articles`. Digest emails use `GET /email-action/:id` with a permanent opaque UUID;
+there is no user ID or reusable authentication secret in the URL.
+
+## Source health and administration
+
+Sources are `active`, `degraded`, or `disabled`. Three consecutive failed logical ingestion jobs
+degrade an active source; three more disable it. Internal HTTP retries count as one logical attempt.
+Success resets failures and restores active status. Disabled sources require admin recovery.
+
+Administrators are not users. They authenticate through `/admin/auth/*` with a separate audience,
+subject type, token version, strategy, and guard. All dashboard routes live under `/admin/**` and
+provide paginated operations for users, articles, taxonomy, sources, candidates, coverage,
+digests, interactions, and safe queue actions. API keys and user JWTs cannot authorize them.
+Administrator digest triggers create stored preview deliveries using a target user's profile but
+send only to the triggering administrator; preview delivery and resend never change the target
+user's scheduled digest period.
+Users never receive a global source-list endpoint. Users, sources, and articles are soft-deleted;
+reference catalogs and business history are retained.
+
+## Configuration
+
+Copy `.env.example` to `.env`. Important values include PostgreSQL/Redis connectivity,
+`OPENAI_API_KEY`, `RESEND_API_KEY`, JWT secrets, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, and:
+
+```dotenv
+TECHNICAL_HISTORY_RETENTION_DAYS=30
 ```
 
-### 3. Generate and run database migrations
+The admin bootstrap and legacy-user migration are idempotent. Runtime user configuration comes
+only from the database; the legacy manifest is a one-time migration input.
 
-Migrations are generated by the TypeORM CLI — never hand-written. With a running PostgreSQL, generate one migration per domain:
+## Development
 
 ```bash
-npm run migration:generate -- src/migrations/CreateSources
-npm run migration:generate -- src/migrations/CreateArticles
-npm run migration:generate -- src/migrations/CreateArticleAnalyses
-npm run migration:generate -- src/migrations/CreateDigests
-npm run migration:generate -- src/migrations/CreateDigestItems
-```
-
-Then apply:
-```bash
+npm ci
 npm run migration:run
-```
-
-### 4. Sync initial sources from the manifest
-```bash
 npm run seed:sources:sync
-```
-
-### 5. Start in development mode
-```bash
+npm run seed:legacy-user:sync
 npm run start:dev
 ```
 
-Swagger UI: `http://localhost:3000/docs`
-Health check: `http://localhost:3000/health`
-
----
-
-## Environment Variables
-
-| Variable | Description | Default |
-|---|---|---|
-| `APP_NAME` | Application name | `ptr-backend` |
-| `PORT` | HTTP port | `3000` |
-| `NODE_ENV` | Environment | `development` |
-| `DB_HOST` | PostgreSQL host | `localhost` |
-| `DB_PORT` | PostgreSQL port | `5432` |
-| `DB_USER` | PostgreSQL user | `postgres` |
-| `DB_PASSWORD` | PostgreSQL password | — |
-| `DB_NAME` | PostgreSQL database | `ptr` |
-| `REDIS_HOST` | Redis host | `localhost` |
-| `REDIS_PORT` | Redis port | `6379` |
-| `REDIS_PASSWORD` | Redis password | — |
-| `API_KEY` | Admin API key for `X-API-KEY` header | — |
-| `APP_URL` | Public base URL of this API (used in digest email article/save links, and in verification/password-reset email links) | — |
-| `SAVE_LINK_SECRET` | HMAC secret signing save-from-email links (`SaveLinkSignatureService`) | — |
-| `JWT_SECRET` | Secret used to sign access JWTs | — |
-| `JWT_EXPIRES_IN` | Access JWT lifetime | `15m` |
-| `JWT_REFRESH_EXPIRES_IN` | Refresh token lifetime (opaque, persisted, hashed, revocable `RefreshToken` entity — not JWT-signed) | `30d` |
-| `EMAIL_VERIFICATION_TOKEN_TTL_HOURS` | Hours an email verification token stays valid | `48` |
-| `PASSWORD_RESET_TOKEN_TTL_HOURS` | Hours a password reset token stays valid | `2` |
-| `ADMIN_EMAIL` | Email of the admin account `AdminBootstrapService` ensures exists on every boot — required, app fails to boot if unset | — |
-| `ADMIN_PASSWORD` | Password for the same bootstrap admin account — required, app fails to boot if unset; never used to reset an existing user's password | — |
-| `OPENAI_API_KEY` | OpenAI API key | — |
-| `OPENAI_MODEL` | OpenAI model | `gpt-4o-mini` |
-| `PLAYWRIGHT_ENABLED` | Master kill switch for the Playwright browser-fetch fallback | `false` |
-| `PLAYWRIGHT_QUEUE_CONCURRENCY` | Concurrency for the `web-source-browser-fetch` queue worker | `1` |
-| `PLAYWRIGHT_TIMEOUT_MS` | Hard navigation timeout for Playwright, and the base for the queue job's hard timeout | `30000` |
-| `SOURCE_DISCOVERY_AI_FALLBACK_ENABLED` | Master switch for the OpenAI structural discovery fallback | `false` |
-| `SOURCE_DISCOVERY_AI_FALLBACK_MAX_PER_DAY` | Redis-backed daily cap on OpenAI calls for structural fallback | `10` |
-| `TAXONOMY_SIMILARITY_THRESHOLD` | Minimum `pg_trgm` similarity score for `TechnologyInterestResolverService`'s dedup match | `0.6` |
-| `TAXONOMY_SOURCE_DISCOVERY_QUEUE_CONCURRENCY` | Concurrency for the `taxonomy-source-discovery` queue worker | `2` |
-| `RESEND_API_KEY` | Resend API key | — |
-| `DIGEST_FROM_EMAIL` | Sender email (verified in Resend) | — |
-| `DAILY_DIGEST_ARTICLES_LIMIT` | Number of articles included in a user's daily digest | `3` |
-| `WEEKLY_DIGEST_ARTICLES_LIMIT` | Number of articles included in a user's weekly digest | `5` |
-| `DIGEST_QUEUE_CONCURRENCY` | Concurrency for the `digest` queue worker (`digest-sweep`/`send-personal-digest`) | `5` |
-| `FEED_CACHE_TTL_SECONDS` | TTL for a cached computed Personal Feed response (`FeedCacheService`) | `600` |
-| `FEED_MAX_DAYS` | Max `days` query param for `GET /feed`, and the width of the permanent non-saved-feed date floor | `30` |
-| `PUBLIC_FEED_CACHE_TTL_SECONDS` | TTL for cached `GET /public/feed` and `POST /public/feed/preview` responses (`PublicFeedCacheService`) | `600` |
-| `FETCH_CRON` | Cron for feed fetching | `0 * * * *` |
-| `DIGEST_SWEEP_CRON` | Cron for the digest sweep (per-user-local-time window evaluation — see DigestModule) | `*/15 * * * *` |
-| `DAILY_DIGEST_SEND_HOUR` | Local hour (0-23, Mon-Fri only) at which a user's daily digest is sent | `8` |
-| `CORS_ORIGINS` | Allowed origins (production) | — |
-| `SWAGGER_SERVER_URL` | Swagger server URL (production) | — |
-
----
-
-## Database Migrations
-
-Migrations are generated by the TypeORM CLI by diffing entity definitions against the live database schema. Never hand-write migration files.
+Verification:
 
 ```bash
-npm run migration:generate -- src/migrations/DescriptiveName   # Generate from entity diff
-npm run migration:run                                           # Apply pending migrations
-npm run migration:revert                                        # Revert last migration
-npm run migration:show                                          # List migration status
+npm test -- --runInBand
+npm run test:e2e
+npm run lint
+npx tsc --noEmit
+npm run build
 ```
 
-Name migrations descriptively per domain: `CreateSources`, `CreateArticles`, `AddPublishedAtIndex`, etc.
-
-Production: `npm run migration:run:prod` (requires `npm run build` first)
-
-**Ordering dependency (MVP3 Phase 11):** `LinkArticleFeedbackAndUserSourcePreferencesToUsers` converts `article_feedbacks.userId`/`user_source_preferences.userId` from `varchar` to a real `uuid` FK. It will fail loudly (`invalid input syntax for type uuid`) if any row still holds the legacy `'default_user'` literal — run `npm run seed:legacy-user:sync` first (see "Syncing the Legacy User" above), which retags every such row onto the real legacy user's `uuid` before this migration ever runs.
-
----
-
-## Syncing Sources (`config/sources.manifest.json`)
+Production startup after building:
 
 ```bash
-npm run seed:sources:sync              # sync declarative fields only
-npm run seed:sources:sync -- --force   # also overwrite enabled/trustScore
-```
-
-Replaces the old `seed:sources`/`seeds/seed.ts` one-shot insert script (deleted). `src/seeds/sync-sources.ts` is a thin CLI entrypoint that bootstraps the full Nest application context and delegates to `SourceSyncService` (`src/sources/services/source-sync.service.ts`), so it reuses the exact same `SourcesService`/`SourceDiscoveryService`/`SourceCandidatesService` machinery as the rest of the app rather than re-implementing feed validation or web discovery.
-
-**Manifest format (v2):** `config/sources.manifest.json` is `{ "version": 2, "sources": [...] }`. Each entry has a `seedKey` (stable slug, informational — carried onto a resulting `SourceCandidate.seedKey`, never used to match `Source` rows), `name`, `seedUrl`, `sourceType` (optional; disambiguates `rss`/`atom`/`github_release` when `discovery.mode` is `'rss'`), `category`, `trustScore`, `enabled`, and a `discovery` block (`mode: 'auto' | 'rss' | 'web'`, plus `entryUrls`/`allowAiFallback`/`allowedPathPatterns`/`articleLinkSelector` as needed). All 24 currently-shipped sources use `discovery.mode: 'rss'` (a known-working feed at `seedUrl`) with `allowAiFallback: false`.
-
-**Matching — normalized URL, not a `seedKey` column:** this phase intentionally added no migration. `Source` already has a unique, indexed `url` column, so existing rows are matched by `normalizeUrl(source.url) === normalizeUrl(entry.seedUrl)` (the same normalization used elsewhere for dedup) instead of adding a new `seedKey` column. Practical implication: if an entry's `seedUrl` changes in the manifest, sync treats it as a new source rather than migrating the old row — retiring a moved/renamed source is a deliberate operator action (disable the old row), not something sync infers automatically.
-
-**Sync semantics:**
-- **Declarative fields** (`name`, `category`, `url`) sync on every run, force or not.
-- **Operational fields** (`enabled`, `trustScore`) only sync with `--force` — a plain re-run never clobbers an operator's hand-tuned values just because the manifest has since changed.
-- **Discovery per entry's `mode`:** `rss` requires a working feed at `seedUrl`; `web` goes straight through `SourcesService.create`'s existing web-discovery chain (sitemap → RSS/Atom → Cheerio → Playwright → optional AI fallback); `auto` tries `seedUrl` as a feed first, then falls back to the same web-discovery chain.
-- **Discovery failure never fails the run:** an entry whose discovery/feed-validation fails is instead upserted as a `SourceCandidate` (via `SourceCandidatesService.create`, reusing its idempotent upsert-by-`normalizedUrl` logic) and pushed to `needs_review` with the failure reason recorded.
-- **Continue-on-error:** one entry throwing unexpectedly (not a routine discovery failure) is logged and skipped — matching `FeedFetcherService.fetchAllSources`'s per-source isolation — so the rest of the manifest still syncs.
-- **Idempotent:** running sync twice with no `--force` creates no duplicate sources and leaves `enabled`/`trustScore` untouched on the second run.
-
-**Legacy format support:** if `config/sources.manifest.json` doesn't exist at all, sync falls back to `config/sources.seed.json` in the old bare-array shape, for the migration window only. If `config/sources.manifest.json` exists but contains a bare array (renamed but not yet converted), that's read as legacy too. Either way, each legacy entry is converted to a v2 entry with `discovery: { mode: 'rss' }` and a slug generated from its `name`.
-
-**Operational note:** a fresh/empty database now has **zero** sources until `npm run seed:sources:sync` is run explicitly — there is no more implicit auto-seed (see Deployment below).
-
----
-
-## Syncing the Legacy User (`config/legacy-user.manifest.json`)
-
-```bash
-npm run seed:legacy-user:sync
-```
-
-`src/seeds/sync-legacy-user.ts` mirrors `sync-sources.ts`'s shape exactly — a thin CLI entrypoint that bootstraps the full Nest application context and delegates to `LegacyUserSyncService` (`src/users/services/legacy-user-sync.service.ts`).
-
-**What it does (MVP3 Phase 11 — Legacy User Migration):** idempotently find-or-creates the one legacy single-owner `User` account, mirroring `AdminBootstrapService`'s find/create/resurrect-if-soft-deleted pattern — but always with `role: 'user'`, never `'admin'`. Profile fields (`timezone`, `level`, `githubUrl`) sync via `UserCommandService.updateProfile`; `emailVerifiedAt` (only if not already set) and the two digest toggles sync via a direct repository write; technology/interest selections and content-stream selections sync via `OnboardingService.completeOnboarding` (the same resolver/dedup logic onboarding uses). An existing account's password hash is never touched.
-
-**Also performs the one-off legacy-row retag:** every `article_feedbacks`/`user_source_preferences` row still holding the pre-multi-tenant literal `'default_user'` in its `userId` column is updated to this account's real `uuid`, via `ArticleFeedbackService.retagLegacyUser`/`UserSourcePreferenceService.retagLegacyUser`. This is ordinary idempotent application code (a no-op on re-run), not a migration — **it MUST run before `LinkArticleFeedbackAndUserSourcePreferencesToUsers`** (see Database Migrations below), which converts those tables' `userId` columns from `varchar` to a real `uuid` FK and fails loudly if any row still holds a non-uuid string.
-
-**Password:** the initial password for this account is a fixed, known value (not env-configurable, unlike `ADMIN_PASSWORD`) — hashed via the same `hashPassword()` helper the real registration/`AdminBootstrapService` flow uses before ever touching the database. It is not stored in `config/legacy-user.manifest.json`, since that manifest is reference data, not a secret. See `src/users/services/legacy-user-sync.service.ts` for the literal value; the account holder should change it after first login.
-
----
-
-## Testing
-
-```bash
-npm run test          # Unit tests
-npm run test:cov      # Coverage report
-```
-
-Unit tests cover `PersonalDigestBuilderService` scoring/eligibility delegation and diversification logic, and `DigestSweepService`'s per-user-local-time window matching.
-
----
-
-## Linting & Formatting
-
-```bash
-npm run lint          # ESLint with auto-fix
-npm run format        # Prettier
-```
-
-`.prettierrc` sets `singleQuote: true`, `trailingComma: "all"`, and `printWidth: 100` to match
-this codebase's existing style (single-quoted strings, ~100-character lines). ESLint disables
-`@typescript-eslint/no-explicit-any` since `noImplicitAny` is off in `tsconfig.json` and the
-codebase uses `any` deliberately in a handful of places (test mocks, third-party type gaps).
-
----
-
-## Deployment
-
-### Docker image
-
-The production image is built on `node:20-bookworm-slim` (Debian, glibc) instead of `node:20-alpine` (musl), because Playwright's Chromium needs glibc-linked system libraries alpine doesn't ship. Both the builder and production stages use the same base to avoid an alpine/glibc ABI mismatch for any native dependencies copied between stages. The production stage runs `npx playwright install --with-deps chromium`, which installs both the Chromium build matching the pinned `playwright` version and the Debian packages it needs.
-
-**Action required for `docker-stack.yml`/`docker-stack.migrate.yml`:** these files are intentionally not modified by this change (infra config requires explicit instruction). Add the five new env vars the same way the existing ones are wired (`- VAR=${VAR}` under the backend service's `environment:` block) before relying on Playwright/AI fallback in a deployed environment: `PLAYWRIGHT_ENABLED`, `PLAYWRIGHT_QUEUE_CONCURRENCY`, `PLAYWRIGHT_TIMEOUT_MS`, `SOURCE_DISCOVERY_AI_FALLBACK_ENABLED`, `SOURCE_DISCOVERY_AI_FALLBACK_MAX_PER_DAY`. Both default to disabled/off, so omitting them simply keeps this phase's fallbacks inert in that environment.
-
-### GitHub Actions (manual trigger)
-
-The workflow in `.github/workflows/deploy-prod.yml`:
-1. Runs tests
-2. Builds Docker image and pushes to Docker Hub with tags `prod` and `sha-<commit>`
-3. Triggers Dokploy migration webhook
-4. Waits 10 seconds
-5. Triggers Dokploy backend deployment webhook
-
-### Required GitHub Secrets
-
-| Secret | Description |
-|---|---|
-| `DOCKERHUB_USERNAME` | Docker Hub username |
-| `DOCKERHUB_TOKEN` | Docker Hub access token |
-| `IMAGE_NAME` | Full image name (e.g. `username/ptr-backend`) |
-| `DOKPLOY_BACKEND_MIGRATE_WEBHOOK_URL` | Dokploy webhook to run migrations |
-| `DOKPLOY_BACKEND_WEBHOOK_URL` | Dokploy webhook to deploy backend |
-
-### Production migration command (Dokploy)
-
-Configure Dokploy's migration service to run:
-```bash
-node dist/main && npm run migration:run:prod
-```
-Or as a separate one-off container using the same image.
-
-**One-time exception for the `LinkArticleFeedbackAndUserSourcePreferencesToUsers` migration (MVP3 Phase 11):** unlike the normal migrate-then-seed order below, `npm run seed:legacy-user:sync:prod` must run **before** `migration:run:prod` reaches this specific migration — it will fail loudly otherwise (see "Database Migrations" above). Run it once, manually, ahead of that deploy.
-
-### Post-deploy: sync sources
-
-```bash
+npm run migration:run:prod
 npm run seed:sources:sync:prod
-```
-
-**This is now an explicit, required post-deploy step — run it once after `migration:run:prod` on any environment whose `sources` table is empty** (a brand-new deployment, or a restored/reset database). There is no more implicit auto-seed: `DigestBootstrapService` used to seed from the manifest itself the first time a digest was built against an empty `sources` table, but that implicit path was removed in MVP3 phase 5. A fresh/empty database now has **zero** sources until this command is run — this is an intentional operational behavior change, not a regression: `PersonalDigestBuilderService.buildForUser` already returns `null` gracefully when there are no candidates for a user, and `DigestProcessor` already logs-and-skips a `null` digest, so nothing crashes; digests are simply empty (and no email is sent) until sources are synced. See "Syncing Sources" above for the full manifest/sync semantics.
-
----
-
-## AI Coding Tools
-
-This repository supports both Claude Code and Codex CLI. Their configurations coexist and have separate entry points:
-
-| Tool | Entry point | Supporting configuration |
-|---|---|---|
-| Claude Code | `CLAUDE.md` | `.claude/agents/`, `.claude/skills/`, and `.claude/settings.json` |
-| Codex CLI | `AGENTS.md` | `.agents/skills/`, `.codex/config.toml`, and the ignored `.local-context/` workspace |
-
-All project artifacts and tool-to-user communication are written in English, although user requests may be provided in any language.
-
-### Claude Code workflow
-
-Claude Code continues to use its existing role-based agents under `.claude/agents/`. `team-lead` is the single entry point and workflow owner:
-
-| Agent | Role |
-|---|---|
-| `team-lead` | Entry point and workflow owner. Classifies requests, orchestrates the rest, updates `CHANGELOG.md` itself, and asks the user to approve the change before it ships. |
-| `system-analyst` | Planning-only: discovery, conflict/risk analysis, scope, and an implementation plan. No code, no commits. |
-| `template-maintainer` | Owns both directions of template alignment: compares this project's agents/skills/instructions against the upstream template and proposes (or, once approved, applies) updates, and judges whether a new convention this project just built belongs in the shared template instructions. |
-| `coder` | Implementation specialist for modules, entities, API contracts, and migrations. |
-| `code-reviewer` | Reviews changes against template architecture. |
-| `qa-runner` | Boots the app against a real Docker-based Postgres/Redis stack (`docker-compose.test.yml`) to catch runtime issues static review can't. |
-| `repo-publisher` | Terminal step: confirms with the user, then commits, pushes, and opens a PR. Never merges. |
-
-Delegation always flows `team-lead → system-analyst → team-lead → specialists → code-reviewer → qa-runner → team-lead → repo-publisher` (or `team-lead → template-maintainer → team-lead → ...` for template sync). A session-start hook prompts `team-lead` to run one `template-maintainer` audit per session. See `CLAUDE.md` for the full orchestration rules.
-
-The full block scheme (source: `diagram/workflow/feature-implementation-workflow.puml`):
-
-![New feature implementation workflow](diagram/workflow/feature-implementation-workflow.png)
-
-### Codex CLI workflow
-
-Codex reads `AGENTS.md` for durable project rules and uses a proportional workflow:
-
-- Informational tasks are answered directly.
-- Tiny isolated changes are implemented and verified with a targeted check.
-- Regular changes receive a short plan, implementation, one internal review, and relevant tests.
-- High-risk or substantial changes require an approved plan before implementation. After implementation and internal review, Codex may invoke Claude CLI exactly once for an independent review, apply fixes, and run relevant tests. There is no iterative Claude/Codex review loop.
-
-Codex discovers task-specific project knowledge as native skills under `.agents/skills/`. The skills are self-contained and do not depend on `CLAUDE.md` or `.claude/`, so the Codex workflow remains usable if Claude support is removed later.
-
-Codex stores resumable task state locally in:
-
-```text
-.local-context/
-├── current-task.md
-├── decisions.md
-└── archive/
-```
-
-The directory is ignored by Git. `current-task.md` is the active source of truth; `decisions.md` and `archive/` are historical context and never override the current request or actual repository state. On a fresh clone, Codex creates the directory and files when needed.
-
-## Local Verification (Docker)
-
-`docker-compose.test.yml` at the repo root spins up Postgres and Redis plus the app itself for real runtime verification before a change ships — owned by Claude's `qa-runner` agent and available to Codex through `$verify-docker-runtime`, separate from mock-based unit tests. This project's stack intentionally omits MinIO/S3 (not used by any domain module) and publishes the app on host port `3300` instead of `3000` to avoid colliding with other local stacks.
-
-```bash
-docker compose -f docker-compose.test.yml up -d --wait
-curl http://localhost:3300/health
-docker compose -f docker-compose.test.yml logs app
-docker compose -f docker-compose.test.yml down -v
+npm run seed:legacy-user:sync:prod
+npm run start:prod
 ```

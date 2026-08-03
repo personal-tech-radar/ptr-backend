@@ -38,3 +38,7 @@ Inspect the actual diff and relevant neighboring code. Report defects, not style
 ## Output
 
 List findings by severity with file and line references. Explain impact and the smallest appropriate correction. If there are no findings, say so directly.
+
+Confirm the current ignored `./reports/*.md` iteration report records completed and incomplete
+work, exact verification results, problems, unresolved risks, and working-tree status. The report
+must not be staged or committed.

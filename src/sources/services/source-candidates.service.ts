@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
+import { InjectRepository } from '@nestjs/typeorm';
 import { createHash } from 'crypto';
-import { DataSource, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
 import { validate as uuidValidate } from 'uuid';
 import { LoggingService } from '../../common/logging/logging.service';
 import { HttpService } from '../../common/http/http.service';
@@ -12,18 +12,26 @@ import { AiAnalysisService } from '../../ai-analysis/services/ai-analysis.servic
 import {
   SourceCandidate,
   SourceCandidateDetectedType,
+  SourceCandidateRejectionCode,
   SourceCandidateStatus,
+  SourceDiscoveryOrigin,
 } from '../entities/source-candidate.entity';
-import { Source, SourceCategory, SourceType } from '../entities/source.entity';
+import { Source, SourceCategory, SourceStatus, SourceType } from '../entities/source.entity';
+import { SourceCoverage } from '../entities/source-coverage.entity';
 import { WebDiscoveryMethod, WebSourceConfig } from '../entities/web-source-config.entity';
 import { ContentExtractionService, toContentExtractionMethod } from './content-extraction.service';
 import { DiscoveryResult, SourceDiscoveryService } from './source-discovery.service';
+import { SourceIdentityService } from './source-identity.service';
+import { MetricsService } from '../../common/metrics/metrics.service';
+import { TechnologyInterest } from '../../taxonomy/entities/technology-interest.entity';
+import { ContentStream } from '../../taxonomy/entities/content-stream.entity';
+import { parsePublicationDate } from '../../common/util/publication-date.util';
 
 // Bounded sample of the entry URLs discovery already found — this reuses whatever
 // sitemap/RSS/Cheerio/Playwright entry set discovery returned, no separate crawl.
 const CANDIDATE_SAMPLE_SIZE = 5;
 // Minimum count of sampled articles that must come back pre-analysis-relevant to promote.
-const PROMOTION_RELEVANCE_THRESHOLD = 2;
+const PROMOTION_RELEVANCE_THRESHOLD = 1;
 const SUMMARY_PREVIEW_LENGTH = 500;
 
 // No dedicated column exists on SourceCandidate for a proposed name/category (the entity is
@@ -34,8 +42,14 @@ const DEFAULT_CANDIDATE_CATEGORY = SourceCategory.ENGINEERING_DEEP_DIVES;
 
 export interface CreateSourceCandidateInput {
   url: string;
-  discoveredFromArticleId?: string | null;
   seedKey?: string | null;
+  origin?: SourceDiscoveryOrigin;
+  submittedByUserId?: string | null;
+  technologyInterestId?: string | null;
+  contentStreamId?: string | null;
+  proposedName?: string | null;
+  expectedSourceType?: SourceType | null;
+  relevanceReason?: string | null;
   proposedConfig?: Record<string, unknown> | null;
 }
 
@@ -48,13 +62,19 @@ export class SourceCandidatesService {
     private readonly candidateRepo: Repository<SourceCandidate>,
     @InjectRepository(Source)
     private readonly sourceRepo: Repository<Source>,
+    @InjectRepository(SourceCoverage)
+    private readonly sourceCoverageRepo: Repository<SourceCoverage>,
+    @InjectRepository(TechnologyInterest)
+    private readonly taxonomyRepo: Repository<TechnologyInterest>,
+    @InjectRepository(ContentStream)
+    private readonly contentStreamRepo: Repository<ContentStream>,
     private readonly httpService: HttpService,
     private readonly sourceDiscoveryService: SourceDiscoveryService,
     private readonly contentExtractionService: ContentExtractionService,
     private readonly articlesService: ArticlesService,
     private readonly aiAnalysisService: AiAnalysisService,
-    @InjectDataSource()
-    private readonly dataSource: DataSource,
+    private readonly sourceIdentityService: SourceIdentityService,
+    private readonly metricsService: MetricsService,
   ) {}
 
   // Idempotent upsert by normalizedUrl: re-discovering/re-creating a candidate for the same
@@ -68,11 +88,17 @@ export class SourceCandidatesService {
     const existing = await this.candidateRepo.findOne({ where: { normalizedUrl } });
     if (existing) {
       existing.domain = domain;
-      if (input.discoveredFromArticleId !== undefined) {
-        existing.discoveredFromArticleId = input.discoveredFromArticleId;
-      }
       if (input.seedKey !== undefined) existing.seedKey = input.seedKey;
       if (input.proposedConfig !== undefined) existing.proposedConfig = input.proposedConfig;
+      if (input.submittedByUserId !== undefined)
+        existing.submittedByUserId = input.submittedByUserId;
+      if (input.technologyInterestId !== undefined)
+        existing.technologyInterestId = input.technologyInterestId;
+      if (input.contentStreamId !== undefined) existing.contentStreamId = input.contentStreamId;
+      if (input.proposedName !== undefined) existing.proposedName = input.proposedName;
+      if (input.expectedSourceType !== undefined)
+        existing.expectedSourceType = input.expectedSourceType;
+      if (input.relevanceReason !== undefined) existing.relevanceReason = input.relevanceReason;
       existing.lastValidatedAt = new Date();
 
       const saved = await this.candidateRepo.save(existing);
@@ -86,8 +112,14 @@ export class SourceCandidatesService {
     const created = this.candidateRepo.create({
       normalizedUrl,
       domain,
-      discoveredFromArticleId: input.discoveredFromArticleId ?? null,
       seedKey: input.seedKey ?? null,
+      origin: input.origin ?? SourceDiscoveryOrigin.SEED,
+      submittedByUserId: input.submittedByUserId ?? null,
+      technologyInterestId: input.technologyInterestId ?? null,
+      contentStreamId: input.contentStreamId ?? null,
+      proposedName: input.proposedName ?? null,
+      expectedSourceType: input.expectedSourceType ?? null,
+      relevanceReason: input.relevanceReason ?? null,
       proposedConfig: input.proposedConfig ?? null,
       status: SourceCandidateStatus.PENDING,
       lastValidatedAt: new Date(),
@@ -97,36 +129,36 @@ export class SourceCandidatesService {
     return saved;
   }
 
-  async reject(id: string, reason?: string): Promise<SourceCandidate> {
-    const candidate = await this.getCandidateOrFail(id);
-    candidate.status = SourceCandidateStatus.REJECTED;
-    candidate.validationError = reason ?? 'Manually rejected';
-    candidate.lastValidatedAt = new Date();
-
-    const saved = await this.candidateRepo.save(candidate);
-    this.logger.info('Source candidate manually rejected', {
-      id: saved.id,
-      reason: saved.validationError,
-    });
-    return saved;
-  }
-
   // Discovers the candidate's structure, samples a bounded set of its article URLs, and runs
   // pre-analysis-only on each (never full analysis — token economy, see AiAnalysisService).
   // >= PROMOTION_RELEVANCE_THRESHOLD relevant samples promotes the candidate into a real,
   // enabled Source (+ WebSourceConfig for web sources). Otherwise the candidate always ends up
   // in a defined terminal status with a reason — never silently discarded:
-  //   - 'rejected'      when discovery itself fails outright (no structure could be found at all)
-  //   - 'needs_review'  when discovery succeeds but too few sampled articles are relevant
-  //     (the site is real, just not confidently a match — worth a human look, not a hard no)
+  // Any validation failure ends in `rejected` with a durable code and reason; successful
+  // validation ends in `active`. There is no manual-review state.
   async promote(id: string): Promise<SourceCandidate> {
     const candidate = await this.getCandidateOrFail(id);
 
-    const existingSource = await this.sourceRepo.findOne({
-      where: { url: candidate.normalizedUrl },
-    });
+    let existingSource = await this.sourceIdentityService.findEquivalent(candidate.normalizedUrl);
+    const provisionalSourceId = candidate.proposedConfig?.['provisionalSourceId'];
+    if (existingSource && provisionalSourceId === existingSource.id) {
+      // A previous worker attempt stopped after creating its own provisional source. It is not a
+      // validated concurrent winner: remove it (and cascade scratch samples), clear the marker,
+      // then restart deterministic validation on this attempt.
+      await this.sourceRepo.delete(existingSource.id);
+      const config = { ...(candidate.proposedConfig ?? {}) };
+      delete config.provisionalSourceId;
+      candidate.proposedConfig = config;
+      await this.candidateRepo.save(candidate);
+      existingSource = null;
+    }
     if (existingSource) {
-      return this.markRejected(candidate, 'A source for this URL already exists');
+      await this.attachCoverage(existingSource.id, candidate);
+      candidate.status = SourceCandidateStatus.ACTIVE;
+      candidate.activatedSourceId = existingSource.id;
+      candidate.validationError = null;
+      candidate.rejectionCode = null;
+      return this.candidateRepo.save(candidate);
     }
 
     const discoveryConfig: Partial<WebSourceConfig> = {
@@ -143,13 +175,38 @@ export class SourceCandidatesService {
       return this.markRejected(
         candidate,
         `Discovery failed: ${discovery.reason ?? 'no article URLs found'}`,
+        SourceCandidateRejectionCode.NO_PUBLICATIONS,
       );
     }
 
     const detectedType = this.mapDetectedType(discovery.method);
     const sampleUrls = discovery.entryUrls.slice(0, CANDIDATE_SAMPLE_SIZE);
 
-    const { source } = await this.createProvisionalSource(candidate, discovery, detectedType);
+    const { source, created } = await this.createProvisionalSource(
+      candidate,
+      discovery,
+      detectedType,
+    );
+
+    // Another supported creator may have won after the initial identity check but before
+    // discovery completed. The centralized resolver returns that winner; attach provenance and
+    // finish the candidate without sampling, mutating, or deleting the winning source.
+    if (!created) {
+      await this.attachCoverage(source.id, candidate);
+      candidate.status = SourceCandidateStatus.ACTIVE;
+      candidate.detectedType = detectedType;
+      candidate.activatedSourceId = source.id;
+      candidate.validationError = null;
+      candidate.rejectionCode = null;
+      candidate.lastValidatedAt = new Date();
+      return this.candidateRepo.save(candidate);
+    }
+
+    candidate.proposedConfig = {
+      ...(candidate.proposedConfig ?? {}),
+      provisionalSourceId: source.id,
+    };
+    await this.candidateRepo.save(candidate);
 
     const sampledArticles: Article[] = [];
     for (const url of sampleUrls) {
@@ -158,13 +215,26 @@ export class SourceCandidatesService {
     }
 
     let relevantCount = 0;
+    const [originTaxonomy, originStream] = await Promise.all([
+      candidate.technologyInterestId
+        ? this.taxonomyRepo.findOne({ where: { id: candidate.technologyInterestId } })
+        : null,
+      candidate.contentStreamId
+        ? this.contentStreamRepo.findOne({ where: { id: candidate.contentStreamId } })
+        : null,
+    ]);
     for (const article of sampledArticles) {
-      const relevance = await this.aiAnalysisService.preAnalyzeArticle(article.id);
+      const relevance = await this.aiAnalysisService.preAnalyzeArticle(
+        article.id,
+        originTaxonomy?.name,
+        originStream?.key,
+      );
       if (relevance.preScreenIsRelevant) relevantCount++;
     }
 
     if (relevantCount >= PROMOTION_RELEVANCE_THRESHOLD) {
       await this.sourceRepo.update(source.id, { enabled: true });
+      await this.sourceRepo.update(source.id, { status: SourceStatus.ACTIVE });
 
       // These sample Articles (and their cascade-linked ArticleAnalysis/ArticleTechnologyInterest/
       // ArticleStream rows — FK ON DELETE CASCADE, see the GlobalArticleAnalysisRework migration)
@@ -175,16 +245,19 @@ export class SourceCandidatesService {
       // fetcher re-processes a URL with an existing Article row, regardless of status).
       await this.articlesService.deleteByIds(sampledArticles.map((article) => article.id));
 
-      candidate.status = SourceCandidateStatus.PROMOTED;
+      candidate.status = SourceCandidateStatus.ACTIVE;
       candidate.detectedType = detectedType;
       candidate.validationError = null;
+      candidate.rejectionCode = null;
+      candidate.activatedSourceId = source.id;
       candidate.lastValidatedAt = new Date();
-      candidate.proposedConfig = {
-        ...(candidate.proposedConfig ?? {}),
-        promotedSourceId: source.id,
-      };
+      const promotedConfig = { ...(candidate.proposedConfig ?? {}) };
+      delete promotedConfig.provisionalSourceId;
+      candidate.proposedConfig = { ...promotedConfig, promotedSourceId: source.id };
 
+      await this.attachCoverage(source.id, candidate);
       const saved = await this.candidateRepo.save(candidate);
+      await this.metricsService.increment('source_candidates_total', { outcome: 'activated' });
       this.logger.info('Source candidate promoted', {
         id: saved.id,
         sourceId: source.id,
@@ -197,12 +270,32 @@ export class SourceCandidatesService {
     // Roll back the provisional Source; ON DELETE CASCADE removes its WebSourceConfig and the
     // sample Articles with it, so no orphaned scratch data is left behind.
     await this.sourceRepo.delete(source.id);
+    const rejectedConfig = { ...(candidate.proposedConfig ?? {}) };
+    delete rejectedConfig.provisionalSourceId;
+    candidate.proposedConfig = rejectedConfig;
 
-    return this.markNeedsReview(
+    candidate.detectedType = detectedType;
+    return this.markRejected(
       candidate,
-      detectedType,
       `Only ${relevantCount} of ${sampledArticles.length} sampled article(s) were pre-analysis ` +
         `relevant (minimum ${PROMOTION_RELEVANCE_THRESHOLD} required)`,
+      SourceCandidateRejectionCode.TAXONOMY_MISMATCH,
+    );
+  }
+
+  async rejectProcessingFailure(id: string, error: unknown): Promise<SourceCandidate> {
+    const candidate = await this.getCandidateOrFail(id);
+    const provisionalSourceId = candidate.proposedConfig?.['provisionalSourceId'];
+    if (typeof provisionalSourceId === 'string') {
+      await this.sourceRepo.delete(provisionalSourceId);
+      const config = { ...(candidate.proposedConfig ?? {}) };
+      delete config.provisionalSourceId;
+      candidate.proposedConfig = config;
+    }
+    return this.markRejected(
+      candidate,
+      error instanceof Error ? error.message : String(error),
+      SourceCandidateRejectionCode.PROCESSING_FAILED,
     );
   }
 
@@ -218,7 +311,7 @@ export class SourceCandidatesService {
     candidate: SourceCandidate,
     discovery: DiscoveryResult,
     detectedType: SourceCandidateDetectedType,
-  ): Promise<{ source: Source; webConfig: WebSourceConfig | null }> {
+  ): Promise<{ source: Source; webConfig: WebSourceConfig | null; created: boolean }> {
     const name = (candidate.proposedConfig?.['name'] as string | undefined) ?? candidate.domain;
     const category =
       (candidate.proposedConfig?.['category'] as SourceCategory | undefined) ??
@@ -229,57 +322,65 @@ export class SourceCandidatesService {
         detectedType === SourceCandidateDetectedType.ATOM) &&
       !!discovery.feedUrl;
 
-    return this.dataSource.transaction(async (manager) => {
-      if (isGenuineFeed) {
+    let webConfig: WebSourceConfig | null = null;
+    const identityUrl = isGenuineFeed ? discovery.feedUrl! : candidate.normalizedUrl;
+    const resolution = await this.sourceIdentityService.resolveOrCreate(
+      identityUrl,
+      async (manager, normalizedUrl) => {
+        if (isGenuineFeed) {
+          const source = await manager.save(
+            Source,
+            manager.create(Source, {
+              name,
+              url: normalizedUrl,
+              type:
+                detectedType === SourceCandidateDetectedType.ATOM
+                  ? SourceType.ATOM
+                  : SourceType.RSS,
+              category,
+              // Provisional: only flipped to true once >= PROMOTION_RELEVANCE_THRESHOLD sampled
+              // articles are confirmed relevant, so the normal fetch cycle (findAllEnabled) never
+              // picks this source up while it's still being evaluated.
+              enabled: false,
+            }),
+          );
+
+          return source;
+        }
+
         const source = await manager.save(
           Source,
           manager.create(Source, {
             name,
-            url: discovery.feedUrl!,
-            type:
-              detectedType === SourceCandidateDetectedType.ATOM ? SourceType.ATOM : SourceType.RSS,
+            url: normalizedUrl,
+            type: SourceType.WEB,
             category,
-            // Provisional: only flipped to true once >= PROMOTION_RELEVANCE_THRESHOLD sampled
-            // articles are confirmed relevant, so the normal fetch cycle (findAllEnabled) never
-            // picks this source up while it's still being evaluated.
             enabled: false,
           }),
         );
 
-        return { source, webConfig: null };
-      }
+        webConfig = await manager.save(
+          WebSourceConfig,
+          manager.create(WebSourceConfig, {
+            sourceId: source.id,
+            // The listing/seed URL to re-crawl links from on every subsequent cycle — NOT
+            // discovery.entryUrls (that's the individual article permalinks discovery just found).
+            // For CHEERIO/PLAYWRIGHT methods, a non-empty entryUrls here overrides `source.url` as
+            // the crawl seed on replay (see discoverViaCheerio/discoverViaPlaywright), and this
+            // config is never rewritten by the self-healing path — so seeding it with stale
+            // article permalinks would permanently break future discovery for this source.
+            entryUrls: [candidate.normalizedUrl],
+            sitemapUrl: discovery.sitemapUrl ?? null,
+            preferredDiscoveryMethod: discovery.method,
+            articleLinkSelector: discovery.articleLinkSelector ?? null,
+            lastValidatedAt: new Date(),
+          }),
+        );
 
-      const source = await manager.save(
-        Source,
-        manager.create(Source, {
-          name,
-          url: candidate.normalizedUrl,
-          type: SourceType.WEB,
-          category,
-          enabled: false,
-        }),
-      );
-
-      const webConfig = await manager.save(
-        WebSourceConfig,
-        manager.create(WebSourceConfig, {
-          sourceId: source.id,
-          // The listing/seed URL to re-crawl links from on every subsequent cycle — NOT
-          // discovery.entryUrls (that's the individual article permalinks discovery just found).
-          // For CHEERIO/PLAYWRIGHT methods, a non-empty entryUrls here overrides `source.url` as
-          // the crawl seed on replay (see discoverViaCheerio/discoverViaPlaywright), and this
-          // config is never rewritten by the self-healing path — so seeding it with stale
-          // article permalinks would permanently break future discovery for this source.
-          entryUrls: [candidate.normalizedUrl],
-          sitemapUrl: discovery.sitemapUrl ?? null,
-          preferredDiscoveryMethod: discovery.method,
-          articleLinkSelector: discovery.articleLinkSelector ?? null,
-          lastValidatedAt: new Date(),
-        }),
-      );
-
-      return { source, webConfig };
-    });
+        return source;
+      },
+    );
+    return { source: resolution.source, webConfig, created: resolution.created };
   }
 
   private async tryCreateSampleArticle(sourceId: string, url: string): Promise<Article | null> {
@@ -309,6 +410,7 @@ export class SourceCandidatesService {
         urlHash,
         titleHash,
         summaryFromFeed: extraction.textContent?.slice(0, SUMMARY_PREVIEW_LENGTH) ?? null,
+        publishedAt: parsePublicationDate(extraction.publishedAt),
         status: ArticleStatus.NEW,
         contentExtractionMethod: toContentExtractionMethod(extraction.method),
         contentExtractionConfig: { method: extraction.method },
@@ -323,29 +425,41 @@ export class SourceCandidatesService {
     }
   }
 
-  private async markRejected(candidate: SourceCandidate, reason: string): Promise<SourceCandidate> {
+  private async markRejected(
+    candidate: SourceCandidate,
+    reason: string,
+    code: SourceCandidateRejectionCode = SourceCandidateRejectionCode.PROCESSING_FAILED,
+  ): Promise<SourceCandidate> {
     candidate.status = SourceCandidateStatus.REJECTED;
     candidate.validationError = reason;
+    candidate.rejectionCode = code;
     candidate.lastValidatedAt = new Date();
 
     const saved = await this.candidateRepo.save(candidate);
+    await this.metricsService.increment('source_candidates_total', { outcome: 'rejected', code });
     this.logger.info('Source candidate rejected', { id: saved.id, reason });
     return saved;
   }
 
-  private async markNeedsReview(
-    candidate: SourceCandidate,
-    detectedType: SourceCandidateDetectedType,
-    reason: string,
-  ): Promise<SourceCandidate> {
-    candidate.status = SourceCandidateStatus.NEEDS_REVIEW;
-    candidate.detectedType = detectedType;
-    candidate.validationError = reason;
-    candidate.lastValidatedAt = new Date();
-
-    const saved = await this.candidateRepo.save(candidate);
-    this.logger.info('Source candidate needs review', { id: saved.id, reason });
-    return saved;
+  private async attachCoverage(sourceId: string, candidate: SourceCandidate): Promise<void> {
+    if (!candidate.technologyInterestId || !candidate.contentStreamId) return;
+    const existing = await this.sourceCoverageRepo.findOne({
+      where: {
+        sourceId,
+        technologyInterestId: candidate.technologyInterestId,
+        contentStreamId: candidate.contentStreamId,
+      },
+    });
+    if (!existing) {
+      await this.sourceCoverageRepo.save(
+        this.sourceCoverageRepo.create({
+          sourceId,
+          technologyInterestId: candidate.technologyInterestId,
+          contentStreamId: candidate.contentStreamId,
+          origin: candidate.origin,
+        }),
+      );
+    }
   }
 
   private async getCandidateOrFail(id: string): Promise<SourceCandidate> {

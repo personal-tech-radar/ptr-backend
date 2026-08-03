@@ -1,6 +1,6 @@
 import * as bcrypt from 'bcrypt';
 import { TechnologyInterestKind } from '../../taxonomy/entities/technology-interest.entity';
-import { UserLevel, UserRole } from '../entities/user.entity';
+import { UserLevel } from '../entities/user.entity';
 import { LegacyUserManifestEntry, LegacyUserSyncService } from './legacy-user-sync.service';
 
 const entry: LegacyUserManifestEntry = {
@@ -104,7 +104,6 @@ describe('LegacyUserSyncService', () => {
       expect(mockUserCommandService.create).toHaveBeenCalledTimes(1);
       const createArg = mockUserCommandService.create.mock.calls[0][0];
       expect(createArg.email).toBe(entry.email);
-      expect(createArg.role).toBe(UserRole.USER);
       expect(createArg.emailVerifiedAt).toBeInstanceOf(Date);
       expect(result.created).toBe(true);
       expect(result.userId).toBe('new-id');
@@ -191,6 +190,7 @@ describe('LegacyUserSyncService', () => {
 
       expect(mockContentStreamQueryService.findByKey).toHaveBeenCalledTimes(5);
       expect(mockOnboardingService.completeOnboarding).toHaveBeenCalledWith('existing-id', {
+        timezone: 'Asia/Tbilisi',
         level: UserLevel.SENIOR,
         technologyInterests: [
           { kind: TechnologyInterestKind.TECHNOLOGY, name: 'Node.js' },

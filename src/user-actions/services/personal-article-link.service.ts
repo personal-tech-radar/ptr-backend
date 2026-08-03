@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { DataSource, In, Repository } from 'typeorm';
 import { validate as uuidValidate } from 'uuid';
 import { Article } from '../../articles/entities/article.entity';
 import { PaginatedResponseDto } from '../../common/dto/paginated-response.dto';
@@ -11,6 +11,8 @@ import {
   PersonalArticleLink,
   PersonalArticleLinkContext,
 } from '../entities/personal-article-link.entity';
+import { UserSourcePreferenceService } from '../../sources/services/user-source-preference.service';
+import { UserArticleOpening } from '../entities/user-article-opening.entity';
 
 @Injectable()
 export class PersonalArticleLinkService {
@@ -19,10 +21,15 @@ export class PersonalArticleLinkService {
   constructor(
     @InjectRepository(PersonalArticleLink)
     private readonly linkRepo: Repository<PersonalArticleLink>,
+    @InjectRepository(UserArticleOpening)
+    private readonly openingRepo: Repository<UserArticleOpening>,
+    @InjectRepository(Article)
+    private readonly articleRepo: Repository<Article>,
+    private readonly dataSource: DataSource,
+    private readonly userSourcePreferenceService: UserSourcePreferenceService,
   ) {}
 
-  // Always returns the same row/id for a given (userId, articleId, context) triple — this is a
-  // permanent link, not minted fresh on every call.
+  // Reuse the permanent link for each user, article, and context.
   async findOrCreateLink(
     userId: string,
     articleId: string,
@@ -35,7 +42,7 @@ export class PersonalArticleLinkService {
 
     try {
       const created = await this.linkRepo.save(
-        this.linkRepo.create({ userId, articleId, context }),
+        this.linkRepo.create({ userId, articleId, context, digestId: null, originalUrl: null }),
       );
       this.logger.info('Personal article link created', { userId, articleId, context });
       return created;
@@ -51,8 +58,7 @@ export class PersonalArticleLinkService {
     }
   }
 
-  // Batch variant of findOrCreateLink — one SELECT for existing rows, one batch INSERT for the
-  // missing ones. Always returns a complete map covering every requested article id.
+  // Batch-create missing permanent links and return a complete article map.
   async findOrCreateLinksBatch(
     userId: string,
     articleIds: string[],
@@ -71,7 +77,9 @@ export class PersonalArticleLinkService {
 
     try {
       const created = await this.linkRepo.save(
-        missingIds.map((articleId) => this.linkRepo.create({ userId, articleId, context })),
+        missingIds.map((articleId) =>
+          this.linkRepo.create({ userId, articleId, context, digestId: null, originalUrl: null }),
+        ),
       );
       for (const link of created) {
         result.set(link.articleId, link.id);
@@ -82,10 +90,7 @@ export class PersonalArticleLinkService {
         createdCount: created.length,
       });
     } catch {
-      // Concurrent race on the (userId, articleId, context) unique constraint for one or more
-      // rows in the batch — refetch whichever of the missing ids won the race, then fall back to
-      // the single-row find-or-create (which has its own catch-and-refetch handling) for any
-      // ids still missing after that refetch.
+      // Recover links created concurrently before retrying individual misses.
       const refetched = await this.linkRepo.find({
         where: { userId, articleId: In(missingIds), context },
       });
@@ -103,8 +108,7 @@ export class PersonalArticleLinkService {
     return result;
   }
 
-  // Idempotent first-open tracking: only the first resolve sets firstOpenedAt. A benign race
-  // between near-simultaneous first opens is acceptable — no locking, no counter, no new row.
+  // Persist opening effects once under a row lock.
   async resolveAndRecordOpen(linkId: string): Promise<{ article: Article }> {
     if (!uuidValidate(linkId)) {
       throw new NotFoundException(`Personal article link ${linkId} not found`);
@@ -116,16 +120,40 @@ export class PersonalArticleLinkService {
     }
 
     if (!link.firstOpenedAt) {
-      link.firstOpenedAt = new Date();
-      await this.linkRepo.save(link);
+      await this.dataSource.transaction(async (manager) => {
+        const linkRepo = manager.getRepository(PersonalArticleLink);
+        const openingRepo = manager.getRepository(UserArticleOpening);
+        const locked = await linkRepo.findOne({
+          where: { id: linkId },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (!locked || locked.firstOpenedAt) return;
+        const insert = await openingRepo
+          .createQueryBuilder()
+          .insert()
+          .values({ userId: locked.userId, articleId: locked.articleId })
+          .orIgnore()
+          .execute();
+        if ((insert.identifiers?.length ?? 0) === 0) return;
+        locked.firstOpenedAt = new Date();
+        await linkRepo.save(locked);
+        await manager
+          .getRepository(Article)
+          .increment({ id: locked.articleId }, 'personalTrackedOpenCount', 1);
+        await this.userSourcePreferenceService.applySignal(
+          locked.userId,
+          link.article.sourceId,
+          'opened',
+          manager,
+        );
+      });
       this.logger.info('Personal article link first opened', { linkId });
     }
 
     return { article: link.article };
   }
 
-  // Flattened, admin-only listing across all users' personal article links ("opens"). userId and
-  // articleId are real FKs here, so this is a plain join — no cast trick needed.
+  // Admin listing uses declared user and article relations.
   async findAllAdmin(
     query: AdminQueryOpensDto,
   ): Promise<PaginatedResponseDto<AdminOpensResponseDto>> {

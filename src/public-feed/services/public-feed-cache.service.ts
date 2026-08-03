@@ -4,6 +4,8 @@ import { RedisService } from '../../common/redis/redis.service';
 import { PreviewFeedResponseDto } from '../dto/preview-feed-response.dto';
 import { PublicFeedResponseDto } from '../dto/public-feed-response.dto';
 import { QueryPublicFeedDto } from '../dto/query-public-feed.dto';
+import { FeedCacheVersionService } from '../../feed/services/feed-cache-version.service';
+import { MetricsService } from '../../common/metrics/metrics.service';
 
 const DEFAULT_TTL_SECONDS = 600;
 
@@ -16,7 +18,26 @@ export const PUBLIC_FEED_PREVIEW_CACHE_KEY_PREFIX = 'public-feed:preview';
 
 @Injectable()
 export class PublicFeedCacheService {
-  constructor(private readonly redisService: RedisService) {}
+  constructor(
+    private readonly redisService: RedisService,
+    private readonly versionService: FeedCacheVersionService,
+    private readonly metricsService: MetricsService,
+  ) {}
+
+  async buildVersionedListKey(query: QueryPublicFeedDto, streamIds: string[]): Promise<string> {
+    const versions = await this.versionService.getStreamVersions(streamIds);
+    const versionHash = createHash('sha1').update(JSON.stringify(versions)).digest('hex');
+    return `${this.buildListKey(query)}:${versionHash}`;
+  }
+
+  async buildVersionedPreviewKey(
+    technologyInterestIds: string[],
+    contentStreamIds: string[],
+  ): Promise<string> {
+    const versions = await this.versionService.getStreamVersions(contentStreamIds);
+    const versionHash = createHash('sha1').update(JSON.stringify(versions)).digest('hex');
+    return `${this.buildPreviewKey(technologyInterestIds, contentStreamIds)}:${versionHash}`;
+  }
 
   // Stable across param order — filters are sorted before hashing.
   buildListKey(query: QueryPublicFeedDto): string {
@@ -58,7 +79,11 @@ export class PublicFeedCacheService {
 
   private async get<T>(key: string): Promise<T | null> {
     const raw = await this.redisService.get(key);
-    if (!raw) return null;
+    if (!raw) {
+      await this.metricsService.increment('feed_cache_total', { outcome: 'miss', scope: 'public' });
+      return null;
+    }
+    await this.metricsService.increment('feed_cache_total', { outcome: 'hit', scope: 'public' });
     return JSON.parse(raw) as T;
   }
 

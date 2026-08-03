@@ -16,7 +16,11 @@ export class ContentStreamController {
   constructor(private readonly contentStreamQueryService: ContentStreamQueryService) {}
 
   @Get()
-  @ApiOperation({ summary: 'List enabled content streams' })
+  @ApiOperation({
+    summary: 'List enabled system content streams',
+    description:
+      'Returns the fixed enabled stream catalog available for user onboarding, personal feeds, and digests. Users cannot create or modify streams.',
+  })
   @ApiResponse({ status: 200, type: [ContentStreamResponseDto] })
   @ApiResponse({ status: 401, type: ErrorResponseDto })
   async findAll(): Promise<ContentStreamResponseDto[]> {

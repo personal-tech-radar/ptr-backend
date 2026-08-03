@@ -37,12 +37,9 @@ services:
       timeout: 3s
       retries: 15
 
-  # Local-only capture endpoint for outbound mail, added for Phase 10 (Personal Digest Delivery)
-  # verification: the `resend` SDK itself honors a RESEND_BASE_URL env override (see
-  # node_modules/resend/dist/index.js), so pointing it here instead of api.resend.com lets us
-  # observe the real per-recipient `to` address MailService.sendDigest sends, without touching
-  # MailService or any other source file. Logs every request body it receives and always replies
-  # 200 with a Resend-shaped success body.
+  # Local-only in-memory Resend-compatible mailbox. It retains full request payloads so live
+  # diagnostics can retrieve verification/password-reset links through GET /api/messages.
+  # It never writes tokens to application logs and is not used by production configuration.
   mock-mail:
     image: node:20-alpine
     command:
@@ -50,17 +47,28 @@ services:
       - -e
       - |
         const http = require('http');
+        const messages = [];
         http.createServer((req, res) => {
+          if (req.method === 'GET' && req.url.startsWith('/api/messages')) {
+            const recipient = new URL(req.url, 'http://localhost').searchParams.get('to');
+            const result = recipient ? messages.filter((m) => [].concat(m.to || []).includes(recipient)) : messages;
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ data: result }));
+          }
           let body = '';
           req.on('data', (c) => (body += c));
           req.on('end', () => {
             let payload = {};
             try { payload = JSON.parse(body); } catch (e) {}
-            console.log('MOCK_MAIL_RECEIVED ' + JSON.stringify({ to: payload.to, from: payload.from, subject: payload.subject }));
+            const message = { id: 'mock-email-' + (messages.length + 1), receivedAt: new Date().toISOString(), ...payload };
+            messages.push(message);
+            console.log('MOCK_MAIL_RECEIVED ' + JSON.stringify({ id: message.id, to: payload.to, from: payload.from, subject: payload.subject }));
             res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ id: 'mock-email-id' }));
+            res.end(JSON.stringify({ id: message.id }));
           });
         }).listen(4000, () => console.log('mock mail server listening on 4000'));
+    ports:
+      - '3400:4000'
 
   app:
     image: node:20-alpine
@@ -90,20 +98,20 @@ services:
       REDIS_PORT: 6379
       REDIS_PASSWORD: ''
       API_KEY: local-test-api-key
-      APP_URL: http://localhost:3300
-      FEEDBACK_TOKEN: local-test-feedback-token
-      SAVE_LINK_SECRET: local-test-save-link-secret
+      APP_URL: ${APP_URL:-http://localhost:3300}
+      SWAGGER_SERVER_URL: ${SWAGGER_SERVER_URL:-http://localhost:3300}
       JWT_SECRET: local-test-jwt-secret
       JWT_EXPIRES_IN: 15m
       JWT_REFRESH_EXPIRES_IN: 30d
       EMAIL_VERIFICATION_TOKEN_TTL_HOURS: 48
       PASSWORD_RESET_TOKEN_TTL_HOURS: 2
-      # Phase 9's admin-bootstrap fail-fast path (AdminBootstrapService) requires both of these to
-      # be set or the app refuses to boot — standing qa-runner requirement, exercised here.
-      ADMIN_EMAIL: admin@local-test.example.com
-      ADMIN_PASSWORD: local-test-admin-password
-      OPENAI_API_KEY: sk-local-test-placeholder
-      OPENAI_MODEL: gpt-4o-mini
+      # Separate administrator-domain bootstrap requires both values.
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-miter.sidorov.ps@gmail.com}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-local-test-admin-password}
+      ADMIN_JWT_EXPIRES_IN: 15m
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-sk-local-test-placeholder}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      PLAYWRIGHT_ENABLED: ${PLAYWRIGHT_ENABLED:-false}
       TAXONOMY_SIMILARITY_THRESHOLD: 0.6
       TAXONOMY_SOURCE_DISCOVERY_QUEUE_CONCURRENCY: 2
       RESEND_API_KEY: re_local_test_placeholder
@@ -115,15 +123,14 @@ services:
       # Tightened from the app default (*/15 * * * *) to every minute, only in this local
       # verification harness, so Phase 10's sweep pipeline can be observed live within a short
       # window instead of waiting up to 15 minutes for a tick.
-      DIGEST_SWEEP_CRON: '* * * * *'
       # Overridden per-run to match whatever real local send-time window this verification pass
       # needs to land in — see the qa-runner's report for the exact value used and why. Set to 22
       # for this run: at time of writing (2026-07-30, ~15:42 UTC), Asia/Kolkata (UTC+5:30) hits its
       # next :00-:15 local-minute window at 22:00-22:14 local == 16:30-16:44 UTC.
-      DAILY_DIGEST_SEND_HOUR: 22
       FEED_CACHE_TTL_SECONDS: 600
       FEED_MAX_DAYS: 30
       PUBLIC_FEED_CACHE_TTL_SECONDS: 600
+      TECHNICAL_HISTORY_RETENTION_DAYS: ${TECHNICAL_HISTORY_RETENTION_DAYS:-30}
     ports:
       # Published to a non-default host port: 3000 is already bound locally on this machine
       # (another running stack). Poll http://localhost:3300/health, not :3000, from the host.

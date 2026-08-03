@@ -1,6 +1,16 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type, TransformFnParams } from 'class-transformer';
-import { IsArray, IsBoolean, IsInt, IsOptional, IsUUID, Matches, Max, Min } from 'class-validator';
+import {
+  IsArray,
+  IsBoolean,
+  IsDateString,
+  IsInt,
+  IsOptional,
+  IsUUID,
+  Matches,
+  Max,
+  Min,
+} from 'class-validator';
 
 // Normalizes a repeated query key (?stream=a&stream=b -> ['a','b']) and a single occurrence
 // (?stream=a -> 'a', which class-transformer/qs would otherwise leave as a bare string) into a
@@ -17,7 +27,7 @@ const toArray = ({ value }: { value: unknown }): string[] | undefined => {
 // and Boolean('false') is `true` — any non-empty string is truthy. Reading obj[key] bypasses that
 // already-corrupted `value` and parses the original query string directly.
 const toBoolean = ({ obj, key }: TransformFnParams): boolean | undefined => {
-  const raw = obj[key];
+  const raw = (obj as Record<string, unknown>)[key];
   if (raw === undefined) return undefined;
   if (typeof raw === 'boolean') return raw;
   return raw === 'true';
@@ -26,12 +36,16 @@ const toBoolean = ({ obj, key }: TransformFnParams): boolean | undefined => {
 export class QueryFeedDto {
   @ApiPropertyOptional({
     description:
-      "Most recent day (inclusive) to include, YYYY-MM-DD, interpreted in the user's own " +
-      "timezone. Defaults to today in the user's timezone.",
+      'Most recent real calendar day (inclusive) to include, exactly YYYY-MM-DD, interpreted ' +
+      "in the user's own timezone. Defaults to today in the user's timezone.",
     example: '2026-07-25',
   })
   @IsOptional()
   @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'beforeDate must be in YYYY-MM-DD format' })
+  @IsDateString(
+    { strict: true, strictSeparator: true },
+    { message: 'beforeDate must be a valid calendar date' },
+  )
   beforeDate?: string;
 
   // DTO-level bound is hardcoded to 30 (matching FEED_MAX_DAYS's default) rather than reading

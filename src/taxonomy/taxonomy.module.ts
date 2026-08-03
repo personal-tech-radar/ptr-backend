@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { QueueModule } from '../queue/queue.module';
+import { DiscoveryQuotaRecord } from '../sources/entities/discovery-quota-record.entity';
+import { DiscoveryQuotaService } from '../sources/services/discovery-quota.service';
 import { AdminContentStreamsController } from './controllers/admin-content-streams.controller';
 import { AdminTechnologyInterestsController } from './controllers/admin-technology-interests.controller';
 import { AdminUserContentStreamsController } from './controllers/admin-user-content-streams.controller';
@@ -12,12 +14,12 @@ import { TaxonomySourceDiscoveryRequest } from './entities/taxonomy-source-disco
 import { TechnologyInterest } from './entities/technology-interest.entity';
 import { UserContentStream } from './entities/user-content-stream.entity';
 import { UserTechnologyInterest } from './entities/user-technology-interest.entity';
-import { TaxonomySourceDiscoveryProcessor } from './processors/taxonomy-source-discovery.processor';
 import { ContentStreamCommandService } from './services/content-stream-command.service';
 import { ContentStreamQueryService } from './services/content-stream-query.service';
 import { TechnologyInterestCommandService } from './services/technology-interest-command.service';
 import { TechnologyInterestQueryService } from './services/technology-interest-query.service';
 import { TechnologyInterestResolverService } from './services/technology-interest-resolver.service';
+import { TaxonomySourceDiscoveryRetryService } from './services/taxonomy-source-discovery-retry.service';
 
 @Module({
   imports: [
@@ -26,9 +28,9 @@ import { TechnologyInterestResolverService } from './services/technology-interes
       ContentStream,
       UserTechnologyInterest,
       UserContentStream,
-      // Not part of the spec'd forFeature list but required for
-      // TaxonomySourceDiscoveryProcessor's repository injection (see that file).
+      // Required by the discovery processor.
       TaxonomySourceDiscoveryRequest,
+      DiscoveryQuotaRecord,
     ]),
     QueueModule,
   ],
@@ -46,7 +48,8 @@ import { TechnologyInterestResolverService } from './services/technology-interes
     TechnologyInterestQueryService,
     ContentStreamQueryService,
     ContentStreamCommandService,
-    TaxonomySourceDiscoveryProcessor,
+    DiscoveryQuotaService,
+    TaxonomySourceDiscoveryRetryService,
   ],
   exports: [
     TechnologyInterestResolverService,

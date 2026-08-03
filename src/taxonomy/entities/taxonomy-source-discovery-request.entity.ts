@@ -2,6 +2,7 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  Index,
   JoinColumn,
   ManyToOne,
   PrimaryGeneratedColumn,
@@ -10,14 +11,15 @@ import {
 import { TechnologyInterest } from './technology-interest.entity';
 
 export enum TaxonomySourceDiscoveryStatus {
-  PENDING_MANUAL_REVIEW = 'pending_manual_review',
+  QUEUED = 'queued',
+  RUNNING = 'running',
+  COMPLETED = 'completed',
+  FAILED = 'failed',
 }
 
-// One row per taxonomy-source-discovery queue job (see QueueService.addTaxonomySourceDiscoveryJob
-// and TaxonomySourceDiscoveryProcessor). This phase has no real web-search integration — the
-// processor only records that a newly-created TechnologyInterest needs a source suggested for it,
-// for an operator to action manually. Real automated search is a later phase's job.
+// One row represents the logical operation; BullMQ retries update its attempt metadata.
 @Entity('taxonomy_source_discovery_requests')
+@Index('UQ_taxonomy_discovery_request_taxonomy', ['technologyInterestId'], { unique: true })
 export class TaxonomySourceDiscoveryRequest {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -35,9 +37,27 @@ export class TaxonomySourceDiscoveryRequest {
   @Column({
     type: 'enum',
     enum: TaxonomySourceDiscoveryStatus,
-    default: TaxonomySourceDiscoveryStatus.PENDING_MANUAL_REVIEW,
+    default: TaxonomySourceDiscoveryStatus.QUEUED,
   })
   status: TaxonomySourceDiscoveryStatus;
+
+  @Column({ type: 'integer', default: 0 })
+  attemptCount: number;
+
+  @Column({ type: 'integer', default: 0 })
+  retryCount: number;
+
+  @Column({ type: 'timestamp', nullable: true })
+  lastAttemptAt: Date | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  completedAt: Date | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  failedAt: Date | null;
+
+  @Column({ type: 'text', nullable: true })
+  lastError: string | null;
 
   @CreateDateColumn()
   createdAt: Date;

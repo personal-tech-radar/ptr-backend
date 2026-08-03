@@ -15,8 +15,17 @@ describe('ContentStreamCommandService', () => {
   };
 
   const mockUserContentStreamRepo = {
-    findOne: jest.fn(),
-    create: jest.fn((data: unknown) => data),
+    manager: {
+      transaction: jest.fn((callback: (manager: unknown) => Promise<void>) =>
+        callback(mockTransactionManager),
+      ),
+    },
+  };
+
+  const mockTransactionManager = {
+    delete: jest.fn(),
+    find: jest.fn(),
+    create: jest.fn((_entity: unknown, data: unknown) => data),
     save: jest.fn(),
   };
 
@@ -28,23 +37,27 @@ describe('ContentStreamCommandService', () => {
     );
   });
 
-  it('links every selection not already linked', async () => {
-    mockUserContentStreamRepo.findOne.mockResolvedValue(null);
+  it('replaces deselected streams and inserts missing selections in one transaction', async () => {
+    mockTransactionManager.find.mockResolvedValue([{ contentStreamId: 'cs-1' }]);
 
-    await service.linkUserSelections('user-1', ['cs-1', 'cs-2']);
+    await service.linkUserSelections('user-1', ['cs-1', 'cs-2', 'cs-2']);
 
-    expect(mockUserContentStreamRepo.save).toHaveBeenCalledTimes(2);
-    expect(mockUserContentStreamRepo.save).toHaveBeenCalledWith(
-      expect.objectContaining({ userId: 'user-1', contentStreamId: 'cs-1' }),
+    expect(mockUserContentStreamRepo.manager.transaction).toHaveBeenCalledTimes(1);
+    expect(mockTransactionManager.delete).toHaveBeenCalledWith(
+      expect.any(Function),
+      expect.objectContaining({ userId: 'user-1' }),
     );
+    expect(mockTransactionManager.save).toHaveBeenCalledWith(expect.any(Function), [
+      expect.objectContaining({ userId: 'user-1', contentStreamId: 'cs-2' }),
+    ]);
   });
 
-  it('skips a selection the user is already linked to (idempotent upsert-ignore)', async () => {
-    mockUserContentStreamRepo.findOne.mockResolvedValue({ id: 'link-1' });
+  it('does not insert duplicates when the requested selection already exists', async () => {
+    mockTransactionManager.find.mockResolvedValue([{ contentStreamId: 'cs-1' }]);
 
     await service.linkUserSelections('user-1', ['cs-1']);
 
-    expect(mockUserContentStreamRepo.save).not.toHaveBeenCalled();
+    expect(mockTransactionManager.save).not.toHaveBeenCalled();
   });
 
   describe('update', () => {

@@ -37,6 +37,12 @@ export class UserSourcePreference {
   @Column({ type: 'int', default: 0 })
   notUsefulCount: number;
 
+  @Column({ type: 'int', default: 0 })
+  savedCount: number;
+
+  @Column({ type: 'int', default: 0 })
+  openedCount: number;
+
   @Column({ type: 'decimal', precision: 4, scale: 2, default: 0 })
   feedbackAdjustment: number;
 

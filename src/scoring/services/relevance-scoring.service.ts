@@ -1,6 +1,5 @@
 import { Injectable } from '@nestjs/common';
 import { ArticleComplexityLevel } from '../../ai-analysis/entities/article-analysis.entity';
-import { ArticleFeedbackType } from '../../articles/entities/article-feedback.entity';
 import { getRecencyScore } from '../../common/util/recency-score.util';
 import { UserLevel } from '../../users/entities/user.entity';
 import {
@@ -14,17 +13,15 @@ import {
 } from '../scoring.types';
 
 const EMPTY_BREAKDOWN: ScoringResultBreakdown = {
-  techInterestOverlap: 0,
+  technologyMatch: 0,
+  interestMatch: 0,
   complexityMatch: 0,
   qualityScore: 0,
   recencyScore: 0,
   sourcePreferenceAdjustment: 0,
-  directFeedbackAdjustment: 0,
 };
 
-// Pure/stateless — no repository injection. Callers (UserScoringProfileService and future
-// consumers like the Personal Feed / Public Preview) resolve all DB-backed inputs first and
-// pass them in as plain data.
+// Scoring is pure; callers resolve database inputs before invoking it.
 @Injectable()
 export class RelevanceScoringService {
   computeScore(
@@ -32,16 +29,19 @@ export class RelevanceScoringService {
     profile: ScoringProfile,
     config: ScoringConfig = DEFAULT_SCORING_CONFIG,
   ): ScoringResult {
-    // Content-stream mismatch is the ONLY hard exclusion. A "not_useful" article-level feedback
-    // vote is deliberately NOT a hard exclusion — see directFeedbackAdjustment below.
+    // Stream mismatch excludes an article; interactions affect only source adjustment.
     const eligible = article.streamIds.some((id) => profile.contentStreamIds.includes(id));
     if (!eligible) {
       return { eligible: false, score: 0, breakdown: { ...EMPTY_BREAKDOWN } };
     }
 
-    const techInterestOverlap = this.computeTechInterestOverlap(
-      article.technologyInterestIds,
-      profile.technologyInterestIds,
+    const technologyMatch = this.computeTaxonomyOverlap(
+      article.technologyIds ?? article.technologyInterestIds,
+      profile.technologyIds ?? profile.technologyInterestIds,
+    );
+    const interestMatch = this.computeTaxonomyOverlap(
+      article.interestIds ?? [],
+      profile.interestIds ?? [],
     );
     const complexityMatch = this.computeComplexityMatch(
       profile.level,
@@ -55,37 +55,34 @@ export class RelevanceScoringService {
     );
 
     const coreScore =
-      techInterestOverlap * config.weights.techInterestOverlap +
+      technologyMatch * config.weights.technologyMatch +
+      interestMatch * config.weights.interestMatch +
       complexityMatch * config.weights.complexityMatch +
       qualityScore * config.weights.qualityScore +
       recencyScore * config.weights.recency;
 
     const sourcePreferenceAdjustment =
       profile.sourcePreferenceAdjustments?.get(article.analysis.article.sourceId) ?? 0;
-    const directFeedbackAdjustment = this.computeDirectFeedbackAdjustment(
-      profile.articleFeedback?.get(article.analysis.articleId),
-    );
 
-    // Additive, not re-clamped after summing — same convention as DigestBuilderService's
-    // finalScore = baseScore + feedbackAdjustment.
-    const score = coreScore + sourcePreferenceAdjustment + directFeedbackAdjustment;
+    // Keep the bounded source adjustment additive to the weighted base score.
+    const score = coreScore + sourcePreferenceAdjustment;
 
     return {
       eligible: true,
       score,
       breakdown: {
-        techInterestOverlap,
+        technologyMatch,
+        interestMatch,
         complexityMatch,
         qualityScore,
         recencyScore,
         sourcePreferenceAdjustment,
-        directFeedbackAdjustment,
       },
     };
   }
 
-  private computeTechInterestOverlap(articleIds: string[], profileIds: string[]): number {
-    // Article has no tagged tech/interests at all -> neutral, not penalized.
+  private computeTaxonomyOverlap(articleIds: string[], profileIds: string[]): number {
+    // Untagged articles receive a neutral taxonomy score.
     if (articleIds.length === 0) return 50;
     const matchCount = articleIds.filter((id) => profileIds.includes(id)).length;
     if (matchCount === 0) return 0;
@@ -100,11 +97,5 @@ export class RelevanceScoringService {
   ): number {
     if (!level || !complexityLevel) return 50;
     return COMPLEXITY_MATCH_TABLE[level]?.[complexityLevel] ?? 50;
-  }
-
-  private computeDirectFeedbackAdjustment(feedbackType?: ArticleFeedbackType): number {
-    if (feedbackType === ArticleFeedbackType.USEFUL) return 8;
-    if (feedbackType === ArticleFeedbackType.NOT_USEFUL) return -8;
-    return 0;
   }
 }

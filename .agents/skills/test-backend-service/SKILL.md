@@ -32,3 +32,6 @@ For query builders, provide chainable mocks for the methods actually used and ve
 Identify distinct outcomes before writing tests. Cover meaningful branches, state transitions, error paths, and idempotency without multiplying equivalent examples.
 
 For guards, test allowed access, denied access, and routes with no role requirement.
+
+Record verification commands and exact results, remaining failures, and risks in the current
+ignored `./reports/*.md` iteration report. Never stage or commit the report.

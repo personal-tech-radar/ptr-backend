@@ -4,10 +4,11 @@ import { LoggingService } from '../../common/logging/logging.service';
 import {
   PLAYWRIGHT_QUEUE_CONCURRENCY,
   QUEUE_WEB_SOURCE_BROWSER_FETCH,
-} from '../../queue/queue.service';
+} from '../../queue/services/queue.service';
 import { getPlaywrightTimeoutMs } from '../../sources/services/playwright-fetch.service';
 import { SourcesService } from '../../sources/services/sources.service';
 import { WebSourceFetcherService } from '../services/web-source-fetcher.service';
+import { FeedCacheVersionService } from '../../feed/services/feed-cache-version.service';
 
 // Padding on top of PLAYWRIGHT_TIMEOUT_MS: the navigation timeout inside PlaywrightFetchService
 // already bounds `page.goto`, but this is a backstop for the surrounding work (browser launch,
@@ -21,6 +22,7 @@ export class PlaywrightFetchProcessor extends WorkerHost {
   constructor(
     private readonly sourcesService: SourcesService,
     private readonly webSourceFetcherService: WebSourceFetcherService,
+    private readonly feedCacheVersionService: FeedCacheVersionService,
   ) {
     super();
   }
@@ -32,12 +34,26 @@ export class PlaywrightFetchProcessor extends WorkerHost {
     }
 
     const timeoutMs = getPlaywrightTimeoutMs() + JOB_TIMEOUT_BUFFER_MS;
-    await this.withHardTimeout(this.runJob(job.data.sourceId), timeoutMs, job.data.sourceId);
+    await this.withHardTimeout(
+      this.runJob(job.data.sourceId, job.data.streamIds ?? [], job.data.attemptId),
+      timeoutMs,
+      job.data.sourceId,
+    );
   }
 
-  private async runJob(sourceId: string): Promise<void> {
+  private async runJob(sourceId: string, streamIds: string[], attemptId?: string): Promise<void> {
     const source = await this.sourcesService.findOne(sourceId);
-    await this.webSourceFetcherService.fetchSourceViaBrowser(source);
+    const attempt = attemptId
+      ? { id: attemptId }
+      : await this.sourcesService.beginIngestionAttempt(sourceId, streamIds);
+    try {
+      const count = await this.webSourceFetcherService.fetchSourceViaBrowser(source);
+      await this.sourcesService.recordIngestionSuccess(sourceId, attempt.id, count);
+      await this.feedCacheVersionService.incrementStreams(streamIds);
+    } catch (error) {
+      await this.sourcesService.recordIngestionFailure(sourceId, attempt.id, error);
+      throw error;
+    }
   }
 
   private withHardTimeout<T>(promise: Promise<T>, timeoutMs: number, sourceId: string): Promise<T> {

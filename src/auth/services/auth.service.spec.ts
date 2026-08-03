@@ -10,7 +10,6 @@ import { RefreshToken } from '../entities/refresh-token.entity';
 import { UserCommandService } from '../../users/services/user-command.service';
 import { UserQueryService } from '../../users/services/user-query.service';
 import { MailService } from '../../mail/services/mail.service';
-import { UserRole } from '../../users/entities/user.entity';
 
 describe('AuthService', () => {
   let service: AuthService;
@@ -52,7 +51,6 @@ describe('AuthService', () => {
     id: '123e4567-e89b-12d3-a456-426614174000',
     email: 'jane@example.com',
     displayName: 'Jane',
-    role: UserRole.USER,
     passwordHash: '',
   };
 
@@ -99,7 +97,6 @@ describe('AuthService', () => {
         email: mockUser.email,
         password: 'correct-password',
         displayName: mockUser.displayName,
-        timezone: 'Europe/Berlin',
       });
 
       expect(mockEmailVerificationTokenRepo.save).toHaveBeenCalledTimes(1);
@@ -110,6 +107,9 @@ describe('AuthService', () => {
       );
       expect(result.email).toBe(mockUser.email);
       expect((result as any).passwordHash).toBeUndefined();
+      expect(mockUserCommandService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ timezone: null }),
+      );
     });
 
     it('registration succeeds even when sending the verification email fails', async () => {
@@ -121,7 +121,6 @@ describe('AuthService', () => {
           email: mockUser.email,
           password: 'correct-password',
           displayName: mockUser.displayName,
-          timezone: 'Europe/Berlin',
         }),
       ).resolves.toMatchObject({ email: mockUser.email });
     });
@@ -188,6 +187,12 @@ describe('AuthService', () => {
       // The raw refresh token is never the same as its persisted hash.
       const savedArg = mockRefreshTokenRepo.save.mock.calls[0][0];
       expect(savedArg.tokenHash).not.toBe(result.refreshToken);
+    });
+
+    it('issues tokens before email verification', async () => {
+      await expect(service.login({ ...mockUser, emailVerifiedAt: null } as any)).resolves.toEqual(
+        expect.objectContaining({ accessToken: 'signed-access-token' }),
+      );
     });
   });
 

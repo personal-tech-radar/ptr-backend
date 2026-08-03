@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/require-await, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-return */
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { NotFoundException } from '@nestjs/common';
@@ -6,6 +7,10 @@ import {
   PersonalArticleLink,
   PersonalArticleLinkContext,
 } from '../entities/personal-article-link.entity';
+import { UserSourcePreferenceService } from '../../sources/services/user-source-preference.service';
+import { UserArticleOpening } from '../entities/user-article-opening.entity';
+import { Article } from '../../articles/entities/article.entity';
+import { DataSource } from 'typeorm';
 
 const userId = '123e4567-e89b-12d3-a456-426614174000';
 const articleId = '223e4567-e89b-12d3-a456-426614174000';
@@ -19,6 +24,17 @@ const mockRepository = {
   save: jest.fn((data) => Promise.resolve({ id: linkId, ...data })),
   createQueryBuilder: jest.fn(),
 };
+const openingInsertBuilder = {
+  insert: jest.fn().mockReturnThis(),
+  values: jest.fn().mockReturnThis(),
+  orIgnore: jest.fn().mockReturnThis(),
+  execute: jest.fn(async () => ({ identifiers: [{ id: 'opening-1' }] })),
+};
+const mockOpeningRepository = { createQueryBuilder: jest.fn(() => openingInsertBuilder) };
+const mockArticleRepository = { increment: jest.fn() };
+const transactionLinkRepository = { ...mockRepository };
+const transactionOpeningRepository = { createQueryBuilder: jest.fn(() => openingInsertBuilder) };
+const transactionArticleRepository = { increment: jest.fn() };
 
 describe('PersonalArticleLinkService', () => {
   let service: PersonalArticleLinkService;
@@ -30,6 +46,26 @@ describe('PersonalArticleLinkService', () => {
       providers: [
         PersonalArticleLinkService,
         { provide: getRepositoryToken(PersonalArticleLink), useValue: mockRepository },
+        {
+          provide: getRepositoryToken(UserArticleOpening),
+          useValue: mockOpeningRepository,
+        },
+        { provide: getRepositoryToken(Article), useValue: mockArticleRepository },
+        {
+          provide: DataSource,
+          useValue: {
+            transaction: jest.fn((work) =>
+              work({
+                getRepository: (entity) => {
+                  if (entity === PersonalArticleLink) return transactionLinkRepository;
+                  if (entity === UserArticleOpening) return transactionOpeningRepository;
+                  return transactionArticleRepository;
+                },
+              }),
+            ),
+          },
+        },
+        { provide: UserSourcePreferenceService, useValue: { applySignal: jest.fn() } },
       ],
     }).compile();
 
@@ -50,6 +86,8 @@ describe('PersonalArticleLinkService', () => {
         userId,
         articleId,
         context: PersonalArticleLinkContext.FEED,
+        digestId: null,
+        originalUrl: null,
       });
       expect(result.id).toBe(linkId);
     });

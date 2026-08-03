@@ -62,9 +62,6 @@ export class UserQueryService {
     if (query.email) {
       qb.andWhere('user.email ILIKE :email', { email: `%${query.email}%` });
     }
-    if (query.role) {
-      qb.andWhere('user.role = :role', { role: query.role });
-    }
 
     const [data, total] = await qb
       .orderBy('user.createdAt', 'DESC')

@@ -16,8 +16,7 @@ export class SavedArticleResponseDto {
   savedAt: Date;
 }
 
-// entity.article must be loaded (relations: ['article']) before calling this — see
-// SavedArticleService, which always fetches the joined row after a write.
+// The service loads the article relation before mapping this DTO.
 export function toSavedArticleResponseDto(entity: SavedArticle): SavedArticleResponseDto {
   return {
     id: entity.id,

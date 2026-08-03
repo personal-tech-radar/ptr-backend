@@ -15,6 +15,7 @@ import { QueryFeedDto } from '../dto/query-feed.dto';
 import { OnboardingCompletedGuard } from '../guards/onboarding-completed.guard';
 import { FeedCacheService } from '../services/feed-cache.service';
 import { FeedQueryService } from '../services/feed-query.service';
+import { ContentStreamQueryService } from '../../taxonomy/services/content-stream-query.service';
 
 @ApiTags('Feed')
 @ApiBearerAuth()
@@ -26,13 +27,14 @@ export class FeedController {
   constructor(
     private readonly feedQueryService: FeedQueryService,
     private readonly feedCacheService: FeedCacheService,
+    private readonly contentStreamQueryService: ContentStreamQueryService,
   ) {}
 
   @Get()
   @ApiOperation({
-    summary:
-      "Get the current user's personal feed — day-grouped, scored, and capped/distributed " +
-      'across their selected content streams. See README for the full algorithm.',
+    summary: "Get the current user's personalized feed",
+    description:
+      'Returns globally analyzed articles eligible for the user’s selected streams, scored by the shared deterministic personalization service and grouped by local calendar day. Supports stream, taxonomy, source, date, and saved filters; onboarding and email verification must both be complete.',
   })
   @ApiResponse({ status: 200, type: FeedResponseDto })
   @ApiResponse({ status: 400, type: ErrorResponseDto })
@@ -40,7 +42,8 @@ export class FeedController {
   @ApiResponse({
     status: 403,
     type: ErrorResponseDto,
-    description: 'Onboarding not completed (errorCode: ONBOARDING_NOT_COMPLETED)',
+    description:
+      'Onboarding incomplete (ONBOARDING_NOT_COMPLETED) or email unverified (EMAIL_NOT_VERIFIED)',
   })
   async getFeed(
     @CurrentUser() user: CurrentUserPayload,
@@ -54,11 +57,18 @@ export class FeedController {
     // local midnight in the user's timezone, be served up to FEED_CACHE_TTL_SECONDS stale across
     // that day boundary — bounded and self-healing via the existing TTL.
     const days = query.days ?? 7;
-    const cacheKey = this.feedCacheService.buildKey(
+    const selectedStreams = await this.contentStreamQueryService.findSelectedByUser(user.id);
+    const effectiveStreamIds = query.stream?.length
+      ? selectedStreams
+          .filter((stream) => query.stream?.includes(stream.key))
+          .map((stream) => stream.id)
+      : selectedStreams.map((stream) => stream.id);
+    const cacheKey = await this.feedCacheService.buildVersionedKey(
       user.id,
       query,
       query.beforeDate ?? 'today',
       days,
+      effectiveStreamIds,
     );
 
     const cached = await this.feedCacheService.get(cacheKey);

@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, EntityManager, Repository } from 'typeorm';
 import { PaginatedResponseDto } from '../../common/dto/paginated-response.dto';
 import { LoggingService } from '../../common/logging/logging.service';
 import { ArticlesService } from '../../articles/services/articles.service';
@@ -11,6 +11,8 @@ import {
   toSavedArticleResponseDto,
 } from '../dto/saved-article-response.dto';
 import { SavedArticle } from '../entities/saved-article.entity';
+import { UserSourcePreferenceService } from '../../sources/services/user-source-preference.service';
+import { Article } from '../../articles/entities/article.entity';
 
 @Injectable()
 export class SavedArticleService {
@@ -19,38 +21,62 @@ export class SavedArticleService {
   constructor(
     @InjectRepository(SavedArticle)
     private readonly savedArticleRepo: Repository<SavedArticle>,
+    private readonly dataSource: DataSource,
     private readonly articlesService: ArticlesService,
+    private readonly userSourcePreferenceService: UserSourcePreferenceService,
   ) {}
 
-  // Find-or-create: saving an already-saved article is not an error, it just returns the
-  // existing row (idempotent from the caller's perspective).
+  // Saving an existing article returns the existing row.
   async create(userId: string, articleId: string): Promise<SavedArticle> {
-    await this.articlesService.findOne(articleId); // throws NotFoundException if missing
-
+    const article = await this.articlesService.findOne(articleId);
     const existing = await this.findJoined(userId, articleId);
     if (existing) {
       return existing;
     }
-
+    let result: SavedArticle;
     try {
-      await this.savedArticleRepo.save(this.savedArticleRepo.create({ userId, articleId }));
+      result = await this.dataSource.transaction(async (manager) => {
+        const repo = manager.getRepository(SavedArticle);
+        const current = await this.findJoined(userId, articleId, manager);
+        if (current) return current;
+        await repo.save(repo.create({ userId, articleId }));
+        await this.userSourcePreferenceService.applySignal(
+          userId,
+          article.sourceId,
+          'saved',
+          manager,
+        );
+        return (await this.findJoined(userId, articleId, manager)) as SavedArticle;
+      });
     } catch (error) {
-      // Concurrent double-save race on the (userId, articleId) unique constraint — treat as
-      // find-or-create rather than surfacing a conflict.
-      const existingAfterRace = await this.findJoined(userId, articleId);
-      if (existingAfterRace) {
-        return existingAfterRace;
-      }
+      const winner = await this.findJoined(userId, articleId);
+      if (winner) return winner;
       throw error;
     }
-
     this.logger.info('Article saved', { userId, articleId });
-    return (await this.findJoined(userId, articleId)) as SavedArticle;
+    return result;
   }
 
-  // Idempotent: unsaving an article that isn't currently saved is a no-op, not an error.
+  // Removing a missing save is an idempotent no-op.
   async remove(userId: string, articleId: string): Promise<void> {
-    await this.savedArticleRepo.delete({ userId, articleId });
+    const removed = await this.dataSource.transaction(async (manager) => {
+      const repo = manager.getRepository(SavedArticle);
+      const existing = await repo.findOne({
+        where: { userId, articleId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!existing) return false;
+      const article = await manager.getRepository(Article).findOneByOrFail({ id: articleId });
+      await repo.remove(existing);
+      await this.userSourcePreferenceService.removeSignal(
+        userId,
+        article.sourceId,
+        'saved',
+        manager,
+      );
+      return true;
+    });
+    if (!removed) return;
     this.logger.info('Article unsaved', { userId, articleId });
   }
 
@@ -74,13 +100,16 @@ export class SavedArticleService {
     };
   }
 
-  private findJoined(userId: string, articleId: string): Promise<SavedArticle | null> {
-    return this.savedArticleRepo.findOne({ where: { userId, articleId }, relations: ['article'] });
+  private findJoined(
+    userId: string,
+    articleId: string,
+    manager?: EntityManager,
+  ): Promise<SavedArticle | null> {
+    const repo = manager?.getRepository(SavedArticle) ?? this.savedArticleRepo;
+    return repo.findOne({ where: { userId, articleId }, relations: ['article'] });
   }
 
-  // Flattened, admin-only listing across all users' saved articles. userId/articleId are real
-  // FKs here (unlike ArticleFeedback/UserSourcePreference), so this is a plain join — no cast
-  // trick, no separate raw-select handling needed.
+  // Admin listing uses declared user and article relations.
   async findAllAdmin(
     query: AdminQuerySavedArticleDto,
   ): Promise<PaginatedResponseDto<AdminSavedArticleResponseDto>> {

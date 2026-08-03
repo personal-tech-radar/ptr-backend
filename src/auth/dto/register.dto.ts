@@ -1,6 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsEmail, IsString, IsTimeZone, MaxLength, MinLength } from 'class-validator';
+import { IsEmail, IsString, MaxLength, MinLength } from 'class-validator';
 
 export class RegisterDto {
   @ApiProperty({ description: 'Email address', example: 'jane.doe@example.com' })
@@ -18,9 +18,4 @@ export class RegisterDto {
   @MaxLength(255)
   @Transform(({ value }: { value: string }) => value?.trim())
   displayName: string;
-
-  @ApiProperty({ description: 'IANA timezone string', example: 'Europe/Berlin' })
-  @IsTimeZone()
-  @Transform(({ value }: { value: string }) => value?.trim())
-  timezone: string;
 }

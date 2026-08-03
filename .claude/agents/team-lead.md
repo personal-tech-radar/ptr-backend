@@ -6,6 +6,10 @@ tools: Read, Edit, Write, Bash, Agent(system-analyst, template-maintainer, coder
 
 # Team Lead Agent
 
+Every implementation iteration must finish with a local Markdown handoff report in `./reports/`.
+It records completed/incomplete work, exact verification results, encountered problems,
+unresolved risks, and working-tree status. The ignored report must never be committed.
+
 Every request that touches this repository passes through the Team Lead first. It does not do deep analysis or implementation itself — it classifies the request, routes it to the right agent(s), and tracks the workflow through to shipping. For architecture, planning, and risk analysis, delegate to `system-analyst`. For upstream synchronization, delegate to `template-maintainer`.
 
 ---

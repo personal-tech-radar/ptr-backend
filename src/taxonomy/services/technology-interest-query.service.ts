@@ -69,6 +69,10 @@ export class TechnologyInterestQueryService {
     return this.technologyInterestRepo.find({ where: { id: In(ids) } });
   }
 
+  async findAllActive(): Promise<TechnologyInterest[]> {
+    return this.technologyInterestRepo.find({ order: { name: 'ASC' } });
+  }
+
   async findSelectedByUser(userId: string): Promise<TechnologyInterest[]> {
     const links = await this.userTechnologyInterestRepo.find({ where: { userId } });
     if (links.length === 0) return [];

@@ -52,6 +52,7 @@ describe('PublicFeedPreviewService', () => {
   const mockTechnologyInterestQueryService = { findByIds: jest.fn() };
   const mockPublicFeedCacheService = {
     buildPreviewKey: jest.fn(),
+    buildVersionedPreviewKey: jest.fn(),
     getPreview: jest.fn(),
     setPreview: jest.fn(),
   };
@@ -72,6 +73,7 @@ describe('PublicFeedPreviewService', () => {
     mockArticleStreamRepo.find.mockResolvedValue([]);
     mockArticleTechnologyInterestRepo.find.mockResolvedValue([]);
     mockPublicFeedCacheService.buildPreviewKey.mockReturnValue('cache-key');
+    mockPublicFeedCacheService.buildVersionedPreviewKey.mockResolvedValue('cache-key');
     mockPublicFeedCacheService.getPreview.mockResolvedValue(null);
 
     service = new PublicFeedPreviewService(

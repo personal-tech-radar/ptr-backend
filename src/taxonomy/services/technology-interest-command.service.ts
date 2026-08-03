@@ -8,7 +8,9 @@ import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { validate as uuidValidate } from 'uuid';
 import { LoggingService } from '../../common/logging/logging.service';
-import { QueueService } from '../../queue/queue.service';
+import { DiscoveryOperationType } from '../../sources/entities/discovery-quota-record.entity';
+import { DiscoveryQuotaService } from '../../sources/services/discovery-quota.service';
+import { QueueService } from '../../queue/services/queue.service';
 import { UpdateTechnologyInterestDto } from '../dto/update-technology-interest.dto';
 import { TechnologyInterest, TechnologyInterestKind } from '../entities/technology-interest.entity';
 import { UserTechnologyInterest } from '../entities/user-technology-interest.entity';
@@ -25,21 +27,31 @@ export class TechnologyInterestCommandService {
     @InjectRepository(UserTechnologyInterest)
     private readonly userTechnologyInterestRepo: Repository<UserTechnologyInterest>,
     private readonly resolverService: TechnologyInterestResolverService,
+    private readonly discoveryQuotaService: DiscoveryQuotaService,
     private readonly queueService: QueueService,
     @InjectDataSource()
     private readonly dataSource: DataSource,
   ) {}
 
-  // Resolves/creates the technology-interest row (see TechnologyInterestResolverService), links
-  // it to the calling user (upsert — ignores an existing link, never errors), and — only when a
-  // genuinely new row was created — enqueues a stub discovery job on the isolated
-  // taxonomy-source-discovery queue.
+  // Resolve the catalog row, link it to the user, and discover sources only for new rows.
   async createOrReuse(
     userId: string,
     kind: TechnologyInterestKind,
     name: string,
   ): Promise<TechnologyInterest> {
-    const { entity, created } = await this.resolverService.resolve(kind, name);
+    const { entity, created } = await this.resolverService.resolve(
+      kind,
+      name,
+      async (normalized) => {
+        await this.discoveryQuotaService.reserve(
+          userId,
+          kind === TechnologyInterestKind.TECHNOLOGY
+            ? DiscoveryOperationType.TECHNOLOGY
+            : DiscoveryOperationType.INTEREST,
+          `${kind}:${normalized}`,
+        );
+      },
+    );
 
     const existingLink = await this.userTechnologyInterestRepo.findOne({
       where: { userId, technologyInterestId: entity.id },
@@ -51,7 +63,7 @@ export class TechnologyInterestCommandService {
     }
 
     if (created) {
-      await this.queueService.addTaxonomySourceDiscoveryJob(entity.id);
+      await this.queueService.addTaxonomySourceDiscoveryJob(entity.id, userId);
     }
 
     this.logger.info('Technology/interest resolved and linked to user', {
@@ -63,11 +75,18 @@ export class TechnologyInterestCommandService {
     return entity;
   }
 
-  // Reassigns every UserTechnologyInterest row from loser -> winner, deleting instead of
-  // reassigning when a user already has both selected (unique-constraint collision), then
-  // soft-deletes the loser with mergedIntoId set. Wrapped in a single transaction (mirrors
-  // SourcesService.create/SourceCandidatesService.promote) so a mid-way failure leaves neither
-  // row touched.
+  async removeUnselected(userId: string, selectedIds: string[]): Promise<void> {
+    const qb = this.userTechnologyInterestRepo
+      .createQueryBuilder()
+      .delete()
+      .where('"userId" = :userId', { userId });
+    if (selectedIds.length > 0) {
+      qb.andWhere('"technologyInterestId" NOT IN (:...selectedIds)', { selectedIds });
+    }
+    await qb.execute();
+  }
+
+  // Merge user links transactionally, then soft-delete the losing catalog row.
   async merge(winnerId: string, loserId: string): Promise<TechnologyInterest> {
     if (!uuidValidate(winnerId) || !uuidValidate(loserId)) {
       throw new BadRequestException('winnerId and loserId must be valid UUIDs');
@@ -91,12 +110,7 @@ export class TechnologyInterestCommandService {
         where: { technologyInterestId: loserId },
       });
 
-      // Checked ahead of time, deliberately not via a try/catch around the update-then-collide
-      // path: Postgres aborts the entire transaction on any statement error, so a caught
-      // unique-violation here would leave every later statement in this transaction (including
-      // the delete-instead-of-reassign fallback itself, and the loser's own soft-delete below)
-      // failing with "current transaction is aborted" unless run through a savepoint. Checking
-      // for the collision first avoids ever triggering that error in the first place.
+      // Check collisions before updating to keep the transaction usable.
       for (const link of loserLinks) {
         const winnerAlreadyLinked = await manager.findOne(UserTechnologyInterest, {
           where: { userId: link.userId, technologyInterestId: winnerId },
@@ -113,12 +127,7 @@ export class TechnologyInterestCommandService {
         }
       }
 
-      // Fold the loser's normalizedName (and any aliases it had itself accumulated from prior
-      // similarity-match resolutions) into the winner's aliases before soft-deleting it. Without
-      // this, the loser's normalizedName still occupies its slot in the (kind, normalizedName)
-      // unique constraint after soft-delete, but TechnologyInterestResolverService.resolve()'s
-      // exact/alias/similarity tiers all exclude soft-deleted rows — so a later resolve() call for
-      // that exact name would fall through to `create` and hit an uncaught unique-violation.
+      // Preserve the losing identity as an alias before soft deletion.
       const mergedAliases = new Set(winner.aliases ?? []);
       mergedAliases.add(loser.normalizedName);
       for (const alias of loser.aliases ?? []) {
@@ -141,11 +150,7 @@ export class TechnologyInterestCommandService {
     });
   }
 
-  // Edits name/aliases only — `kind` is immutable (see UpdateTechnologyInterestDto) and there is
-  // no dedicated delete endpoint (merge is the only supported consolidation path). A name change
-  // is checked for a (kind, normalizedName) collision via `.withDeleted()`: that DB constraint is
-  // NOT a partial index (confirmed in the CreateTaxonomyTables migration), so a soft-deleted row
-  // still occupies its slot and would otherwise raise an uncaught unique-violation on save.
+  // Update names and aliases; kind is immutable and merge is the only consolidation path.
   async update(id: string, dto: UpdateTechnologyInterestDto): Promise<TechnologyInterest> {
     if (!uuidValidate(id)) {
       throw new BadRequestException(`Invalid ID format: ${id}`);

@@ -1,4 +1,5 @@
 import { ArticleStatus } from '../../articles/entities/article.entity';
+import { Logger } from '@nestjs/common';
 import { TechnologyInterestKind } from '../../taxonomy/entities/technology-interest.entity';
 import { AiAnalysisService } from './ai-analysis.service';
 import { ArticleAnalysis } from '../entities/article-analysis.entity';
@@ -41,6 +42,7 @@ describe('AiAnalysisService', () => {
 
   const mockContentStreamQueryService = {
     findByKey: jest.fn(),
+    findAll: jest.fn().mockResolvedValue([]),
   };
 
   const mockManager = {
@@ -70,6 +72,8 @@ describe('AiAnalysisService', () => {
       mockArticlesService as any,
       mockResolverService as any,
       mockContentStreamQueryService as any,
+      { findAllActive: jest.fn().mockResolvedValue([]) } as any,
+      { increment: jest.fn() } as any,
       mockDataSource as any,
     );
     (service as any).openai = mockOpenAi;
@@ -109,6 +113,30 @@ describe('AiAnalysisService', () => {
   }
 
   describe('analyzeArticle — Stage 1 (pre-screen)', () => {
+    it('logs safe provider context without credential fragments on authentication failure', async () => {
+      mockAnalysisRepo.findOne.mockResolvedValue(null);
+      mockOpenAi.chat.completions.create.mockRejectedValueOnce(
+        Object.assign(
+          new Error('Incorrect API key provided: sk-proj-************************X9MA.'),
+          { status: 401 },
+        ),
+      );
+      const loggerError = jest.spyOn(Logger.prototype, 'error').mockImplementation();
+
+      await service.analyzeArticle(articleId);
+
+      expect(loggerError).toHaveBeenCalledWith(
+        expect.stringContaining(
+          '"provider":"openai","providerStatus":401,"retryable":false,"requestContext":"pre-analysis"',
+        ),
+        expect.not.stringContaining('X9MA'),
+      );
+      expect(mockArticlesService.updateStatus).toHaveBeenCalledWith(
+        articleId,
+        ArticleStatus.FAILED,
+      );
+    });
+
     it('stops after Stage 1 and never runs Stage 2 when the article is not relevant', async () => {
       mockAnalysisRepo.findOne.mockResolvedValue(null);
       mockAnalysisRepo.save.mockResolvedValue({
@@ -125,7 +153,7 @@ describe('AiAnalysisService', () => {
       expect(mockDataSource.transaction).not.toHaveBeenCalled();
       expect(mockArticlesService.updateStatus).toHaveBeenCalledWith(
         articleId,
-        ArticleStatus.ANALYZED,
+        ArticleStatus.SKIPPED,
       );
     });
 

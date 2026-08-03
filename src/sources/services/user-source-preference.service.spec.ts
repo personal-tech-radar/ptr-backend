@@ -3,6 +3,7 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { ArticleFeedbackType } from '../../articles/entities/article-feedback.entity';
 import { UserSourcePreference } from '../entities/user-source-preference.entity';
 import { UserSourcePreferenceService } from './user-source-preference.service';
+import { Source } from '../entities/source.entity';
 
 const userId = '123e4567-e89b-12d3-a456-426614174000';
 const sourceId = 'src-1';
@@ -27,12 +28,15 @@ const mockPreferenceRepo = {
       ...data,
       usefulCount: data.usefulCount ?? 0,
       notUsefulCount: data.notUsefulCount ?? 0,
+      savedCount: data.savedCount ?? 0,
+      openedCount: data.openedCount ?? 0,
       feedbackAdjustment: data.feedbackAdjustment ?? 0,
     }),
   ),
   update: jest.fn(),
   createQueryBuilder: jest.fn(() => mockAdminQueryBuilder),
 };
+const mockSourceRepo = { findOne: jest.fn().mockResolvedValue(null), save: jest.fn() };
 
 describe('UserSourcePreferenceService', () => {
   let service: UserSourcePreferenceService;
@@ -44,6 +48,7 @@ describe('UserSourcePreferenceService', () => {
       providers: [
         UserSourcePreferenceService,
         { provide: getRepositoryToken(UserSourcePreference), useValue: mockPreferenceRepo },
+        { provide: getRepositoryToken(Source), useValue: mockSourceRepo },
       ],
     }).compile();
 
@@ -161,8 +166,8 @@ describe('UserSourcePreferenceService', () => {
 
       const result = await service.applyFeedback(userId, sourceId, ArticleFeedbackType.USEFUL);
 
-      // (6 - 5) / (6 + 5 + 6) * 12
-      expect(result.feedbackAdjustment).toBeCloseTo((1 / 17) * 12, 5);
+      // (6*4 - 5*4) / (6*4 + 5*4 + 6) * 12
+      expect(result.feedbackAdjustment).toBeCloseTo((4 / 50) * 12, 5);
     });
   });
 

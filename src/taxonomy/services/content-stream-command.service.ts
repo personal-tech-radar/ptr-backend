@@ -1,17 +1,13 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Not, Repository } from 'typeorm';
 import { validate as uuidValidate } from 'uuid';
 import { LoggingService } from '../../common/logging/logging.service';
 import { UpdateContentStreamDto } from '../dto/update-content-stream.dto';
 import { ContentStream } from '../entities/content-stream.entity';
 import { UserContentStream } from '../entities/user-content-stream.entity';
 
-// Deliberately small: linking was the only write operation content streams needed until this
-// phase added admin editing (the streams themselves remain a fixed, curated set — never
-// created/deleted — see ContentStreamQueryService). Exists mainly so OnboardingService can link
-// selections without reaching into TaxonomyModule's repositories directly (see coder.md's
-// module-boundary rule).
+// Own stream selection synchronization and fixed-catalog administration.
 @Injectable()
 export class ContentStreamCommandService {
   private readonly logger = new LoggingService(ContentStreamCommandService.name);
@@ -23,23 +19,33 @@ export class ContentStreamCommandService {
     private readonly userContentStreamRepo: Repository<UserContentStream>,
   ) {}
 
-  // Upsert-ignore: an already-linked stream is left untouched, never errors. Safe to call
-  // repeatedly with the same selection (onboarding is re-callable).
+  // Synchronizes the complete selection set in one transaction. The unique database constraint
+  // prevents duplicates, while the existence check keeps identical requests idempotent.
   async linkUserSelections(userId: string, contentStreamIds: string[]): Promise<void> {
-    for (const contentStreamId of contentStreamIds) {
-      const existing = await this.userContentStreamRepo.findOne({
-        where: { userId, contentStreamId },
+    const uniqueIds = [...new Set(contentStreamIds)];
+
+    await this.userContentStreamRepo.manager.transaction(async (manager) => {
+      await manager.delete(UserContentStream, {
+        userId,
+        contentStreamId: Not(In(uniqueIds)),
       });
-      if (existing) continue;
 
-      await this.userContentStreamRepo.save(
-        this.userContentStreamRepo.create({ userId, contentStreamId }),
-      );
-    }
+      const existing = await manager.find(UserContentStream, {
+        where: { userId, contentStreamId: In(uniqueIds) },
+      });
+      const existingIds = new Set(existing.map((link) => link.contentStreamId));
+      const missing = uniqueIds
+        .filter((contentStreamId) => !existingIds.has(contentStreamId))
+        .map((contentStreamId) => manager.create(UserContentStream, { userId, contentStreamId }));
 
-    this.logger.info('User content stream selections linked', {
+      if (missing.length > 0) {
+        await manager.save(UserContentStream, missing);
+      }
+    });
+
+    this.logger.info('User content stream selections synchronized', {
       userId,
-      count: contentStreamIds.length,
+      count: uniqueIds.length,
     });
   }
 

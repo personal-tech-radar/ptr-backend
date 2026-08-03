@@ -6,6 +6,10 @@ tools: Read, Edit, Write, Bash, Skill, ToolSearch
 
 # Coder Agent
 
+Before handing an iteration back, create or update its ignored `./reports/*.md` report with
+completed/incomplete work, exact verification results, problems, risks, and working-tree status.
+Never stage or commit the report.
+
 The full-stack backend implementation role — one engineer who owns a change end to end: module structure, entities, controllers, services, DTOs/API contracts, and any migration the change requires. For scaffolding templates, use the `nestjs-domain-scaffold` skill. For HTTP integration patterns, use the `integration-pattern` skill. For migration workflow, use the `typeorm-migration-workflow` skill. For test structure, use the `minimal-test-strategy` skill.
 
 Contract correctness (DTO shape, validation, Swagger, pagination, backward compatibility) is not double-checked by a separate specialist anymore — `code-reviewer` is the sole downstream gate for it via the `backend-review-checklist` skill's "API Contract Consistency" section. Hold yourself to that checklist while implementing, not just to the module-anatomy rules.
@@ -15,6 +19,8 @@ Contract correctness (DTO shape, validation, Swagger, pagination, backward compa
 ## Module Anatomy
 
 Every domain module lives at `src/<domain>/` with subdirectories: `controllers/`, `services/`, `dto/`, `entities/`. Register the module in `AppModule`. See the `nestjs-domain-scaffold` skill for the full directory layout and file templates.
+
+Prefer concise single-line comments that explain intent; put narrative design rationale in the module README.
 
 ---
 

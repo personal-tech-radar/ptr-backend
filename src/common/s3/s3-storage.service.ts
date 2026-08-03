@@ -22,7 +22,9 @@ export class S3StorageService {
     this.bucket = this.configService.get<string>('S3_BUCKET', 'myapp');
 
     if (!accessKeyId || !secretAccessKey || !endpoint) {
-      this.logger.info('S3 credentials or endpoint are missing. S3 functionality will be unavailable.');
+      this.logger.info(
+        'S3 credentials or endpoint are missing. S3 functionality will be unavailable.',
+      );
       this.s3Client = null;
       this.isConfigured = false;
       return;
@@ -62,7 +64,10 @@ export class S3StorageService {
       this.logger.info('File uploaded to S3', { key, bucket: this.bucket });
     } catch (error) {
       this.logger.error(`S3 upload failed for key: ${key}`, error);
-      throw new InternalServerErrorException({ message: `S3 upload failed for key: ${key}`, errorCode: 'S3_ERROR' });
+      throw new InternalServerErrorException({
+        message: `S3 upload failed for key: ${key}`,
+        errorCode: 'S3_ERROR',
+      });
     }
   }
 
@@ -70,20 +75,24 @@ export class S3StorageService {
     this.assertConfigured();
 
     try {
-      await this.s3Client!.send(
-        new DeleteObjectCommand({ Bucket: this.bucket, Key: key }),
-      );
+      await this.s3Client!.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
       this.logger.info('File deleted from S3', { key, bucket: this.bucket });
     } catch (error) {
       this.logger.error(`S3 delete failed for key: ${key}`, error);
-      throw new InternalServerErrorException({ message: `S3 delete failed for key: ${key}`, errorCode: 'S3_ERROR' });
+      throw new InternalServerErrorException({
+        message: `S3 delete failed for key: ${key}`,
+        errorCode: 'S3_ERROR',
+      });
     }
   }
 
   private assertConfigured() {
     if (!this.isConfigured || !this.s3Client) {
       this.logger.error('S3 is not configured.');
-      throw new InternalServerErrorException({ message: 'S3 storage is not configured.', errorCode: 'S3_ERROR' });
+      throw new InternalServerErrorException({
+        message: 'S3 storage is not configured.',
+        errorCode: 'S3_ERROR',
+      });
     }
   }
 }

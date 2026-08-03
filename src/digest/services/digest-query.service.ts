@@ -30,7 +30,9 @@ export class DigestQueryService {
     // nullable on the entity even though every row created going forward always has one.
     const qb = this.digestRepo
       .createQueryBuilder('digest')
-      .leftJoinAndSelect('digest.user', 'user');
+      .leftJoinAndSelect('digest.user', 'user')
+      .leftJoinAndSelect('digest.streamPages', 'streamPage')
+      .leftJoinAndSelect('streamPage.stream', 'stream');
 
     if (query.type) {
       qb.andWhere('digest.type = :type', { type: query.type });
@@ -57,7 +59,7 @@ export class DigestQueryService {
   async findByIdWithItems(id: string): Promise<Digest> {
     const digest = await this.digestRepo.findOne({
       where: { id },
-      relations: ['items', 'items.article', 'user'],
+      relations: ['items', 'items.article', 'user', 'streamPages', 'streamPages.stream'],
     });
     if (!digest) {
       throw new NotFoundException(`Digest ${id} not found`);

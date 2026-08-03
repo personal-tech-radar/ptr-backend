@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { User, UserLevel, UserRole } from '../entities/user.entity';
+import { User, UserLevel } from '../entities/user.entity';
 
 export class UserResponseDto {
   @ApiProperty({ example: '123e4567-e89b-12d3-a456-426614174000' })
@@ -11,11 +11,12 @@ export class UserResponseDto {
   @ApiProperty({ example: 'Jane Doe' })
   displayName: string;
 
-  @ApiProperty({ example: 'Europe/Berlin', description: 'IANA timezone string' })
-  timezone: string;
-
-  @ApiProperty({ enum: UserRole, example: UserRole.USER })
-  role: UserRole;
+  @ApiPropertyOptional({
+    example: 'Europe/Berlin',
+    nullable: true,
+    description: 'Browser IANA timezone, null until supplied through onboarding or profile update',
+  })
+  timezone: string | null;
 
   @ApiPropertyOptional({ example: 'https://github.com/janedoe', nullable: true })
   githubUrl: string | null;
@@ -49,7 +50,6 @@ export function toUserResponseDto(user: User): UserResponseDto {
     email: user.email,
     displayName: user.displayName,
     timezone: user.timezone,
-    role: user.role,
     githubUrl: user.githubUrl,
     level: user.level,
     dailyDigestEnabled: user.dailyDigestEnabled,

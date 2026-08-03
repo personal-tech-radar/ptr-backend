@@ -13,9 +13,7 @@ export enum TechnologyInterestKind {
   INTEREST = 'interest',
 }
 
-// Technologies/interests are never hard-deleted, only edited or merged (see
-// TechnologyInterestCommandService.merge) — deletedAt + mergedIntoId are set together on the
-// losing row of a merge, never on a standalone delete.
+// Taxonomy rows are edited or merged, never hard-deleted.
 @Entity('technology_interests')
 @Unique(['kind', 'normalizedName'])
 export class TechnologyInterest {
@@ -28,15 +26,11 @@ export class TechnologyInterest {
   @Column({ type: 'varchar' })
   name: string;
 
-  // Lowercase/trim/collapsed-internal-whitespace of `name`, but punctuation that's meaningful to
-  // the identity of a technology name (".", "#", "+") is preserved — see
-  // `normalizeTechnologyInterestName` in `util/normalize-technology-interest-name.util.ts`.
+  // Normalized identity preserves meaningful punctuation such as ., #, and +.
   @Column({ type: 'varchar' })
   normalizedName: string;
 
-  // Alternate normalized strings folded in during resolve/merge (e.g. a similarity match below
-  // the exact/alias tiers gets its input string appended here so the next identical input is an
-  // alias hit instead of another similarity search).
+  // Alternate normalized names learned during resolution or merge.
   @Column({ type: 'jsonb', default: () => "'[]'" })
   aliases: string[];
 

@@ -1,4 +1,5 @@
 import { plainToInstance } from 'class-transformer';
+import { validate } from 'class-validator';
 import { QueryFeedDto } from './query-feed.dto';
 
 // Regression test for a bug where the global ValidationPipe's `enableImplicitConversion` ran
@@ -24,4 +25,20 @@ describe('QueryFeedDto boolean query params', () => {
       expect(transform({ saved: 'false' }).saved).toBe(false);
     });
   });
+});
+
+describe('QueryFeedDto beforeDate', () => {
+  const validateDate = async (beforeDate: string) =>
+    validate(plainToInstance(QueryFeedDto, { beforeDate }, { enableImplicitConversion: true }));
+
+  it.each(['2024-02-29', '2026-07-25'])('accepts the real calendar date %s', async (value) => {
+    await expect(validateDate(value)).resolves.toHaveLength(0);
+  });
+
+  it.each(['2026-02-29', '2026-13-01', '2026-04-31', '2026/07/25', 'not-a-date'])(
+    'rejects invalid or malformed date %s',
+    async (value) => {
+      expect(await validateDate(value)).not.toHaveLength(0);
+    },
+  );
 });

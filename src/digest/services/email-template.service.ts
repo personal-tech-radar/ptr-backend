@@ -7,11 +7,19 @@ export interface DigestEmailItem {
   sourceName: string;
   shortSummary: string;
   whyItMatters?: string;
-  url: string;
+  trackingUrl: string;
+  originalUrl: string;
+  openUrl: string;
+  usefulUrl: string;
+  notUsefulUrl: string;
   matchedInterests?: string[];
-  // Personal digests only — a signed save-from-email link (SaveLinkSignatureService), rendered
-  // as a small secondary action near the main article link.
+  // Personal digests only — a permanent opaque Save action rendered near the main article link.
   saveUrl?: string;
+}
+
+export interface DigestEmailStreamLink {
+  name: string;
+  url: string;
 }
 
 const FONT_URL =
@@ -40,6 +48,7 @@ const STYLES = {
   link: 'font-size:12px;color:#2563eb;text-decoration:none;word-break:break-all;',
   saveLink:
     'font-size:12px;color:#6b7280;text-decoration:none;margin-left:12px;white-space:nowrap;',
+  streamLinks: 'margin:0 0 28px 0;padding:16px;background:#f9fafb;border:1px solid #f3f4f6;',
   stats:
     'margin-top:24px;padding:16px;background:#f9fafb;border-radius:8px;border:1px solid #f3f4f6;',
   statsLabel:
@@ -58,6 +67,7 @@ export class EmailTemplateService {
     intro: string,
     items: DigestEmailItem[],
     stats?: DigestStats,
+    streamLinks: DigestEmailStreamLink[] = [],
   ): string {
     const renderedItems = items.map((item) => this.renderItemHtml(item)).join('');
 
@@ -77,6 +87,7 @@ export class EmailTemplateService {
   <div style="${STYLES.content}">
     <p style="${STYLES.subject}">${escapeHtml(subject)}</p>
     <p style="${STYLES.intro}">${escapeHtml(intro)}</p>
+    ${this.renderStreamLinksHtml(streamLinks)}
     ${renderedItems}
     ${stats ? this.renderStatsHtml(stats) : ''}
   </div>
@@ -92,13 +103,25 @@ export class EmailTemplateService {
     intro: string,
     items: DigestEmailItem[],
     stats?: DigestStats,
+    streamLinks: DigestEmailStreamLink[] = [],
   ): string {
     const lines: string[] = ['Personal Tech Radar', subject, '', intro, ''];
+    if (streamLinks.length > 0) {
+      lines.push('Browse by stream');
+      for (const stream of streamLinks) lines.push(`${stream.name}: ${stream.url}`);
+      lines.push('');
+    }
     for (const item of items) {
       lines.push(`${item.position}. ${item.title}`, item.sourceName, item.shortSummary);
       if (item.whyItMatters) lines.push(item.whyItMatters);
-      lines.push(item.matchedInterests?.length ? item.matchedInterests.join(', ') : '', item.url);
-      if (item.saveUrl) lines.push(`Save for later: ${item.saveUrl}`);
+      lines.push(
+        item.matchedInterests?.length ? item.matchedInterests.join(', ') : '',
+        `Publication: ${item.trackingUrl}`,
+        `Open article: ${item.openUrl}`,
+        `Useful: ${item.usefulUrl}`,
+        `Not useful: ${item.notUsefulUrl}`,
+      );
+      if (item.saveUrl) lines.push(`Save: ${item.saveUrl}`);
       lines.push('');
     }
     if (stats) {
@@ -106,8 +129,9 @@ export class EmailTemplateService {
       lines.push(
         `── Pipeline · ${label} ──`,
         `${stats.articlesIngested} ingested · ${stats.articlesPassedPreanalysis} passed pre-analysis · ${stats.articlesAnalyzed} fully analyzed`,
+        `Period: ${stats.sourcesProcessed} sources processed · ${stats.publicationsProcessed} publications processed · ${stats.publicationsIncluded} included`,
         `DB: ${stats.totalArticlesInDb} total articles · ${stats.totalSourcesActive} active sources`,
-        `Sources: ${stats.feedSourcesActive} feed active · ${stats.webSourcesActive} web active · ${stats.sourceCandidatesPending} candidates pending`,
+        `Sources: ${stats.feedSourcesActive} feed active · ${stats.webSourcesActive} web active · ${stats.degradedSources} degraded · ${stats.disabledSources} disabled · ${stats.sourceCandidatesPending} candidates pending`,
         '',
       );
     }
@@ -118,13 +142,27 @@ export class EmailTemplateService {
   private renderItemHtml(item: DigestEmailItem): string {
     return `
   <div style="${STYLES.item}">
-    <p style="${STYLES.itemTitle}">${item.position}. ${escapeHtml(item.title)}</p>
+    <p style="${STYLES.itemTitle}">${item.position}. <a href="${item.trackingUrl}" style="${STYLES.link}">${escapeHtml(item.title)}</a></p>
     <p style="${STYLES.itemSource}">${escapeHtml(item.sourceName)}</p>
     <p style="${STYLES.itemSummary}">${escapeHtml(item.shortSummary)}</p>
     ${item.whyItMatters ? `<p style="${STYLES.itemWhy}">${escapeHtml(item.whyItMatters)}</p>` : ''}
     ${item.matchedInterests?.length ? `<p style="${STYLES.interests}">${escapeHtml(item.matchedInterests.join(', '))}</p>` : ''}
-    <a href="${item.url}" style="${STYLES.link}">${item.url}</a>${item.saveUrl ? `<a href="${item.saveUrl}" style="${STYLES.saveLink}">Save for later</a>` : ''}
+    <a href="${item.trackingUrl}" style="${STYLES.link}">${escapeHtml(item.originalUrl)}</a><br>
+    <a href="${item.openUrl}" style="${STYLES.link}">Open article</a>
+    <a href="${item.usefulUrl}" style="${STYLES.saveLink}">Useful</a>
+    <a href="${item.notUsefulUrl}" style="${STYLES.saveLink}">Not useful</a>
+    ${item.saveUrl ? `<a href="${item.saveUrl}" style="${STYLES.saveLink}">Save</a>` : ''}
   </div>`;
+  }
+
+  private renderStreamLinksHtml(streamLinks: DigestEmailStreamLink[]): string {
+    if (streamLinks.length === 0) return '';
+    const links = streamLinks
+      .map(
+        (stream) => `<a href="${stream.url}" style="${STYLES.link}">${escapeHtml(stream.name)}</a>`,
+      )
+      .join(' &nbsp;·&nbsp; ');
+    return `<div style="${STYLES.streamLinks}"><strong>Browse by stream</strong><br>${links}</div>`;
   }
 
   private renderStatsHtml(stats: DigestStats): string {
@@ -132,6 +170,11 @@ export class EmailTemplateService {
     return `
   <div style="${STYLES.stats}">
     <p style="${STYLES.statsLabel}">Pipeline · ${label}</p>
+    <p style="${STYLES.statsRow}">
+      Period: <span style="${STYLES.statsNum}">${stats.sourcesProcessed}</span> sources processed &nbsp;·&nbsp;
+      <span style="${STYLES.statsNum}">${stats.publicationsProcessed}</span> publications processed &nbsp;·&nbsp;
+      <span style="${STYLES.statsNum}">${stats.publicationsIncluded}</span> included
+    </p>
     <p style="${STYLES.statsRow}">
       <span style="${STYLES.statsNum}">${stats.articlesIngested}</span> ingested &nbsp;·&nbsp;
       <span style="${STYLES.statsNum}">${stats.articlesPassedPreanalysis}</span> passed pre-analysis &nbsp;·&nbsp;
@@ -144,6 +187,8 @@ export class EmailTemplateService {
     <p style="${STYLES.statsRow}">
       Sources: <span style="${STYLES.statsNum}">${stats.feedSourcesActive}</span> feed active &nbsp;·&nbsp;
       <span style="${STYLES.statsNum}">${stats.webSourcesActive}</span> web active &nbsp;·&nbsp;
+      <span style="${STYLES.statsNum}">${stats.degradedSources}</span> degraded &nbsp;·&nbsp;
+      <span style="${STYLES.statsNum}">${stats.disabledSources}</span> disabled &nbsp;·&nbsp;
       <span style="${STYLES.statsNum}">${stats.sourceCandidatesPending}</span> candidates pending
     </p>
   </div>`;

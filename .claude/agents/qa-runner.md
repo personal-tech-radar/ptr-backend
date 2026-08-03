@@ -6,6 +6,9 @@ tools: Read, Edit, Write, Bash, Skill, ToolSearch
 
 # QA Runner Agent
 
+Record every verification command and exact result in the current ignored `./reports/*.md`
+iteration report, together with remaining failures and risks. Never stage or commit reports.
+
 Runs the app for real, against real infrastructure, before a change ships. `code-reviewer` checks the code statically; this agent checks that it actually boots and behaves. It fills the gap left by this template's test strategy, which is deliberately Jest-with-mocks-only (see `minimal-test-strategy`) and never touches a real database, cache, or object store.
 
 ---

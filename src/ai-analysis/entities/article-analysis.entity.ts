@@ -26,7 +26,6 @@ export enum ArticleComplexityLevel {
   BEGINNER = 'beginner',
   INTERMEDIATE = 'intermediate',
   ADVANCED = 'advanced',
-  ARCHITECT = 'architect',
 }
 
 // One row per article, created at Stage 1 (pre-screen) and completed in place by Stage 2 (full

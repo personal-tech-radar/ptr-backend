@@ -10,14 +10,13 @@ import { validate as uuidValidate } from 'uuid';
 import { LoggingService } from '../../common/logging/logging.service';
 import { FeedCacheInvalidationService } from '../../feed/services/feed-cache-invalidation.service';
 import { UpdateProfileDto } from '../dto/update-profile.dto';
-import { User, UserRole } from '../entities/user.entity';
+import { User } from '../entities/user.entity';
 
 export interface CreateUserInput {
   email: string;
   passwordHash: string;
   displayName: string;
-  timezone: string;
-  role?: UserRole;
+  timezone: string | null;
   emailVerifiedAt?: Date | null;
   onboardingCompletedAt?: Date | null;
 }
@@ -43,7 +42,6 @@ export class UserCommandService {
       passwordHash: input.passwordHash,
       displayName: input.displayName,
       timezone: input.timezone,
-      role: input.role ?? UserRole.USER,
       emailVerifiedAt: input.emailVerifiedAt ?? null,
       onboardingCompletedAt: input.onboardingCompletedAt ?? null,
     });
@@ -56,18 +54,40 @@ export class UserCommandService {
   async updateProfile(id: string, dto: UpdateProfileDto): Promise<User> {
     const user = await this.getOrFail(id);
 
+    const feedAffectingChange =
+      (dto.timezone !== undefined && dto.timezone !== user.timezone) ||
+      (dto.level !== undefined && dto.level !== user.level);
+    const profileChanged =
+      (dto.displayName !== undefined && dto.displayName !== user.displayName) ||
+      (dto.timezone !== undefined && dto.timezone !== user.timezone) ||
+      (dto.githubUrl !== undefined && dto.githubUrl !== user.githubUrl) ||
+      (dto.level !== undefined && dto.level !== user.level) ||
+      (dto.dailyDigestEnabled !== undefined &&
+        dto.dailyDigestEnabled !== user.dailyDigestEnabled) ||
+      (dto.weeklyDigestEnabled !== undefined &&
+        dto.weeklyDigestEnabled !== user.weeklyDigestEnabled);
+
+    if (!profileChanged) {
+      return user;
+    }
+
     if (dto.displayName !== undefined) user.displayName = dto.displayName;
     if (dto.timezone !== undefined) user.timezone = dto.timezone;
     if (dto.githubUrl !== undefined) user.githubUrl = dto.githubUrl;
     if (dto.level !== undefined) user.level = dto.level;
+    if (dto.dailyDigestEnabled !== undefined) {
+      user.dailyDigestEnabled = dto.dailyDigestEnabled;
+    }
+    if (dto.weeklyDigestEnabled !== undefined) {
+      user.weeklyDigestEnabled = dto.weeklyDigestEnabled;
+    }
 
     const saved = await this.userRepo.save(user);
     this.logger.info('User profile updated', { id: saved.id });
 
-    // Unconditional rather than diffed on "was level actually present/changed" — a per-field
-    // diff would add meaningful complexity for a cheap, idempotent cache-drop that's a no-op
-    // when there was nothing cached to begin with.
-    await this.feedCacheInvalidationService.invalidateForUser(id);
+    if (feedAffectingChange) {
+      await this.feedCacheInvalidationService.invalidateForUser(id);
+    }
 
     return saved;
   }
@@ -87,28 +107,6 @@ export class UserCommandService {
 
     const saved = await this.userRepo.save(user);
     this.logger.info('User email verified', { id: saved.id });
-    return saved;
-  }
-
-  // Undoes a soft delete for AdminBootstrapService's "an active admin login always works" guarantee
-  // when ADMIN_EMAIL collides with a soft-deleted row. Deliberately never touches passwordHash —
-  // restore() clears deletedAt via a plain UPDATE, so the row must be re-read (withDeleted: true,
-  // since the row may not yet be visible to a default query in the same call) before role/
-  // verification/onboarding fields can be set on it.
-  async resurrectAsAdmin(id: string): Promise<User> {
-    await this.userRepo.restore(id);
-
-    const user = await this.userRepo.findOne({ where: { id }, withDeleted: true });
-    if (!user) {
-      throw new NotFoundException(`User ${id} not found`);
-    }
-
-    user.role = UserRole.ADMIN;
-    if (!user.emailVerifiedAt) user.emailVerifiedAt = new Date();
-    if (!user.onboardingCompletedAt) user.onboardingCompletedAt = new Date();
-
-    const saved = await this.userRepo.save(user);
-    this.logger.info('User resurrected as admin', { id: saved.id });
     return saved;
   }
 
