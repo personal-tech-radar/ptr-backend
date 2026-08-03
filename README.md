@@ -245,7 +245,10 @@ Production startup after building:
 
 ```bash
 npm run migration:run:prod
-npm run seed:sources:sync:prod
-npm run seed:legacy-user:sync:prod
 npm run start:prod
 ```
+
+The migration is self-contained: it retags historical `default_user` interaction rows and bootstraps
+the legacy user/catalog without Redis, queues, AI, or external requests. Run the source-sync command
+only for a later manifest update; run the legacy-user sync only as an explicit repair for an older
+database that predates this migration behavior.
