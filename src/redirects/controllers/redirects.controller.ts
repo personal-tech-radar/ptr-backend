@@ -1,6 +1,6 @@
 import { Controller, Get, HttpStatus, Param, Redirect } from '@nestjs/common';
 import { ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
-import { RedirectsService } from './redirects.service';
+import { RedirectsService } from '../services/redirects.service';
 
 @ApiTags('Redirects')
 @Controller()

@@ -1,8 +1,8 @@
 import { Module } from '@nestjs/common';
 import { ArticlesModule } from '../articles/articles.module';
 import { UserActionsModule } from '../user-actions/user-actions.module';
-import { RedirectsController } from './redirects.controller';
-import { RedirectsService } from './redirects.service';
+import { RedirectsController } from './controllers/redirects.controller';
+import { RedirectsService } from './services/redirects.service';
 
 @Module({
   imports: [ArticlesModule, UserActionsModule],

@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
-import { ArticlesService } from '../articles/services/articles.service';
-import { PublicArticlesService } from '../articles/services/public-articles.service';
-import { PersonalArticleLinkService } from '../user-actions/services/personal-article-link.service';
+import { ArticlesService } from '../../articles/services/articles.service';
+import { PublicArticlesService } from '../../articles/services/public-articles.service';
+import { PersonalArticleLinkService } from '../../user-actions/services/personal-article-link.service';
 
 @Injectable()
 export class RedirectsService {
