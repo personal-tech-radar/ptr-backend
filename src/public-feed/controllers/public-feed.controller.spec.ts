@@ -9,6 +9,7 @@ describe('PublicFeedController', () => {
   const mockPublicFeedPreviewService = { preview: jest.fn() };
   const mockPublicFeedCacheService = {
     buildListKey: jest.fn(),
+    buildVersionedListKey: jest.fn(),
     getList: jest.fn(),
     setList: jest.fn(),
   };
@@ -19,6 +20,7 @@ describe('PublicFeedController', () => {
       mockPublicFeedQueryService as any,
       mockPublicFeedPreviewService as any,
       mockPublicFeedCacheService as any,
+      { findAll: jest.fn().mockResolvedValue([]) } as any,
     );
   });
 
@@ -26,6 +28,7 @@ describe('PublicFeedController', () => {
     it('returns the cached response on a cache hit without calling PublicFeedQueryService', async () => {
       const cached = { data: [], meta: { total: 0, page: 1, limit: 20, totalPages: 0 } };
       mockPublicFeedCacheService.buildListKey.mockReturnValue('cache-key');
+      mockPublicFeedCacheService.buildVersionedListKey.mockResolvedValue('cache-key');
       mockPublicFeedCacheService.getList.mockResolvedValue(cached);
 
       const result = await controller.getFeed({} as QueryPublicFeedDto);
@@ -37,6 +40,7 @@ describe('PublicFeedController', () => {
     it('computes, caches, and returns the feed on a cache miss', async () => {
       const computed = { data: [{ articleId: 'a1' }], meta: {} };
       mockPublicFeedCacheService.buildListKey.mockReturnValue('cache-key');
+      mockPublicFeedCacheService.buildVersionedListKey.mockResolvedValue('cache-key');
       mockPublicFeedCacheService.getList.mockResolvedValue(null);
       mockPublicFeedQueryService.getFeed.mockResolvedValue(computed);
 

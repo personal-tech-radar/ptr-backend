@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { PaginatedResponseDto } from '../../common/dto/paginated-response.dto';
 
 export class UserSourcePreferenceResponseDto {
   @ApiProperty({ example: '123e4567-e89b-12d3-a456-426614174000' })
@@ -22,13 +23,28 @@ export class UserSourcePreferenceResponseDto {
   @ApiProperty({ example: 'The New Stack' })
   sourceName: string;
 
-  @ApiProperty({ example: 3 })
+  @ApiProperty({
+    description: 'Unique current useful feedback signals for this user and source',
+    example: 3,
+  })
   usefulCount: number;
 
-  @ApiProperty({ example: 1 })
+  @ApiProperty({
+    description: 'Unique current not-useful feedback signals for this user and source',
+    example: 1,
+  })
   notUsefulCount: number;
 
-  @ApiProperty({ example: 2.5 })
+  @ApiProperty({ description: 'Unique saved-article signals for this user and source' })
+  savedCount: number;
+
+  @ApiProperty({ description: 'Unique first-open signals for this user and source' })
+  openedCount: number;
+
+  @ApiProperty({
+    description: 'Bounded deterministic source adjustment used in this user’s personalized ranking',
+    example: 2.5,
+  })
   feedbackAdjustment: number;
 
   @ApiProperty()
@@ -36,4 +52,9 @@ export class UserSourcePreferenceResponseDto {
 
   @ApiProperty()
   updatedAt: Date;
+}
+
+export class PaginatedUserSourcePreferenceResponseDto extends PaginatedResponseDto<UserSourcePreferenceResponseDto> {
+  @ApiProperty({ type: [UserSourcePreferenceResponseDto] })
+  declare data: UserSourcePreferenceResponseDto[];
 }

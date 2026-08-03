@@ -4,6 +4,8 @@ import { NotFoundException } from '@nestjs/common';
 import { ArticlesService } from '../../articles/services/articles.service';
 import { SavedArticleService } from './saved-article.service';
 import { SavedArticle } from '../entities/saved-article.entity';
+import { UserSourcePreferenceService } from '../../sources/services/user-source-preference.service';
+import { DataSource } from 'typeorm';
 
 const userId = '123e4567-e89b-12d3-a456-426614174000';
 const articleId = '223e4567-e89b-12d3-a456-426614174000';
@@ -11,8 +13,10 @@ const article = { id: articleId, title: 'Some article' };
 
 const mockRepository = {
   findOne: jest.fn(),
+  findOneByOrFail: jest.fn(),
   create: jest.fn((data) => data),
   save: jest.fn((data) => Promise.resolve({ id: 'sa-1', ...data })),
+  remove: jest.fn(),
   delete: jest.fn(),
   createQueryBuilder: jest.fn(),
 };
@@ -27,12 +31,23 @@ describe('SavedArticleService', () => {
   beforeEach(async () => {
     jest.clearAllMocks();
     mockArticlesService.findOne.mockResolvedValue(article);
+    mockRepository.findOneByOrFail.mockResolvedValue({ ...article, sourceId: 'source-1' });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         SavedArticleService,
         { provide: getRepositoryToken(SavedArticle), useValue: mockRepository },
+        {
+          provide: DataSource,
+          useValue: {
+            transaction: jest.fn((work) => work({ getRepository: () => mockRepository })),
+          },
+        },
         { provide: ArticlesService, useValue: mockArticlesService },
+        {
+          provide: UserSourcePreferenceService,
+          useValue: { applySignal: jest.fn(), removeSignal: jest.fn() },
+        },
       ],
     }).compile();
 
@@ -43,6 +58,7 @@ describe('SavedArticleService', () => {
     it('saves an article that was not previously saved', async () => {
       mockRepository.findOne
         .mockResolvedValueOnce(null) // find-or-create check
+        .mockResolvedValueOnce(null) // transaction check
         .mockResolvedValueOnce({ id: 'sa-1', userId, articleId, article, createdAt: new Date() }); // post-save reload
 
       const result = await service.create(userId, articleId);
@@ -74,6 +90,7 @@ describe('SavedArticleService', () => {
       const winningRow = { id: 'sa-1', userId, articleId, article, createdAt: new Date() };
       mockRepository.findOne
         .mockResolvedValueOnce(null) // find-or-create check finds nothing
+        .mockResolvedValueOnce(null) // transaction check finds nothing
         .mockResolvedValueOnce(winningRow); // refetch after the race finds the concurrent insert
       mockRepository.save.mockRejectedValueOnce(
         Object.assign(new Error('duplicate key value violates unique constraint'), {
@@ -84,7 +101,7 @@ describe('SavedArticleService', () => {
       const result = await service.create(userId, articleId);
 
       expect(mockRepository.save).toHaveBeenCalledTimes(1);
-      expect(mockRepository.findOne).toHaveBeenCalledTimes(2);
+      expect(mockRepository.findOne).toHaveBeenCalledTimes(3);
       expect(result).toBe(winningRow);
     });
 
@@ -92,6 +109,7 @@ describe('SavedArticleService', () => {
       const saveError = new Error('some other database error');
       mockRepository.findOne
         .mockResolvedValueOnce(null) // find-or-create check finds nothing
+        .mockResolvedValueOnce(null) // transaction check finds nothing
         .mockResolvedValueOnce(null); // refetch after the failed save also finds nothing
       mockRepository.save.mockRejectedValueOnce(saveError);
 
@@ -101,17 +119,25 @@ describe('SavedArticleService', () => {
 
   describe('remove', () => {
     it('deletes the saved-article row', async () => {
-      mockRepository.delete.mockResolvedValue({ affected: 1 });
+      mockRepository.remove.mockResolvedValue(undefined);
+      mockRepository.findOne.mockResolvedValue({
+        userId,
+        articleId,
+        article: { ...article, sourceId: 'source-1' },
+      });
 
       await service.remove(userId, articleId);
 
-      expect(mockRepository.delete).toHaveBeenCalledWith({ userId, articleId });
+      expect(mockRepository.remove).toHaveBeenCalledWith(
+        expect.objectContaining({ userId, articleId }),
+      );
     });
 
     it('is idempotent — no error when the article was not currently saved', async () => {
-      mockRepository.delete.mockResolvedValue({ affected: 0 });
+      mockRepository.findOne.mockResolvedValue(null);
 
       await expect(service.remove(userId, articleId)).resolves.toBeUndefined();
+      expect(mockRepository.remove).not.toHaveBeenCalled();
     });
   });
 

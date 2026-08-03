@@ -6,8 +6,11 @@ import { ArticleStatus } from '../../articles/entities/article.entity';
 import { ArticlesService } from '../../articles/services/articles.service';
 import { SourceType } from '../../sources/entities/source.entity';
 import { SourcesService } from '../../sources/services/sources.service';
-import { QueueService } from '../../queue/queue.service';
+import { QueueService } from '../../queue/services/queue.service';
 import { WebSourceFetcherService } from './web-source-fetcher.service';
+import { MetricsService } from '../../common/metrics/metrics.service';
+import { FeedCacheVersionService } from '../../feed/services/feed-cache-version.service';
+import { parsePublicationDate } from '../../common/util/publication-date.util';
 
 type FeedItem = RssParser.Item & {
   'content:encoded'?: string;
@@ -23,7 +26,7 @@ export class FeedFetcherService {
     timeout: 15000,
     headers: {
       'User-Agent': 'Mozilla/5.0 (compatible; PersonalTechRadar/1.0; +https://personalradar.dev)',
-      'Accept': 'application/rss+xml, application/xml, text/xml, */*',
+      Accept: 'application/rss+xml, application/xml, text/xml, */*',
     },
     requestOptions: {
       rejectUnauthorized: false,
@@ -38,23 +41,27 @@ export class FeedFetcherService {
     private readonly articlesService: ArticlesService,
     private readonly queueService: QueueService,
     private readonly webSourceFetcherService: WebSourceFetcherService,
+    private readonly metricsService: MetricsService,
+    private readonly feedCacheVersionService: FeedCacheVersionService,
   ) {}
 
-  async fetchAllSources(): Promise<void> {
-    const sources = await this.sourcesService.findAllEnabled();
-    this.logger.info(`Fetching ${sources.length} enabled sources`);
-    await Promise.allSettled(sources.map((s) => this.fetchSource(s.id)));
+  async cleanupTechnicalHistory(): Promise<void> {
+    await this.sourcesService.cleanupTechnicalHistory();
   }
 
-  async fetchSource(sourceId: string): Promise<void> {
+  async fetchSource(sourceId: string, streamIds: string[] = []): Promise<void> {
     const source = await this.sourcesService.findOne(sourceId);
     this.logger.info(`Fetching source: ${source.name}`, { url: source.url });
-
-    if (source.type === SourceType.WEB) {
-      return this.webSourceFetcherService.fetchSource(source);
-    }
-
+    const attempt = await this.sourcesService.beginIngestionAttempt(sourceId, streamIds);
     try {
+      if (source.type === SourceType.WEB) {
+        const count = await this.webSourceFetcherService.fetchSource(source, streamIds, attempt.id);
+        if (count === null) return;
+        await this.sourcesService.recordIngestionSuccess(sourceId, attempt.id, count);
+        await this.feedCacheVersionService.incrementStreams(streamIds);
+        return;
+      }
+
       const feed = await this.parser.parseURL(source.url);
       let newCount = 0;
 
@@ -63,46 +70,39 @@ export class FeedFetcherService {
           const created = await this.processItem(source.id, item as FeedItem);
           if (created) newCount++;
         } catch (err) {
-          this.logger.error(
-            `Failed to process item from ${source.name}`,
-            err,
-            { title: (item as FeedItem).title },
-          );
+          this.logger.error(`Failed to process item from ${source.name}`, err, {
+            title: (item as FeedItem).title,
+          });
         }
       }
 
       await this.sourcesService.updateLastChecked(sourceId);
+      await this.sourcesService.recordIngestionSuccess(sourceId, attempt.id, newCount);
+      await this.feedCacheVersionService.incrementStreams(streamIds);
       this.logger.info(`Finished fetching ${source.name}`, { newCount });
     } catch (err) {
       this.logger.error(`Failed to fetch source ${source.name}`, err);
+      await this.sourcesService.recordIngestionFailure(sourceId, attempt.id, err);
+      throw err;
     }
   }
 
-  private async processItem(
-    sourceId: string,
-    item: FeedItem,
-  ): Promise<boolean> {
+  private async processItem(sourceId: string, item: FeedItem): Promise<boolean> {
     const url = item.link ?? item.guid ?? '';
     if (!url || !item.title) return false;
 
     const urlHash = createHash('sha256').update(url).digest('hex');
-    const titleHash = createHash('sha256')
-      .update(item.title.trim())
-      .digest('hex');
+    const titleHash = createHash('sha256').update(item.title.trim()).digest('hex');
 
     const existing = await this.articlesService.findByUrlHash(urlHash);
-    if (existing) return false;
+    if (existing) {
+      await this.metricsService.increment('publications_deduplicated_total');
+      return false;
+    }
 
-    const titleDuplicate = await this.articlesService.findByTitleHashInLastDays(
-      titleHash,
-      7,
-    );
+    const titleDuplicate = await this.articlesService.findByTitleHashInLastDays(titleHash, 7);
 
-    const publishedAt = item.isoDate
-      ? new Date(item.isoDate)
-      : item.pubDate
-        ? new Date(item.pubDate)
-        : null;
+    const publishedAt = parsePublicationDate(item.isoDate ?? item.pubDate);
 
     const cutoff = new Date(Date.now() - ANALYSIS_CUTOFF_HOURS * 60 * 60 * 1000);
     const isTooOldForAnalysis = !publishedAt || publishedAt < cutoff;

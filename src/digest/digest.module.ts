@@ -13,9 +13,14 @@ import { ArticleAnalysis } from '../ai-analysis/entities/article-analysis.entity
 import { ArticleStream } from '../ai-analysis/entities/article-stream.entity';
 import { ArticleTechnologyInterest } from '../ai-analysis/entities/article-technology-interest.entity';
 import { AdminDigestController } from './controllers/admin-digest.controller';
-import { DigestController } from './controllers/digest.controller';
+import { DigestStreamPageController } from './controllers/digest-stream-page.controller';
 import { DigestItem } from './entities/digest-item.entity';
 import { Digest } from './entities/digest.entity';
+import { DigestStreamPage } from './entities/digest-stream-page.entity';
+import { Article } from '../articles/entities/article.entity';
+import { Source } from '../sources/entities/source.entity';
+import { SourceCandidate } from '../sources/entities/source-candidate.entity';
+import { SourceIngestionAttempt } from '../sources/entities/source-ingestion-attempt.entity';
 import { DigestProcessor } from './processors/digest.processor';
 import { AiDigestService } from './services/ai-digest.service';
 import { DigestBootstrapService } from './services/digest-bootstrap.service';
@@ -23,6 +28,7 @@ import { DigestQueryService } from './services/digest-query.service';
 import { DigestSweepService } from './services/digest-sweep.service';
 import { EmailTemplateService } from './services/email-template.service';
 import { PersonalDigestBuilderService } from './services/personal-digest-builder.service';
+import { DigestStreamPageService } from './services/digest-stream-page.service';
 
 @Module({
   imports: [
@@ -32,6 +38,11 @@ import { PersonalDigestBuilderService } from './services/personal-digest-builder
       ArticleAnalysis,
       ArticleStream,
       ArticleTechnologyInterest,
+      Article,
+      Source,
+      SourceCandidate,
+      SourceIngestionAttempt,
+      DigestStreamPage,
     ]),
     MailModule,
     QueueModule,
@@ -43,7 +54,7 @@ import { PersonalDigestBuilderService } from './services/personal-digest-builder
     UserActionsModule,
     UsersModule,
   ],
-  controllers: [DigestController, AdminDigestController],
+  controllers: [AdminDigestController, DigestStreamPageController],
   providers: [
     AiDigestService,
     EmailTemplateService,
@@ -52,6 +63,7 @@ import { PersonalDigestBuilderService } from './services/personal-digest-builder
     DigestQueryService,
     DigestProcessor,
     DigestBootstrapService,
+    DigestStreamPageService,
   ],
   exports: [DigestQueryService],
 })

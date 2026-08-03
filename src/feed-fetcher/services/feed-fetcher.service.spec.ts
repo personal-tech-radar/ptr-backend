@@ -37,8 +37,10 @@ describe('FeedFetcherService', () => {
 
   const mockSourcesService = {
     findOne: jest.fn(),
-    findAllEnabled: jest.fn(),
     updateLastChecked: jest.fn(),
+    beginIngestionAttempt: jest.fn().mockResolvedValue({ id: 'attempt' }),
+    recordIngestionSuccess: jest.fn(),
+    recordIngestionFailure: jest.fn(),
   };
   const mockArticlesService = {
     findByUrlHash: jest.fn(),
@@ -58,6 +60,8 @@ describe('FeedFetcherService', () => {
       mockArticlesService as any,
       mockQueueService as any,
       mockWebSourceFetcherService as any,
+      { increment: jest.fn() } as any,
+      { incrementStreams: jest.fn() } as any,
     );
   });
 
@@ -155,7 +159,7 @@ describe('FeedFetcherService', () => {
       mockSourcesService.findOne.mockResolvedValue(source);
       mockParseURL.mockRejectedValue(new Error('network down'));
 
-      await expect(service.fetchSource(source.id)).resolves.toBeUndefined();
+      await expect(service.fetchSource(source.id)).rejects.toThrow('network down');
 
       expect(mockSourcesService.updateLastChecked).not.toHaveBeenCalled();
     });
@@ -168,27 +172,9 @@ describe('FeedFetcherService', () => {
 
       await service.fetchSource(source.id);
 
-      expect(mockWebSourceFetcherService.fetchSource).toHaveBeenCalledWith(source);
+      expect(mockWebSourceFetcherService.fetchSource).toHaveBeenCalledWith(source, [], 'attempt');
       expect(mockParseURL).not.toHaveBeenCalled();
       expect(mockArticlesService.create).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('fetchAllSources continue-on-error', () => {
-    it('keeps processing remaining sources when one fetchSource call rejects (Promise.allSettled)', async () => {
-      const failing = buildRssSource();
-      const succeeding = buildWebSource();
-      mockSourcesService.findAllEnabled.mockResolvedValue([failing, succeeding]);
-      mockSourcesService.findOne.mockImplementation((id: string) => {
-        if (id === failing.id) return Promise.reject(new Error('boom'));
-        return Promise.resolve(succeeding);
-      });
-
-      await service.fetchAllSources();
-
-      expect(mockSourcesService.findOne).toHaveBeenCalledWith(failing.id);
-      expect(mockSourcesService.findOne).toHaveBeenCalledWith(succeeding.id);
-      expect(mockWebSourceFetcherService.fetchSource).toHaveBeenCalledWith(succeeding);
     });
   });
 });

@@ -168,7 +168,7 @@ describe('WebSourceFetcherService', () => {
         reason: 'nothing worked',
       });
 
-      await expect(service.fetchSource(source)).resolves.toBeUndefined();
+      await expect(service.fetchSource(source)).rejects.toThrow('nothing worked');
 
       expect(mockSourcesService.updateLastChecked).not.toHaveBeenCalled();
       expect(mockArticlesService.create).not.toHaveBeenCalled();
@@ -190,7 +190,11 @@ describe('WebSourceFetcherService', () => {
 
       await service.fetchSource(source);
 
-      expect(mockQueueService.addBrowserFetchSourceJob).toHaveBeenCalledWith(source.id);
+      expect(mockQueueService.addBrowserFetchSourceJob).toHaveBeenCalledWith(
+        source.id,
+        [],
+        undefined,
+      );
       expect(mockSourcesService.updateLastChecked).not.toHaveBeenCalled();
     });
 
@@ -206,7 +210,7 @@ describe('WebSourceFetcherService', () => {
         browserFallbackAvailable: true,
       });
 
-      await service.fetchSource(source);
+      await expect(service.fetchSource(source)).rejects.toThrow('deterministic chain exhausted');
 
       expect(mockQueueService.addBrowserFetchSourceJob).not.toHaveBeenCalled();
     });
@@ -214,7 +218,9 @@ describe('WebSourceFetcherService', () => {
     it('skips silently when the source has no WebSourceConfig at all', async () => {
       const source = buildSource();
 
-      await expect(service.fetchSource(source)).resolves.toBeUndefined();
+      await expect(service.fetchSource(source)).rejects.toThrow(
+        'Web source has no WebSourceConfig',
+      );
 
       expect(mockSourceDiscoveryService.discoverEntryPoints).not.toHaveBeenCalled();
       expect(mockSourcesService.updateLastChecked).not.toHaveBeenCalled();
@@ -274,7 +280,7 @@ describe('WebSourceFetcherService', () => {
         reason: 'no article links found',
       });
 
-      await expect(service.fetchSourceViaBrowser(source)).resolves.toBeUndefined();
+      await expect(service.fetchSourceViaBrowser(source)).rejects.toThrow('no article links found');
 
       expect(mockSourcesService.updateLastChecked).not.toHaveBeenCalled();
       expect(mockArticlesService.create).not.toHaveBeenCalled();
@@ -283,7 +289,9 @@ describe('WebSourceFetcherService', () => {
     it('skips silently when the source has no WebSourceConfig at all', async () => {
       const source = buildSource();
 
-      await expect(service.fetchSourceViaBrowser(source)).resolves.toBeUndefined();
+      await expect(service.fetchSourceViaBrowser(source)).rejects.toThrow(
+        'Web source has no WebSourceConfig',
+      );
 
       expect(mockSourceDiscoveryService.discoverViaPlaywright).not.toHaveBeenCalled();
     });

@@ -1,12 +1,28 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsEnum, IsOptional, IsString, IsTimeZone, IsUrl, MaxLength } from 'class-validator';
+import {
+  IsBoolean,
+  IsEnum,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  IsTimeZone,
+  IsUrl,
+  Matches,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
 import { UserLevel } from '../entities/user.entity';
+
+export const GITHUB_PROFILE_URL_PATTERN =
+  /^https:\/\/github\.com\/[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\/?$/;
 
 export class UpdateProfileDto {
   @ApiPropertyOptional({ description: 'Display name', example: 'Jane Doe', maxLength: 255 })
   @IsOptional()
   @IsString()
+  @IsNotEmpty()
+  @MinLength(1)
   @MaxLength(255)
   @Transform(({ value }: { value: string }) => value?.trim())
   displayName?: string;
@@ -18,15 +34,16 @@ export class UpdateProfileDto {
   timezone?: string;
 
   @ApiPropertyOptional({
-    description: 'GitHub profile URL. Pass null to clear it.',
+    description: 'HTTPS github.com profile URL. Pass null to clear it.',
     example: 'https://github.com/janedoe',
     nullable: true,
   })
   @IsOptional()
   @IsUrl()
-  // `value?.trim()` would silently turn an explicit `null` (used to clear the field) into
-  // `undefined`, which the service's `!== undefined` guard then treats as "field omitted" and
-  // no-ops on. Only trim actual strings so `null` passes through untouched.
+  @Matches(GITHUB_PROFILE_URL_PATTERN, {
+    message: 'githubUrl must be an HTTPS github.com profile URL',
+  })
+  // Preserve explicit null so clients can clear the field.
   @Transform(({ value }: { value: string | null }) =>
     typeof value === 'string' ? value.trim() : value,
   )
@@ -40,4 +57,14 @@ export class UpdateProfileDto {
   @IsOptional()
   @IsEnum(UserLevel)
   level?: UserLevel;
+
+  @ApiPropertyOptional({ description: 'Enable or disable the fixed-time daily digest' })
+  @IsOptional()
+  @IsBoolean()
+  dailyDigestEnabled?: boolean;
+
+  @ApiPropertyOptional({ description: 'Enable or disable the fixed-time weekly digest' })
+  @IsOptional()
+  @IsBoolean()
+  weeklyDigestEnabled?: boolean;
 }

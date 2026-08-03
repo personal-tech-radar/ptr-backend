@@ -36,7 +36,7 @@ async function main(): Promise<void> {
     );
     if (summary.created.length > 0) console.log(`Created: ${summary.created.join(', ')}`);
     if (summary.candidatesCreated.length > 0) {
-      console.log(`Candidates (needs_review): ${summary.candidatesCreated.join(', ')}`);
+      console.log(`Candidates queued: ${summary.candidatesCreated.join(', ')}`);
     }
     if (summary.failed.length > 0) {
       console.log(`Failed: ${summary.failed.map((f) => `${f.seedKey} (${f.reason})`).join('; ')}`);

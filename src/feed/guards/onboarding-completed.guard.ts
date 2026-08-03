@@ -16,6 +16,13 @@ export class OnboardingCompletedGuard implements CanActivate {
       });
     }
 
+    if (user.emailVerifiedAt === null) {
+      throw new ForbiddenException({
+        message: 'Email must be verified before the personal feed is available',
+        errorCode: 'EMAIL_NOT_VERIFIED',
+      });
+    }
+
     return true;
   }
 }

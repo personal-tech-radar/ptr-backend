@@ -12,7 +12,9 @@ import {
 } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
 import { DigestItem } from './digest-item.entity';
-import { DigestBuildDebug } from '../digest.types';
+import { DigestBuildDebug, DigestStats } from '../digest.types';
+import { Administrator } from '../../administrators/entities/administrator.entity';
+import { DigestStreamPage } from './digest-stream-page.entity';
 
 export enum DigestType {
   DAILY = 'daily',
@@ -23,10 +25,17 @@ export enum DigestStatus {
   DRAFT = 'draft',
   SENT = 'sent',
   FAILED = 'failed',
+  SKIPPED_EMPTY = 'skipped_empty',
+}
+
+export enum DigestDeliveryMode {
+  SCHEDULED = 'scheduled',
+  ADMIN_PREVIEW = 'admin_preview',
 }
 
 @Entity('digests')
 @Index(['userId', 'type', 'createdAt'])
+@Index(['userId', 'type', 'periodKey'], { unique: true })
 export class Digest {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -44,6 +53,9 @@ export class Digest {
 
   @Column({ type: 'enum', enum: DigestType, default: DigestType.DAILY })
   type: DigestType;
+
+  @Column({ type: 'varchar' })
+  periodKey: string;
 
   @Column({ type: 'timestamp' })
   periodStart: Date;
@@ -66,14 +78,33 @@ export class Digest {
   @Column({ type: 'enum', enum: DigestStatus, default: DigestStatus.DRAFT })
   status: DigestStatus;
 
+  @Column({ type: 'enum', enum: DigestDeliveryMode, default: DigestDeliveryMode.SCHEDULED })
+  deliveryMode: DigestDeliveryMode;
+
+  @Column({ type: 'uuid', nullable: true })
+  triggeringAdministratorId: string | null;
+
+  @ManyToOne(() => Administrator, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'triggeringAdministratorId' })
+  triggeringAdministrator: Administrator | null;
+
+  @Column({ type: 'varchar', nullable: true })
+  actualRecipientEmail: string | null;
+
   @Column({ type: 'timestamp', nullable: true })
   sentAt: Date | null;
 
   @Column({ type: 'jsonb', nullable: true, default: null })
   buildDebug: DigestBuildDebug | null;
 
+  @Column({ type: 'jsonb', nullable: true, default: null })
+  statisticsSnapshot: DigestStats | null;
+
   @OneToMany(() => DigestItem, (item) => item.digest)
   items: DigestItem[];
+
+  @OneToMany(() => DigestStreamPage, (page) => page.digest)
+  streamPages: DigestStreamPage[];
 
   @DeleteDateColumn({ type: 'timestamp', nullable: true })
   deletedAt: Date | null;

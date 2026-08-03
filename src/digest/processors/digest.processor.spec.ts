@@ -34,6 +34,7 @@ describe('DigestProcessor', () => {
       mockDigestQueryService as any,
       mockUserQueryService as any,
       mockMailService as any,
+      { increment: jest.fn(), observeQueueLag: jest.fn() } as any,
     );
   });
 
@@ -51,7 +52,7 @@ describe('DigestProcessor', () => {
       data: { userId: 'user-1', type: DigestType.DAILY },
     } as any);
 
-    expect(mockDigestBootstrapService.buildDailyDigest).toHaveBeenCalledWith('user-1');
+    expect(mockDigestBootstrapService.buildDailyDigest).toHaveBeenCalledWith('user-1', undefined);
     expect(mockMailService.sendDigest).toHaveBeenCalledWith(digest, user.email);
     expect(mockDigestQueryService.markSent).toHaveBeenCalledWith('digest-1');
   });
@@ -64,12 +65,15 @@ describe('DigestProcessor', () => {
       data: { userId: 'user-1', type: DigestType.WEEKLY },
     } as any);
 
-    expect(mockDigestBootstrapService.buildWeeklyDigest).toHaveBeenCalledWith('user-1');
+    expect(mockDigestBootstrapService.buildWeeklyDigest).toHaveBeenCalledWith('user-1', undefined);
     expect(mockMailService.sendDigest).toHaveBeenCalledWith(digest, user.email);
   });
 
-  it('sends nothing and marks nothing when the builder returns null (no eligible candidates)', async () => {
-    mockDigestBootstrapService.buildDailyDigest.mockResolvedValue(null);
+  it('sends nothing and marks nothing for a persisted skipped-empty digest', async () => {
+    mockDigestBootstrapService.buildDailyDigest.mockResolvedValue({
+      id: 'digest-empty',
+      status: 'skipped_empty',
+    });
 
     await processor.process({
       name: 'send-personal-digest',
@@ -84,10 +88,12 @@ describe('DigestProcessor', () => {
     mockDigestBootstrapService.buildDailyDigest.mockResolvedValue(digest);
     mockMailService.sendDigest.mockRejectedValue(new Error('send failed'));
 
-    await processor.process({
-      name: 'send-personal-digest',
-      data: { userId: 'user-1', type: DigestType.DAILY },
-    } as any);
+    await expect(
+      processor.process({
+        name: 'send-personal-digest',
+        data: { userId: 'user-1', type: DigestType.DAILY },
+      } as any),
+    ).rejects.toThrow('send failed');
 
     expect(mockDigestQueryService.markFailed).toHaveBeenCalledWith('digest-1');
   });

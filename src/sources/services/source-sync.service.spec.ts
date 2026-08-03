@@ -142,6 +142,7 @@ describe('SourceSyncService', () => {
 
   const mockSourcesService = {
     create: jest.fn(),
+    createOrReuse: jest.fn(),
     update: jest.fn().mockResolvedValue(undefined),
   };
 
@@ -152,7 +153,7 @@ describe('SourceSyncService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockSourceRepo.find.mockResolvedValue([]);
-    mockSourcesService.create.mockResolvedValue({ id: 'new-source-id' });
+    mockSourcesService.createOrReuse.mockResolvedValue({ id: 'new-source-id' });
     mockSourceCandidatesService.create.mockResolvedValue({ id: 'candidate-1' });
     mockFetchAndValidateFeed.mockResolvedValue({ ok: true, rawText: '<rss></rss>' } as any);
 
@@ -172,7 +173,7 @@ describe('SourceSyncService', () => {
       mockSourceRepo.find.mockResolvedValue([]);
       const firstSummary = await service.syncAll([entry]);
       expect(firstSummary.created).toEqual(['example-feed']);
-      expect(mockSourcesService.create).toHaveBeenCalledTimes(1);
+      expect(mockSourcesService.createOrReuse).toHaveBeenCalledTimes(1);
 
       // Second run: the row created above now exists, matched by normalized URL.
       jest.clearAllMocks();
@@ -183,7 +184,7 @@ describe('SourceSyncService', () => {
       const secondSummary = await service.syncAll([entry]);
 
       expect(secondSummary.updated).toEqual(['example-feed']);
-      expect(mockSourcesService.create).not.toHaveBeenCalled();
+      expect(mockSourcesService.createOrReuse).not.toHaveBeenCalled();
       expect(mockSourcesService.update).toHaveBeenCalledTimes(1);
     });
 
@@ -230,7 +231,7 @@ describe('SourceSyncService', () => {
         rssEntry({ seedKey: 'third', seedUrl: 'https://example.com/third.xml' }),
       ];
       mockSourceRepo.find.mockResolvedValue([]);
-      mockSourcesService.create.mockImplementation((dto: any) => {
+      mockSourcesService.createOrReuse.mockImplementation((dto: any) => {
         if (dto.url === 'https://example.com/second.xml') {
           return Promise.reject(new Error('unexpected DB error'));
         }
@@ -242,7 +243,7 @@ describe('SourceSyncService', () => {
       expect(summary.created.sort()).toEqual(['first', 'third']);
       expect(summary.failed).toEqual([{ seedKey: 'second', reason: 'unexpected DB error' }]);
       // All three were still attempted — the failure of #2 didn't short-circuit #3.
-      expect(mockSourcesService.create).toHaveBeenCalledTimes(3);
+      expect(mockSourcesService.createOrReuse).toHaveBeenCalledTimes(3);
     });
   });
 
@@ -260,7 +261,7 @@ describe('SourceSyncService', () => {
         expect.objectContaining({ url: entry.seedUrl, seedKey: entry.seedKey }),
       );
       expect(mockSourceCandidateRepo.update).toHaveBeenCalledWith('candidate-1', {
-        status: SourceCandidateStatus.NEEDS_REVIEW,
+        status: SourceCandidateStatus.REJECTED,
         validationError: expect.stringContaining('HTTP 404'),
       });
     });
@@ -269,7 +270,7 @@ describe('SourceSyncService', () => {
       const entry = rssEntry({
         discovery: { mode: 'web', entryUrls: ['https://example.com'], allowAiFallback: false },
       });
-      mockSourcesService.create.mockRejectedValue(
+      mockSourcesService.createOrReuse.mockRejectedValue(
         new BadRequestException('Could not discover a working entry point'),
       );
 
@@ -283,7 +284,9 @@ describe('SourceSyncService', () => {
       const entry = rssEntry({
         discovery: { mode: 'web', entryUrls: ['https://example.com'], allowAiFallback: false },
       });
-      mockSourcesService.create.mockRejectedValue(new ConflictException('Source already exists'));
+      mockSourcesService.createOrReuse.mockRejectedValue(
+        new ConflictException('Source already exists'),
+      );
 
       const summary = await service.syncAll([entry]);
 
@@ -300,7 +303,7 @@ describe('SourceSyncService', () => {
 
       await service.syncAll([entry]);
 
-      expect(mockSourcesService.create).toHaveBeenCalledWith(
+      expect(mockSourcesService.createOrReuse).toHaveBeenCalledWith(
         expect.objectContaining({ type: SourceType.GITHUB_RELEASE }),
       );
     });
@@ -318,7 +321,7 @@ describe('SourceSyncService', () => {
           reason: expect.stringContaining('trustScore must be a number between 0 and 100'),
         },
       ]);
-      expect(mockSourcesService.create).not.toHaveBeenCalled();
+      expect(mockSourcesService.createOrReuse).not.toHaveBeenCalled();
     });
 
     it('rejects an invalid category before ever calling SourcesService.create', async () => {
@@ -332,7 +335,7 @@ describe('SourceSyncService', () => {
           reason: expect.stringContaining('is not a valid SourceCategory'),
         },
       ]);
-      expect(mockSourcesService.create).not.toHaveBeenCalled();
+      expect(mockSourcesService.createOrReuse).not.toHaveBeenCalled();
     });
 
     it('rejects an entry missing its discovery config', async () => {
@@ -346,7 +349,7 @@ describe('SourceSyncService', () => {
           reason: expect.stringContaining('discovery config is required'),
         },
       ]);
-      expect(mockSourcesService.create).not.toHaveBeenCalled();
+      expect(mockSourcesService.createOrReuse).not.toHaveBeenCalled();
     });
   });
 });

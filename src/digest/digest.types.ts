@@ -7,6 +7,8 @@ import { ScoringResult } from '../scoring/scoring.types';
 export interface PersonalDigestCandidate {
   analysis: ArticleAnalysis;
   technologyInterestIds: string[];
+  technologyIds?: string[];
+  interestIds?: string[];
   streamIds: string[];
 }
 
@@ -16,11 +18,8 @@ export interface PersonalDigestScoredCandidate {
 }
 
 export interface PersonalDigestConfig {
-  // Ascending fallback windows (hours) — the narrowest window is tried first; if the eligible
-  // candidate count is still under articleLimit, the next (wider) window is tried, mirroring the
-  // old DigestBuilderService's DAILY_FALLBACK_WINDOWS behavior, generalized to weekly too.
-  fallbackWindowsHours: number[];
-  articleLimit: number;
+  periodHours: number;
+  articlesPerStream: number;
   subjectSuffix: string;
 }
 
@@ -52,4 +51,9 @@ export interface DigestStats {
   feedSourcesActive: number;
   webSourcesActive: number;
   sourceCandidatesPending: number;
+  sourcesProcessed: number;
+  publicationsProcessed: number;
+  publicationsIncluded: number;
+  degradedSources: number;
+  disabledSources: number;
 }

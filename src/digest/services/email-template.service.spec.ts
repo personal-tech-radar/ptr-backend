@@ -19,8 +19,12 @@ const item: DigestEmailItem = {
   title: 'Migrating to event-driven architecture with Kafka',
   sourceName: 'Engineering Blog',
   shortSummary: longSummary,
-  whyItMatters: 'It matters because event-driven systems are increasingly common in production.',
-  url: 'https://example.com/articles/kafka-migration',
+  trackingUrl: 'https://app.example.com/track/1',
+  originalUrl: 'https://example.com/articles/kafka-migration',
+  openUrl: 'https://app.example.com/track/1',
+  usefulUrl: 'https://app.example.com/action/useful',
+  notUsefulUrl: 'https://app.example.com/action/not-useful',
+  saveUrl: 'https://app.example.com/action/save',
   matchedInterests: ['distributed systems', 'architecture'],
 };
 
@@ -42,7 +46,7 @@ describe('EmailTemplateService', () => {
       expect(html).toContain(longSummary);
       expect(html).toContain(item.title);
       expect(html).toContain(item.sourceName);
-      expect(html).toContain(item.url);
+      expect(html).toContain(item.originalUrl);
     });
   });
 
@@ -53,7 +57,7 @@ describe('EmailTemplateService', () => {
       expect(text).toContain(longSummary);
       expect(text).toContain(item.title);
       expect(text).toContain(item.sourceName);
-      expect(text).toContain(item.url);
+      expect(text).toContain(item.trackingUrl);
     });
   });
 
@@ -97,6 +101,11 @@ describe('EmailTemplateService', () => {
       feedSourcesActive: 20,
       webSourcesActive: 3,
       sourceCandidatesPending: 7,
+      sourcesProcessed: 8,
+      publicationsProcessed: 12,
+      publicationsIncluded: 4,
+      degradedSources: 2,
+      disabledSources: 1,
     };
 
     it('renders the feed/web/candidate counts in HTML alongside the existing pipeline stats block', () => {
@@ -120,7 +129,9 @@ describe('EmailTemplateService', () => {
       const text = service.renderText('Subject', 'Intro text', [item], stats);
 
       expect(text).toContain('DB: 500 total articles · 23 active sources');
-      expect(text).toContain('Sources: 20 feed active · 3 web active · 7 candidates pending');
+      expect(text).toContain(
+        'Sources: 20 feed active · 3 web active · 2 degraded · 1 disabled · 7 candidates pending',
+      );
     });
 
     it('omits the footer block entirely when no stats are provided', () => {
@@ -133,15 +144,14 @@ describe('EmailTemplateService', () => {
   });
 
   describe('saveUrl rendering (personal digests)', () => {
-    const saveUrl =
-      'https://app.example.com/articles/abc-123/save-from-email?userId=u1&signature=sig';
+    const saveUrl = 'https://app.example.com/email-action/opaque-save-action-id';
     const itemWithSaveUrl: DigestEmailItem = { ...item, saveUrl };
 
     it('renders a "Save for later" link in HTML when saveUrl is present', () => {
       const html = service.renderHtml('Subject', 'Intro text', [itemWithSaveUrl]);
 
       expect(html).toContain(saveUrl);
-      expect(html).toContain('Save for later');
+      expect(html).toContain('Save');
     });
 
     it('omits the save link in HTML when saveUrl is not present', () => {
@@ -153,7 +163,33 @@ describe('EmailTemplateService', () => {
     it('renders a "Save for later" line in plain text when saveUrl is present', () => {
       const text = service.renderText('Subject', 'Intro text', [itemWithSaveUrl]);
 
-      expect(text).toContain(`Save for later: ${saveUrl}`);
+      expect(text).toContain(`Save: ${saveUrl}`);
+    });
+  });
+
+  describe('digest stream page links', () => {
+    const streamLinks = [
+      { name: 'Security', url: 'https://app.example.com/digest-stream/security-page-id' },
+      { name: 'Industry pulse', url: 'https://app.example.com/digest-stream/industry-page-id' },
+    ];
+
+    it('renders every temporary stream page in HTML', () => {
+      const html = service.renderHtml('Subject', 'Intro text', [item], undefined, streamLinks);
+
+      expect(html).toContain('Browse by stream');
+      for (const stream of streamLinks) {
+        expect(html).toContain(stream.name);
+        expect(html).toContain(stream.url);
+      }
+    });
+
+    it('renders every temporary stream page in plain text', () => {
+      const text = service.renderText('Subject', 'Intro text', [item], undefined, streamLinks);
+
+      expect(text).toContain('Browse by stream');
+      for (const stream of streamLinks) {
+        expect(text).toContain(`${stream.name}: ${stream.url}`);
+      }
     });
   });
 

@@ -8,7 +8,7 @@ import { getJwtSecret } from '../utils/jwt-secret.util';
 export interface JwtPayload {
   sub: string;
   email: string;
-  role: string;
+  subjectType: string;
 }
 
 @Injectable()
@@ -18,6 +18,7 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
       secretOrKey: getJwtSecret(),
+      audience: 'ptr-user',
     });
   }
 
@@ -25,12 +26,16 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
   // NULL) and throws NotFoundException for a deleted or missing user — mapped to Unauthorized
   // here so a soft-deleted user's still-valid access token is rejected on every request.
   async validate(payload: JwtPayload): Promise<CurrentUserPayload> {
+    if (payload.subjectType !== 'user') {
+      throw new UnauthorizedException('Invalid user token');
+    }
     try {
       const user = await this.userQueryService.findById(payload.sub);
       return {
         id: user.id,
         email: user.email,
-        role: user.role,
+        subjectType: 'user',
+        emailVerifiedAt: user.emailVerifiedAt,
         onboardingCompletedAt: user.onboardingCompletedAt,
       };
     } catch {

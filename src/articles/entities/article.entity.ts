@@ -28,8 +28,7 @@ export enum ContentExtractionMethod {
   PLAYWRIGHT = 'playwright',
 }
 
-// Composite index (publishedAt, status) — first live per-request query against this table
-// (FeedQueryService's candidate-window filter: publishedAt range + status = 'analyzed').
+// Support the feed's analyzed-article date-window query.
 @Entity('articles')
 @Index(['publishedAt', 'status'])
 export class Article {
@@ -82,6 +81,12 @@ export class Article {
 
   @Column({ type: 'timestamp', nullable: true })
   contentFetchedAt: Date | null;
+
+  @Column({ type: 'integer', default: 0 })
+  publicClickCount: number;
+
+  @Column({ type: 'integer', default: 0 })
+  personalTrackedOpenCount: number;
 
   @DeleteDateColumn({ type: 'timestamp', nullable: true })
   deletedAt: Date | null;

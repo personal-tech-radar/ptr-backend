@@ -10,13 +10,12 @@ import {
 import { Article } from '../../articles/entities/article.entity';
 import { User } from '../../users/entities/user.entity';
 
-// Mirrors DigestType's real values (daily/weekly, see digest.entity.ts) 1:1, plus FEED — a
-// personal link context that isn't a digest at all — so link analytics can tell where a
-// permanent per-user article link was generated from.
+// Identify the user-visible surface that generated each permanent link.
 export enum PersonalArticleLinkContext {
   FEED = 'feed',
   DAILY_DIGEST = 'daily_digest',
   WEEKLY_DIGEST = 'weekly_digest',
+  DIGEST_STREAM_PAGE = 'digest_stream_page',
 }
 
 @Entity('personal_article_links')
@@ -41,6 +40,12 @@ export class PersonalArticleLink {
 
   @Column({ type: 'enum', enum: PersonalArticleLinkContext })
   context: PersonalArticleLinkContext;
+
+  @Column({ type: 'uuid', nullable: true })
+  digestId: string | null;
+
+  @Column({ type: 'text', nullable: true })
+  originalUrl: string | null;
 
   @Column({ type: 'timestamp', nullable: true, default: null })
   firstOpenedAt: Date | null;

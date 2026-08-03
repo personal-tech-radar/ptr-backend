@@ -2,7 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsEnum, IsUUID } from 'class-validator';
 import { ArticleResponseDto } from '../../articles/dto/article-response.dto';
 import { ScoringResultBreakdown } from '../../scoring/scoring.types';
-import { Digest, DigestStatus, DigestType } from '../entities/digest.entity';
+import { Digest, DigestDeliveryMode, DigestStatus, DigestType } from '../entities/digest.entity';
 import { DigestItem } from '../entities/digest-item.entity';
 
 export class DigestResponseDto {
@@ -32,11 +32,43 @@ export class DigestResponseDto {
   @ApiProperty({ enum: DigestStatus })
   status: DigestStatus;
 
+  @ApiProperty({ enum: DigestDeliveryMode })
+  deliveryMode: DigestDeliveryMode;
+
+  @ApiPropertyOptional()
+  triggeringAdministratorId: string | null;
+
+  @ApiPropertyOptional()
+  actualRecipientEmail: string | null;
+
   @ApiPropertyOptional()
   sentAt: Date | null;
 
   @ApiProperty()
   createdAt: Date;
+
+  @ApiProperty({
+    type: () => [DigestStreamPageLinkResponseDto],
+    description: 'Temporary backend-rendered pages for the streams included in this digest',
+  })
+  streamPages: DigestStreamPageLinkResponseDto[];
+}
+
+export class DigestStreamPageLinkResponseDto {
+  @ApiProperty({ format: 'uuid' })
+  id: string;
+
+  @ApiProperty({ format: 'uuid' })
+  streamId: string;
+
+  @ApiProperty()
+  streamKey: string;
+
+  @ApiProperty()
+  streamName: string;
+
+  @ApiProperty({ description: 'Permanent opaque URL for the temporary rendered stream page' })
+  url: string;
 }
 
 export class DigestItemResponseDto {
@@ -64,6 +96,7 @@ export class DigestDetailResponseDto extends DigestResponseDto {
 // digest.user must be loaded (joined) for userEmail to resolve — see
 // DigestQueryService.findAll/findByIdWithItems.
 export function toDigestResponseDto(digest: Digest): DigestResponseDto {
+  const appUrl = (process.env.APP_URL || 'http://localhost:3000').replace(/\/$/, '');
   return {
     id: digest.id,
     userId: digest.userId,
@@ -73,8 +106,18 @@ export function toDigestResponseDto(digest: Digest): DigestResponseDto {
     periodEnd: digest.periodEnd,
     subject: digest.subject,
     status: digest.status,
+    deliveryMode: digest.deliveryMode,
+    triggeringAdministratorId: digest.triggeringAdministratorId,
+    actualRecipientEmail: digest.actualRecipientEmail,
     sentAt: digest.sentAt,
     createdAt: digest.createdAt,
+    streamPages: (digest.streamPages ?? []).map((page) => ({
+      id: page.id,
+      streamId: page.streamId,
+      streamKey: page.stream.key,
+      streamName: page.stream.name,
+      url: `${appUrl}/digest-stream/${page.id}`,
+    })),
   };
 }
 

@@ -14,7 +14,13 @@ describe('FeedCacheService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    service = new FeedCacheService(mockRedisService as any);
+    service = new FeedCacheService(
+      mockRedisService as any,
+      {} as any,
+      {
+        increment: jest.fn(),
+      } as any,
+    );
   });
 
   afterEach(() => {

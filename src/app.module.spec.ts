@@ -16,7 +16,7 @@ import {
   QUEUE_FEED_FETCH,
   QUEUE_TAXONOMY_SOURCE_DISCOVERY,
   QUEUE_WEB_SOURCE_BROWSER_FETCH,
-} from './queue/queue.service';
+} from './queue/services/queue.service';
 
 // Proves the Nest DI graph resolves end-to-end, catching regressions like a `forwardRef()`
 // accidentally reverted back to a plain import (the SourcesModule <-> ArticlesModule/

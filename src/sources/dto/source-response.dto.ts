@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { SourceCategory, SourceType } from '../entities/source.entity';
+import { SourceCategory, SourceStatus, SourceType } from '../entities/source.entity';
 import { WebConfigResponseDto } from './web-config.dto';
 
 export class SourceResponseDto {
@@ -20,6 +20,36 @@ export class SourceResponseDto {
 
   @ApiProperty()
   enabled: boolean;
+
+  @ApiProperty({ enum: SourceStatus })
+  status: SourceStatus;
+
+  @ApiProperty()
+  consecutiveFailures: number;
+
+  @ApiPropertyOptional()
+  lastSuccessfulFetchAt: Date | null;
+
+  @ApiPropertyOptional()
+  lastAttemptAt: Date | null;
+
+  @ApiPropertyOptional()
+  lastError: string | null;
+
+  @ApiProperty()
+  processedArticleCount: number;
+
+  @ApiPropertyOptional()
+  nextScheduledFetchAt?: Date | null;
+
+  @ApiPropertyOptional({ type: [Object] })
+  associatedTechnologies?: Array<{ id: string; name: string }>;
+
+  @ApiPropertyOptional({ type: [Object] })
+  associatedInterests?: Array<{ id: string; name: string }>;
+
+  @ApiPropertyOptional({ type: [Object] })
+  associatedStreams?: Array<{ id: string; key: string }>;
 
   @ApiProperty()
   trustScore: number;

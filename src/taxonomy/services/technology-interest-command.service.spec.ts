@@ -56,6 +56,7 @@ describe('TechnologyInterestCommandService', () => {
       mockTechnologyInterestRepo as any,
       mockUserTechnologyInterestRepo as any,
       mockResolverService as any,
+      { reserve: jest.fn() } as any,
       mockQueueService as any,
       mockDataSource as any,
     );
@@ -96,7 +97,7 @@ describe('TechnologyInterestCommandService', () => {
 
       await service.createOrReuse('user-1', TechnologyInterestKind.TECHNOLOGY, 'Zig');
 
-      expect(mockQueueService.addTaxonomySourceDiscoveryJob).toHaveBeenCalledWith('ti-1');
+      expect(mockQueueService.addTaxonomySourceDiscoveryJob).toHaveBeenCalledWith('ti-1', 'user-1');
     });
   });
 

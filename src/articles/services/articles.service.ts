@@ -67,6 +67,10 @@ export class ArticlesService {
     return article;
   }
 
+  async incrementPublicClick(id: string): Promise<void> {
+    await this.articleRepo.increment({ id }, 'publicClickCount', 1);
+  }
+
   async findByUrlHash(urlHash: string): Promise<Article | null> {
     return this.articleRepo.findOne({ where: { urlHash } });
   }

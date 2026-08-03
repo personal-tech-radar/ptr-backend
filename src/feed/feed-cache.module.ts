@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { FeedCacheInvalidationService } from './services/feed-cache-invalidation.service';
+import { FeedCacheVersionService } from './services/feed-cache-version.service';
 
 // Intentionally minimal leaf module — imports nothing feed-specific beyond RedisService (global,
 // no import needed). Exists so UsersModule/ArticlesModule/SourcesModule can invalidate the feed
@@ -7,7 +8,7 @@ import { FeedCacheInvalidationService } from './services/feed-cache-invalidation
 // query/cache services, taxonomy/scoring wiring) — that direction would be a circular/needless
 // module dependency for those modules.
 @Module({
-  providers: [FeedCacheInvalidationService],
-  exports: [FeedCacheInvalidationService],
+  providers: [FeedCacheInvalidationService, FeedCacheVersionService],
+  exports: [FeedCacheInvalidationService, FeedCacheVersionService],
 })
 export class FeedCacheModule {}

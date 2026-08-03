@@ -1,46 +1,46 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { Between, In, Repository } from 'typeorm';
 import { ArticleAnalysis } from '../../ai-analysis/entities/article-analysis.entity';
 import { ArticleStream } from '../../ai-analysis/entities/article-stream.entity';
 import { ArticleTechnologyInterest } from '../../ai-analysis/entities/article-technology-interest.entity';
-import { ArticleStatus } from '../../articles/entities/article.entity';
+import { Article, ArticleStatus } from '../../articles/entities/article.entity';
 import { LoggingService } from '../../common/logging/logging.service';
+import { MetricsService } from '../../common/metrics/metrics.service';
+import { getLocalDateString } from '../../common/util/timezone.util';
 import { RelevanceScoringService } from '../../scoring/services/relevance-scoring.service';
 import { UserScoringProfileService } from '../../scoring/services/user-scoring-profile.service';
-import { TechnologyInterestQueryService } from '../../taxonomy/services/technology-interest-query.service';
-import { PersonalArticleLinkContext } from '../../user-actions/entities/personal-article-link.entity';
-import { PersonalArticleLinkService } from '../../user-actions/services/personal-article-link.service';
-import { SaveLinkSignatureService } from '../../user-actions/services/save-link-signature.service';
-import { User } from '../../users/entities/user.entity';
-import { DigestItem } from '../entities/digest-item.entity';
-import { Digest, DigestStatus, DigestType } from '../entities/digest.entity';
 import {
-  DigestBuildAttempt,
-  DigestBuildDebug,
+  SourceCandidate,
+  SourceCandidateStatus,
+} from '../../sources/entities/source-candidate.entity';
+import { SourceIngestionAttempt } from '../../sources/entities/source-ingestion-attempt.entity';
+import { Source, SourceStatus, SourceType } from '../../sources/entities/source.entity';
+import { TechnologyInterestKind } from '../../taxonomy/entities/technology-interest.entity';
+import { PersonalArticleLinkContext } from '../../user-actions/entities/personal-article-link.entity';
+import { PermanentArticleActionType } from '../../user-actions/entities/permanent-article-action.entity';
+import { PermanentArticleActionService } from '../../user-actions/services/permanent-article-action.service';
+import { PersonalArticleLinkService } from '../../user-actions/services/personal-article-link.service';
+import { User } from '../../users/entities/user.entity';
+import {
+  DigestStats,
   PersonalDigestCandidate,
   PersonalDigestConfig,
   PersonalDigestScoredCandidate,
 } from '../digest.types';
+import { DigestItem } from '../entities/digest-item.entity';
+import { DigestStreamPage } from '../entities/digest-stream-page.entity';
+import { Digest, DigestDeliveryMode, DigestStatus, DigestType } from '../entities/digest.entity';
 import { AiDigestService } from './ai-digest.service';
-import { DigestEmailItem, EmailTemplateService } from './email-template.service';
+import {
+  DigestEmailItem,
+  DigestEmailStreamLink,
+  EmailTemplateService,
+} from './email-template.service';
 
-const DAILY_DIGEST_ARTICLES_LIMIT = Number(process.env.DAILY_DIGEST_ARTICLES_LIMIT) || 3;
-const WEEKLY_DIGEST_ARTICLES_LIMIT = Number(process.env.WEEKLY_DIGEST_ARTICLES_LIMIT) || 5;
-
-const DAILY_CONFIG: PersonalDigestConfig = {
-  fallbackWindowsHours: [24, 48, 72],
-  articleLimit: DAILY_DIGEST_ARTICLES_LIMIT,
-  subjectSuffix: 'Daily Brief',
-};
-
-// Weekly has no pre-existing fallback precedent to port 1:1 (the old DigestBuilderService relaxed
-// score thresholds instead of widening the window for weekly) — generalized here to the same
-// window-widening shape daily already uses: 7 days, then 14 days.
-const WEEKLY_CONFIG: PersonalDigestConfig = {
-  fallbackWindowsHours: [7 * 24, 14 * 24],
-  articleLimit: WEEKLY_DIGEST_ARTICLES_LIMIT,
-  subjectSuffix: 'Weekly Brief',
+const CONFIG: Record<DigestType, PersonalDigestConfig> = {
+  [DigestType.DAILY]: { periodHours: 24, articlesPerStream: 2, subjectSuffix: 'Daily Brief' },
+  [DigestType.WEEKLY]: { periodHours: 168, articlesPerStream: 3, subjectSuffix: 'Weekly Brief' },
 };
 
 @Injectable()
@@ -48,335 +48,330 @@ export class PersonalDigestBuilderService {
   private readonly logger = new LoggingService(PersonalDigestBuilderService.name);
 
   constructor(
-    @InjectRepository(ArticleAnalysis)
-    private readonly analysisRepo: Repository<ArticleAnalysis>,
-    @InjectRepository(ArticleStream)
-    private readonly articleStreamRepo: Repository<ArticleStream>,
+    @InjectRepository(ArticleAnalysis) private readonly analysisRepo: Repository<ArticleAnalysis>,
+    @InjectRepository(ArticleStream) private readonly articleStreamRepo: Repository<ArticleStream>,
     @InjectRepository(ArticleTechnologyInterest)
     private readonly articleTechnologyInterestRepo: Repository<ArticleTechnologyInterest>,
-    @InjectRepository(Digest)
-    private readonly digestRepo: Repository<Digest>,
-    @InjectRepository(DigestItem)
-    private readonly digestItemRepo: Repository<DigestItem>,
+    @InjectRepository(Article) private readonly articleRepo: Repository<Article>,
+    @InjectRepository(Source) private readonly sourceRepo: Repository<Source>,
+    @InjectRepository(SourceCandidate) private readonly candidateRepo: Repository<SourceCandidate>,
+    @InjectRepository(SourceIngestionAttempt)
+    private readonly ingestionAttemptRepo: Repository<SourceIngestionAttempt>,
+    @InjectRepository(Digest) private readonly digestRepo: Repository<Digest>,
+    @InjectRepository(DigestItem) private readonly digestItemRepo: Repository<DigestItem>,
+    @InjectRepository(DigestStreamPage)
+    private readonly streamPageRepo: Repository<DigestStreamPage>,
     private readonly userScoringProfileService: UserScoringProfileService,
     private readonly relevanceScoringService: RelevanceScoringService,
     private readonly personalArticleLinkService: PersonalArticleLinkService,
-    private readonly saveLinkSignatureService: SaveLinkSignatureService,
+    private readonly permanentActionService: PermanentArticleActionService,
     private readonly aiDigestService: AiDigestService,
     private readonly emailTemplateService: EmailTemplateService,
-    private readonly technologyInterestQueryService: TechnologyInterestQueryService,
+    private readonly metricsService: MetricsService,
   ) {}
 
-  async buildForUser(user: User, type: DigestType): Promise<Digest | null> {
-    const config = type === DigestType.DAILY ? DAILY_CONFIG : WEEKLY_CONFIG;
-    const now = new Date();
+  async buildForUser(
+    user: User,
+    type: DigestType,
+    requestedPeriodKey?: string,
+    delivery: {
+      mode?: DigestDeliveryMode;
+      triggeringAdministratorId?: string;
+      actualRecipientEmail?: string;
+    } = {},
+  ): Promise<Digest> {
+    const deliveryMode = delivery.mode ?? DigestDeliveryMode.SCHEDULED;
+    const periodKey =
+      requestedPeriodKey ?? `${type}:${getLocalDateString(new Date(), user.timezone!)}`;
+    const existing = await this.digestRepo.findOne({ where: { userId: user.id, type, periodKey } });
+    if (existing) return existing;
 
-    const usedArticleIds = await this.getUsedArticleIds(user.id);
-
-    const attempts: DigestBuildAttempt[] = [];
-    let eligible: PersonalDigestScoredCandidate[] = [];
-    let finalWindowHours = config.fallbackWindowsHours[0];
-
-    for (const windowHours of config.fallbackWindowsHours) {
-      const periodStart = new Date(now.getTime() - windowHours * 60 * 60 * 1000);
-      const candidates = await this.fetchCandidates(periodStart, usedArticleIds);
-      const scored = await this.scoreForUser(user.id, candidates);
-      const scoredEligible = scored.filter((c) => c.result.eligible);
-
-      attempts.push({
-        windowHours,
-        candidatesFound: candidates.length,
-        eligibleFound: scoredEligible.length,
-      });
-      eligible = scoredEligible;
-      finalWindowHours = windowHours;
-
-      if (eligible.length >= config.articleLimit) break;
-    }
-
-    if (eligible.length === 0) {
-      this.logger.info(`No candidates for personal ${type} digest`, { userId: user.id });
-      return null;
-    }
-
-    eligible.sort((a, b) => b.result.score - a.result.score);
-    const selected = this.selectWithDiversification(eligible, config.articleLimit);
-    if (selected.length === 0) {
-      this.logger.info(`No candidates survived diversification for personal ${type} digest`, {
+    const config = CONFIG[type];
+    const periodEnd = new Date();
+    const capStart = new Date(periodEnd.getTime() - config.periodHours * 3_600_000);
+    const previous = await this.digestRepo.findOne({
+      where: {
         userId: user.id,
-      });
-      return null;
+        type,
+        status: DigestStatus.SENT,
+        deliveryMode: DigestDeliveryMode.SCHEDULED,
+      },
+      order: { sentAt: 'DESC' },
+    });
+    const periodStart = previous?.sentAt && previous.sentAt > capStart ? previous.sentAt : capStart;
+    const candidates = await this.fetchCandidates(periodStart, periodEnd);
+    const scored = (await this.scoreForUser(user.id, candidates))
+      .filter((item) => item.result.eligible)
+      .sort((a, b) => b.result.score - a.result.score);
+    const selected = this.selectByPrimaryStream(scored, config.articlesPerStream);
+    const statistics = await this.buildStatistics(periodStart, periodEnd, selected.length);
+
+    if (selected.length === 0) {
+      const skipped = await this.digestRepo.save(
+        this.digestRepo.create({
+          userId: user.id,
+          type,
+          periodKey,
+          periodStart,
+          periodEnd,
+          subject: '',
+          intro: '',
+          htmlBody: '',
+          textBody: '',
+          status: DigestStatus.SKIPPED_EMPTY,
+          deliveryMode,
+          triggeringAdministratorId: delivery.triggeringAdministratorId ?? null,
+          actualRecipientEmail: delivery.actualRecipientEmail ?? null,
+          sentAt: null,
+          buildDebug: null,
+          statisticsSnapshot: statistics,
+        }),
+      );
+      await this.metricsService.increment('digests_total', { outcome: 'skipped_empty', type });
+      return skipped;
     }
 
-    const selectedArticleIds = selected.map((c) => c.candidate.analysis.articleId);
+    const articleIds = selected.map((item) => item.candidate.analysis.articleId);
     const context =
       type === DigestType.DAILY
         ? PersonalArticleLinkContext.DAILY_DIGEST
         : PersonalArticleLinkContext.WEEKLY_DIGEST;
-
-    // Batch-created ONCE on the final selected set only, never the full candidate pool.
-    const [linkMap, matchedInterestsMap] = await Promise.all([
-      this.personalArticleLinkService.findOrCreateLinksBatch(user.id, selectedArticleIds, context),
-      this.buildMatchedInterestsMap(selectedArticleIds),
+    const [linkMap, actionMap] = await Promise.all([
+      this.personalArticleLinkService.findOrCreateLinksBatch(user.id, articleIds, context),
+      this.permanentActionService.findOrCreateBatch(user.id, articleIds),
     ]);
-
-    const dateStr = now.toISOString().split('T')[0];
-    const subject = `Personal Tech Radar — ${config.subjectSuffix} — ${dateStr}`;
+    const subject = `Personal Tech Radar — ${config.subjectSuffix} — ${getLocalDateString(periodEnd, user.timezone!)}`;
     const intro = await this.aiDigestService.generateIntro(
       type,
-      selected.map((c) => c.candidate.analysis),
+      selected.map((item) => item.candidate.analysis),
     );
-
-    const includeWhyItMatters = type === DigestType.WEEKLY;
-    const appUrl = process.env.APP_URL ?? '';
-    const emailItems = this.toEmailItems(
-      selected,
-      includeWhyItMatters,
-      matchedInterestsMap,
-      linkMap,
-      user.id,
-      appUrl,
-    );
-
-    // No `stats` argument — personal digests deliberately omit the ops-facing pipeline-health
-    // footer (see EmailTemplateService/DigestStats), unlike the pre-MVP3 global digest emails.
-    const htmlBody = this.emailTemplateService.renderHtml(subject, intro, emailItems);
-    const textBody = this.emailTemplateService.renderText(subject, intro, emailItems);
-
-    const buildDebug: DigestBuildDebug = {
-      requestedItemCount: config.articleLimit,
-      fallbackUsed: attempts.length > 1 && finalWindowHours > config.fallbackWindowsHours[0],
-      attempts,
-      finalWindowHours,
-      finalSelectedCount: selected.length,
-    };
-
-    const periodStart = new Date(now.getTime() - finalWindowHours * 60 * 60 * 1000);
-
+    const emailItems: DigestEmailItem[] = selected.map((item, index) => {
+      const analysis = item.candidate.analysis;
+      const trackingUrl = `${(process.env.APP_URL ?? '').replace(/\/$/, '')}/r/${linkMap.get(analysis.articleId)}`;
+      const actions = actionMap.get(analysis.articleId)!;
+      return {
+        position: index + 1,
+        title: analysis.article.title,
+        sourceName: analysis.article.source?.name ?? '',
+        shortSummary: analysis.shortSummary ?? '',
+        trackingUrl,
+        originalUrl: analysis.article.url,
+        openUrl: trackingUrl,
+        usefulUrl: this.permanentActionService.buildUrl(actions[PermanentArticleActionType.USEFUL]),
+        notUsefulUrl: this.permanentActionService.buildUrl(
+          actions[PermanentArticleActionType.NOT_USEFUL],
+        ),
+        saveUrl: this.permanentActionService.buildUrl(actions[PermanentArticleActionType.SAVE]),
+      };
+    });
     const digest = await this.digestRepo.save(
       this.digestRepo.create({
         userId: user.id,
         type,
+        periodKey,
         periodStart,
-        periodEnd: now,
+        periodEnd,
         subject,
         intro,
-        htmlBody,
-        textBody,
+        htmlBody: '',
+        textBody: '',
         status: DigestStatus.DRAFT,
+        deliveryMode,
+        triggeringAdministratorId: delivery.triggeringAdministratorId ?? null,
+        actualRecipientEmail: delivery.actualRecipientEmail ?? null,
         sentAt: null,
-        buildDebug,
+        buildDebug: {
+          requestedItemCount: config.articlesPerStream * 5,
+          fallbackUsed: false,
+          attempts: [
+            {
+              windowHours: config.periodHours,
+              candidatesFound: candidates.length,
+              eligibleFound: scored.length,
+            },
+          ],
+          finalWindowHours: config.periodHours,
+          finalSelectedCount: selected.length,
+        },
+        statisticsSnapshot: statistics,
       }),
     );
 
-    for (let i = 0; i < selected.length; i++) {
-      await this.digestItemRepo.save(
+    await this.digestItemRepo.save(
+      selected.map((item, index) =>
         this.digestItemRepo.create({
           digestId: digest.id,
-          articleId: selected[i].candidate.analysis.articleId,
-          position: i + 1,
-          scoreBreakdown: selected[i].result.breakdown,
+          articleId: item.candidate.analysis.articleId,
+          position: index + 1,
+          scoreBreakdown: item.result.breakdown,
         }),
-      );
-    }
-
-    this.logger.info(`Personal ${type} digest built`, {
-      userId: user.id,
+      ),
+    );
+    const streamIds = [
+      ...new Set(selected.map((item) => item.candidate.analysis.mainStreamId).filter(Boolean)),
+    ] as string[];
+    const streamPages = await this.streamPageRepo.save(
+      streamIds.map((streamId) => this.streamPageRepo.create({ digestId: digest.id, streamId })),
+    );
+    const streamById = new Map(
+      selected
+        .map((item) => item.candidate.analysis.mainStream)
+        .filter((stream) => stream !== null)
+        .map((stream) => [stream.id, stream]),
+    );
+    const appUrl = (process.env.APP_URL || 'http://localhost:3000').replace(/\/$/, '');
+    const streamLinks: DigestEmailStreamLink[] = streamPages.map((page) => ({
+      name: streamById.get(page.streamId)?.name ?? page.streamId,
+      url: `${appUrl}/digest-stream/${page.id}`,
+    }));
+    digest.htmlBody = this.emailTemplateService.renderHtml(
+      subject,
+      intro,
+      emailItems,
+      statistics,
+      streamLinks,
+    );
+    digest.textBody = this.emailTemplateService.renderText(
+      subject,
+      intro,
+      emailItems,
+      statistics,
+      streamLinks,
+    );
+    await this.digestRepo.save(digest);
+    await this.metricsService.increment('digests_total', { outcome: 'generated', type });
+    this.logger.info('Personal digest generated', {
       digestId: digest.id,
+      userId: user.id,
+      type,
       itemCount: selected.length,
-      fallbackUsed: buildDebug.fallbackUsed,
-      finalWindowHours,
     });
-
     return digest;
   }
 
-  private async fetchCandidates(
-    periodStart: Date,
-    excludeArticleIds: string[],
-  ): Promise<ArticleAnalysis[]> {
-    const qb = this.analysisRepo
-      .createQueryBuilder('aa')
-      .innerJoinAndSelect('aa.article', 'a')
-      .innerJoinAndSelect('a.source', 's')
-      .where('aa.deletedAt IS NULL')
-      .andWhere('aa.preScreenIsRelevant = true')
-      .andWhere('aa.fullAnalysisAt IS NOT NULL')
-      .andWhere('a.deletedAt IS NULL')
-      .andWhere('s.deletedAt IS NULL')
-      .andWhere('a.status = :status', { status: ArticleStatus.ANALYZED })
-      .andWhere('a.publishedAt >= :periodStart', { periodStart })
-      .andWhere("a.title != ''")
-      .andWhere("a.url != ''");
-
-    if (excludeArticleIds.length > 0) {
-      qb.andWhere('aa.articleId NOT IN (:...excludeIds)', { excludeIds: excludeArticleIds });
-    }
-
-    return qb.getMany();
+  private fetchCandidates(periodStart: Date, periodEnd: Date): Promise<ArticleAnalysis[]> {
+    return this.analysisRepo
+      .createQueryBuilder('analysis')
+      .innerJoinAndSelect('analysis.article', 'article')
+      .innerJoinAndSelect('article.source', 'source')
+      .leftJoinAndSelect('analysis.mainStream', 'mainStream')
+      .where('analysis.fullAnalysisAt IS NOT NULL')
+      .andWhere('analysis.preScreenIsRelevant = true')
+      .andWhere('article.status = :status', { status: ArticleStatus.ANALYZED })
+      .andWhere('article.publishedAt >= :periodStart AND article.publishedAt < :periodEnd', {
+        periodStart,
+        periodEnd,
+      })
+      .andWhere('article.deletedAt IS NULL AND source.deletedAt IS NULL')
+      .getMany();
   }
 
-  // Excludes articles already sent to THIS user in a previous digest (draft or sent) — scoped by
-  // the real Digest.userId FK, unlike the old global DigestBuilderService.getUsedArticleIds.
-  private async getUsedArticleIds(userId: string): Promise<string[]> {
-    const rows = await this.digestItemRepo
-      .createQueryBuilder('di')
-      .select('di.articleId', 'articleId')
-      .innerJoin('di.digest', 'd')
-      .where('d.userId = :userId', { userId })
-      .andWhere('d.status IN (:...statuses)', { statuses: [DigestStatus.DRAFT, DigestStatus.SENT] })
-      .andWhere('d.deletedAt IS NULL')
-      .andWhere('di.deletedAt IS NULL')
-      .getRawMany<{ articleId: string }>();
-
-    return rows.map((r) => r.articleId);
-  }
-
-  // Scores every candidate through the exact same engine as Feed/Public Preview
-  // (RelevanceScoringService + UserScoringProfileService). Content-stream mismatch is the only
-  // hard exclusion — see RelevanceScoringService.computeScore.
   private async scoreForUser(
     userId: string,
-    candidates: ArticleAnalysis[],
+    analyses: ArticleAnalysis[],
   ): Promise<PersonalDigestScoredCandidate[]> {
-    if (candidates.length === 0) return [];
-
-    const articleIds = candidates.map((c) => c.articleId);
-    const sourceIds = [...new Set(candidates.map((c) => c.article.sourceId))];
-
-    const [{ streamIdsByArticle, technologyInterestIdsByArticle }, profile] = await Promise.all([
-      this.buildScorableMaps(articleIds),
-      this.userScoringProfileService.buildProfile(userId, sourceIds, articleIds),
+    if (analyses.length === 0) return [];
+    const articleIds = analyses.map((analysis) => analysis.articleId);
+    const [streams, links, profile] = await Promise.all([
+      this.articleStreamRepo.find({ where: { articleId: In(articleIds) } }),
+      this.articleTechnologyInterestRepo.find({
+        where: { articleId: In(articleIds) },
+        relations: { technologyInterest: true },
+      }),
+      this.userScoringProfileService.buildProfile(
+        userId,
+        analyses.map((analysis) => analysis.article.sourceId),
+      ),
     ]);
-
-    return candidates.map((analysis) => {
+    return analyses.map((analysis) => {
+      const articleLinks = links.filter((link) => link.articleId === analysis.articleId);
       const candidate: PersonalDigestCandidate = {
         analysis,
-        technologyInterestIds: technologyInterestIdsByArticle.get(analysis.articleId) ?? [],
-        streamIds: streamIdsByArticle.get(analysis.articleId) ?? [],
+        technologyInterestIds: articleLinks.map((link) => link.technologyInterestId),
+        technologyIds: articleLinks
+          .filter((link) => link.technologyInterest.kind === TechnologyInterestKind.TECHNOLOGY)
+          .map((link) => link.technologyInterestId),
+        interestIds: articleLinks
+          .filter((link) => link.technologyInterest.kind === TechnologyInterestKind.INTEREST)
+          .map((link) => link.technologyInterestId),
+        streamIds: streams
+          .filter((stream) => stream.articleId === analysis.articleId)
+          .map((stream) => stream.streamId),
       };
       return { candidate, result: this.relevanceScoringService.computeScore(candidate, profile) };
     });
   }
 
-  // Batched, two-query lookup (streams + technology/interests) rather than N+1 per candidate —
-  // mirrors FeedQueryService.buildScorableMaps' pattern.
-  private async buildScorableMaps(articleIds: string[]): Promise<{
-    streamIdsByArticle: Map<string, string[]>;
-    technologyInterestIdsByArticle: Map<string, string[]>;
-  }> {
-    const [streams, technologyInterests] = await Promise.all([
-      this.articleStreamRepo.find({ where: { articleId: In(articleIds) } }),
-      this.articleTechnologyInterestRepo.find({ where: { articleId: In(articleIds) } }),
-    ]);
-
-    const streamIdsByArticle = new Map<string, string[]>();
-    for (const s of streams) {
-      const list = streamIdsByArticle.get(s.articleId) ?? [];
-      list.push(s.streamId);
-      streamIdsByArticle.set(s.articleId, list);
-    }
-
-    const technologyInterestIdsByArticle = new Map<string, string[]>();
-    for (const t of technologyInterests) {
-      const list = technologyInterestIdsByArticle.get(t.articleId) ?? [];
-      list.push(t.technologyInterestId);
-      technologyInterestIdsByArticle.set(t.articleId, list);
-    }
-
-    return { streamIdsByArticle, technologyInterestIdsByArticle };
-  }
-
-  // Pure post-scoring selection algorithm ported unchanged from the old global
-  // DigestBuilderService.selectWithDiversification — max 2 per source, preferably max 2 per
-  // category, backfilling from the skipped-for-category pool if the cap isn't reached otherwise.
-  private selectWithDiversification(
+  private selectByPrimaryStream(
     scored: PersonalDigestScoredCandidate[],
-    max: number,
+    limit: number,
   ): PersonalDigestScoredCandidate[] {
+    const counts = new Map<string, number>();
     const selected: PersonalDigestScoredCandidate[] = [];
-    const sourceCount = new Map<string, number>();
-    const categoryCount = new Map<string, number>();
-    const skipped: PersonalDigestScoredCandidate[] = [];
-
+    const articleIds = new Set<string>();
     for (const item of scored) {
-      if (selected.length >= max) break;
-      const sourceId = item.candidate.analysis.article?.sourceId ?? '';
-      const category = item.candidate.analysis.article?.source?.category ?? '';
-      const src = sourceCount.get(sourceId) ?? 0;
-      const cat = categoryCount.get(category) ?? 0;
-      if (src >= 2) continue;
-      if (cat >= 2) {
-        skipped.push(item);
-        continue;
-      }
+      const streamId = item.candidate.analysis.mainStreamId;
+      const articleId = item.candidate.analysis.articleId;
+      if (!streamId || articleIds.has(articleId) || (counts.get(streamId) ?? 0) >= limit) continue;
       selected.push(item);
-      sourceCount.set(sourceId, src + 1);
-      categoryCount.set(category, cat + 1);
+      articleIds.add(articleId);
+      counts.set(streamId, (counts.get(streamId) ?? 0) + 1);
     }
-
-    for (const item of skipped) {
-      if (selected.length >= max) break;
-      const sourceId = item.candidate.analysis.article?.sourceId ?? '';
-      if ((sourceCount.get(sourceId) ?? 0) >= 2) continue;
-      selected.push(item);
-      sourceCount.set(sourceId, (sourceCount.get(sourceId) ?? 0) + 1);
-    }
-
     return selected;
   }
 
-  private toEmailItems(
-    selected: PersonalDigestScoredCandidate[],
-    includeWhyItMatters: boolean,
-    matchedInterestsMap: Map<string, string[]>,
-    linkMap: Map<string, string>,
-    userId: string,
-    appUrl: string,
-  ): DigestEmailItem[] {
-    return selected.map((c, i) => {
-      const { analysis } = c.candidate;
-      const linkId = linkMap.get(analysis.articleId);
-      return {
-        position: i + 1,
-        title: analysis.article.title,
-        sourceName: analysis.article.source?.name ?? '',
-        shortSummary: analysis.shortSummary ?? '',
-        whyItMatters: includeWhyItMatters ? (analysis.whyItMatters ?? undefined) : undefined,
-        url: linkId ? `${appUrl}/go/${linkId}` : analysis.article.url,
-        matchedInterests: matchedInterestsMap.get(analysis.articleId) ?? [],
-        saveUrl: this.saveLinkSignatureService.buildSaveFromEmailUrl(userId, analysis.articleId),
-        // articleId intentionally omitted: personal digests deliberately drop the 👍/👎 feedback
-        // buttons (MVP3 Phase 10 decision #4). The feedback-button markup itself was removed
-        // entirely from EmailTemplateService rather than left as a dead no-op path.
-      };
-    });
-  }
-
-  // Batched, two-step lookup (link rows -> names) rather than N+1 per selected article — ported
-  // from the old DigestBuilderService.buildMatchedInterestsMap. Only called with the small set of
-  // articles actually selected for a single digest send.
-  private async buildMatchedInterestsMap(articleIds: string[]): Promise<Map<string, string[]>> {
-    const map = new Map<string, string[]>();
-    if (articleIds.length === 0) return map;
-
-    const links = await this.articleTechnologyInterestRepo.find({
-      where: { articleId: In(articleIds) },
-    });
-    if (links.length === 0) return map;
-
-    const technologyInterestIds = Array.from(new Set(links.map((l) => l.technologyInterestId)));
-    const technologyInterests =
-      await this.technologyInterestQueryService.findByIds(technologyInterestIds);
-    const nameById = new Map(technologyInterests.map((ti) => [ti.id, ti.name]));
-
-    for (const link of links) {
-      const name = nameById.get(link.technologyInterestId);
-      if (!name) continue;
-      const names = map.get(link.articleId) ?? [];
-      names.push(name);
-      map.set(link.articleId, names);
-    }
-    return map;
+  private async buildStatistics(
+    periodStart: Date,
+    periodEnd: Date,
+    included: number,
+  ): Promise<DigestStats> {
+    const sourceCountQuery = this.ingestionAttemptRepo
+      .createQueryBuilder('attempt')
+      .select('COUNT(DISTINCT attempt.sourceId)', 'sources')
+      .where('attempt.startedAt BETWEEN :periodStart AND :periodEnd', { periodStart, periodEnd });
+    const [
+      sourceCount,
+      publicationsProcessed,
+      preAnalyzed,
+      fullyAnalyzed,
+      totalArticlesInDb,
+      feedSourcesActive,
+      webSourcesActive,
+      degradedSources,
+      disabledSources,
+      sourceCandidatesPending,
+    ] = await Promise.all([
+      sourceCountQuery.getRawOne<{ sources: string }>(),
+      this.articleRepo.count({ where: { contentFetchedAt: Between(periodStart, periodEnd) } }),
+      this.analysisRepo.count({ where: { preScreenAt: Between(periodStart, periodEnd) } }),
+      this.analysisRepo.count({ where: { fullAnalysisAt: Between(periodStart, periodEnd) } }),
+      this.articleRepo.count(),
+      this.sourceRepo.count({
+        where: {
+          status: SourceStatus.ACTIVE,
+          type: In([SourceType.RSS, SourceType.ATOM, SourceType.GITHUB_RELEASE]),
+        },
+      }),
+      this.sourceRepo.count({ where: { status: SourceStatus.ACTIVE, type: SourceType.WEB } }),
+      this.sourceRepo.count({ where: { status: SourceStatus.DEGRADED } }),
+      this.sourceRepo.count({ where: { status: SourceStatus.DISABLED } }),
+      this.candidateRepo.count({ where: { status: SourceCandidateStatus.PENDING } }),
+    ]);
+    return {
+      windowHours: Math.round((periodEnd.getTime() - periodStart.getTime()) / 3_600_000),
+      articlesIngested: publicationsProcessed,
+      articlesPassedPreanalysis: preAnalyzed,
+      articlesAnalyzed: fullyAnalyzed,
+      totalArticlesInDb,
+      totalSourcesActive: feedSourcesActive + webSourcesActive,
+      feedSourcesActive,
+      webSourcesActive,
+      sourceCandidatesPending,
+      sourcesProcessed: Number(sourceCount?.sources ?? 0),
+      publicationsProcessed,
+      publicationsIncluded: included,
+      degradedSources,
+      disabledSources,
+    };
   }
 }

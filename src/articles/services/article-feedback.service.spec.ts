@@ -5,6 +5,7 @@ import { ArticleFeedback, ArticleFeedbackType } from '../entities/article-feedba
 import { UserSourcePreferenceService } from '../../sources/services/user-source-preference.service';
 import { ArticlesService } from './articles.service';
 import { ArticleFeedbackService } from './article-feedback.service';
+import { DataSource } from 'typeorm';
 
 const userId = '123e4567-e89b-12d3-a456-426614174000';
 const articleId = 'a-1';
@@ -50,6 +51,12 @@ describe('ArticleFeedbackService', () => {
           provide: getRepositoryToken(ArticleFeedback),
           useValue: mockFeedbackRepo,
         },
+        {
+          provide: DataSource,
+          useValue: {
+            transaction: jest.fn((work) => work({ getRepository: () => mockFeedbackRepo })),
+          },
+        },
         { provide: ArticlesService, useValue: mockArticlesService },
         { provide: UserSourcePreferenceService, useValue: mockUserSourcePreferenceService },
       ],
@@ -90,6 +97,7 @@ describe('ArticleFeedbackService', () => {
         'src-1',
         ArticleFeedbackType.USEFUL,
         null,
+        expect.any(Object),
       );
     });
 
@@ -111,6 +119,7 @@ describe('ArticleFeedbackService', () => {
         'src-1',
         ArticleFeedbackType.USEFUL,
         ArticleFeedbackType.USEFUL,
+        expect.any(Object),
       );
     });
 
@@ -143,6 +152,7 @@ describe('ArticleFeedbackService', () => {
         'src-1',
         ArticleFeedbackType.NOT_USEFUL,
         ArticleFeedbackType.USEFUL,
+        expect.any(Object),
       );
     });
 

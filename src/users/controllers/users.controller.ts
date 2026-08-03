@@ -13,6 +13,7 @@ import {
   ApiBadRequestResponse,
   ApiBearerAuth,
   ApiOperation,
+  ApiPayloadTooLargeResponse,
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
@@ -41,7 +42,11 @@ export class UsersController {
   ) {}
 
   @Get('me')
-  @ApiOperation({ summary: 'Get the current authenticated user profile' })
+  @ApiOperation({
+    summary: 'Get the current authenticated user profile',
+    description:
+      'Returns the normal-user profile, verification and onboarding state, timezone, experience level, optional GitHub URL, and digest settings for the bearer-token subject.',
+  })
   @ApiResponse({ status: 200, type: UserResponseDto })
   @ApiResponse({ status: 401, type: ErrorResponseDto })
   async me(@CurrentUser() user: CurrentUserPayload): Promise<UserResponseDto> {
@@ -50,9 +55,17 @@ export class UsersController {
   }
 
   @Patch('me')
-  @ApiOperation({ summary: 'Update the current user profile' })
+  @ApiOperation({
+    summary: 'Update the current user profile',
+    description:
+      'Updates editable profile and digest settings. Feed-affecting changes use the existing user cache-version invalidation behavior.',
+  })
   @ApiResponse({ status: 200, type: UserResponseDto })
   @ApiResponse({ status: 401, type: ErrorResponseDto })
+  @ApiPayloadTooLargeResponse({
+    type: ErrorResponseDto,
+    description: 'JSON request body exceeds the configured limit (PAYLOAD_TOO_LARGE)',
+  })
   async updateMe(
     @CurrentUser() user: CurrentUserPayload,
     @Body() dto: UpdateProfileDto,
@@ -62,7 +75,11 @@ export class UsersController {
   }
 
   @Delete('me')
-  @ApiOperation({ summary: 'Soft-delete the current user account' })
+  @ApiOperation({
+    summary: 'Soft-delete the current user account',
+    description:
+      'Marks the current normal-user account as deleted while retaining business history required for integrity and audit.',
+  })
   @ApiResponse({ status: 200, description: 'Account deleted' })
   @ApiResponse({ status: 401, type: ErrorResponseDto })
   async deleteMe(@CurrentUser() user: CurrentUserPayload): Promise<{ deleted: true }> {
@@ -73,9 +90,9 @@ export class UsersController {
   @Post('me/onboarding')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary:
-      'Complete or update onboarding (level, technology interests, content streams). Safely ' +
-      're-callable — also doubles as "change my selections later".',
+    summary: 'Complete onboarding or update taxonomy selections',
+    description:
+      'Sets timezone, optional GitHub URL, experience level, selected streams, and up to five technologies plus five interests. Each taxonomy selection is submitted by kind and name: existing normalized or alias matches are reused; a genuinely new entry is created, consumes discovery quota, and enqueues source discovery. The operation is safely repeatable and also updates selections after onboarding.',
   })
   @ApiResponse({ status: 200, type: UserResponseDto })
   @ApiResponse({ status: 400, type: ErrorResponseDto })
@@ -91,6 +108,8 @@ export class UsersController {
   @Get('me/taxonomy')
   @ApiOperation({
     summary: "Get the current user's level, technology interests, and content streams",
+    description:
+      'Returns the current experience level, selected technology/interest catalog entries, selected content streams, and onboarding completion timestamp.',
   })
   @ApiResponse({ status: 200, type: UserTaxonomyResponseDto })
   @ApiResponse({ status: 401, type: ErrorResponseDto })

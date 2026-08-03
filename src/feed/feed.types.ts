@@ -8,6 +8,8 @@ import { ScoringResult } from '../scoring/scoring.types';
 export interface FeedCandidate {
   analysis: ArticleAnalysis;
   technologyInterestIds: string[];
+  technologyIds?: string[];
+  interestIds?: string[];
   streamIds: string[];
   alwaysInclude: boolean;
 }

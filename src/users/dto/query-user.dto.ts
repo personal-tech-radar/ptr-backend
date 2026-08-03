@@ -1,7 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type, TransformFnParams } from 'class-transformer';
-import { IsBoolean, IsEnum, IsInt, IsOptional, IsString, Min } from 'class-validator';
-import { UserRole } from '../entities/user.entity';
+import { IsBoolean, IsInt, IsOptional, IsString, Min } from 'class-validator';
 
 // Reads the raw value from `obj[key]` rather than the pipeline-provided `value`. The global
 // ValidationPipe's `enableImplicitConversion` runs class-transformer's own Boolean(value) coercion
@@ -40,11 +39,6 @@ export class QueryUserDto {
   @IsString()
   @Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value))
   email?: string;
-
-  @ApiPropertyOptional({ description: 'Filter by role', enum: UserRole })
-  @IsOptional()
-  @IsEnum(UserRole)
-  role?: UserRole;
 
   @ApiPropertyOptional({
     description: 'Include soft-deleted users in the results',

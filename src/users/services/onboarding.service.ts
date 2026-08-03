@@ -10,6 +10,7 @@ import { ContentStreamCommandService } from '../../taxonomy/services/content-str
 import { ContentStreamQueryService } from '../../taxonomy/services/content-stream-query.service';
 import { TechnologyInterestCommandService } from '../../taxonomy/services/technology-interest-command.service';
 import { TechnologyInterestQueryService } from '../../taxonomy/services/technology-interest-query.service';
+import { TechnologyInterestKind } from '../../taxonomy/entities/technology-interest.entity';
 import { OnboardingDto } from '../dto/onboarding.dto';
 import { UserTaxonomyResponseDto } from '../dto/user-taxonomy-response.dto';
 import { User } from '../entities/user.entity';
@@ -29,13 +30,27 @@ export class OnboardingService {
   ) {}
 
   // Safely re-callable: doubles as "change my selections later", no separate endpoint needed.
-  // Deliberately NOT wrapped in a single DB transaction across (a)/(b)/(c) — selections are
-  // persisted before the level/completion flag, so a mid-way failure leaves the user safely
-  // "not yet onboarded" and retryable, consistent with there being no existing cross-service
-  // transaction pattern for orchestration flows like this (unlike the merge endpoint's genuinely
-  // atomic single-domain operation in TechnologyInterestCommandService.merge).
+  // Each relationship command retains its established transactional boundary. Effective sets
+  // are compared before replacement so identical requests avoid writes and cache invalidation.
   async completeOnboarding(userId: string, dto: OnboardingDto): Promise<User> {
     const user = await this.getUserOrFail(userId);
+    const [currentTechnologyInterests, currentContentStreams] = await Promise.all([
+      this.technologyInterestQueryService.findSelectedByUser(userId),
+      this.contentStreamQueryService.findSelectedByUser(userId),
+    ]);
+
+    const technologyCount = dto.technologyInterests.filter(
+      (selection) => selection.kind === TechnologyInterestKind.TECHNOLOGY,
+    ).length;
+    const interestCount = dto.technologyInterests.filter(
+      (selection) => selection.kind === TechnologyInterestKind.INTEREST,
+    ).length;
+    if (technologyCount > 5) {
+      throw new BadRequestException('An ordinary user may select at most five technologies');
+    }
+    if (interestCount > 5) {
+      throw new BadRequestException('An ordinary user may select at most five interests');
+    }
 
     // (a) validate content stream selections reference existing, enabled streams FIRST — before
     // any technology/interest resolution or creation, so a request that's going to be rejected
@@ -52,28 +67,58 @@ export class OnboardingService {
     }
 
     // (b) resolve/create + link each technology/interest selection
+    const selectedTechnologyInterestIds: string[] = [];
     for (const selection of dto.technologyInterests) {
-      await this.technologyInterestCommandService.createOrReuse(
+      const selected = await this.technologyInterestCommandService.createOrReuse(
         userId,
         selection.kind,
         selection.name,
       );
+      selectedTechnologyInterestIds.push(selected.id);
     }
+    const taxonomyChanged = !sameSet(
+      currentTechnologyInterests.map((item) => item.id),
+      selectedTechnologyInterestIds,
+    );
+    const streamsChanged = !sameSet(
+      currentContentStreams.map((stream) => stream.id),
+      dto.contentStreamIds,
+    );
 
-    await this.contentStreamCommandService.linkUserSelections(userId, dto.contentStreamIds);
+    if (taxonomyChanged) {
+      await this.technologyInterestCommandService.removeUnselected(
+        userId,
+        selectedTechnologyInterestIds,
+      );
+    }
+    if (streamsChanged) {
+      await this.contentStreamCommandService.linkUserSelections(userId, dto.contentStreamIds);
+    }
 
     // (c) level/completion — only set onboardingCompletedAt if currently null (idempotent: a
     // re-call after completion updates level/selections but never un-sets the timestamp)
+    const requestedGithubUrl = dto.githubUrl ?? null;
+    const levelChanged = user.level !== dto.level;
+    const timezoneChanged = user.timezone !== dto.timezone;
+    const githubChanged = user.githubUrl !== requestedGithubUrl;
+    const completionChanged = !user.onboardingCompletedAt;
     user.level = dto.level;
+    user.timezone = dto.timezone;
+    user.githubUrl = requestedGithubUrl;
     if (!user.onboardingCompletedAt) {
       user.onboardingCompletedAt = new Date();
     }
-    const saved = await this.userRepo.save(user);
+    const saved =
+      levelChanged || timezoneChanged || githubChanged || completionChanged
+        ? await this.userRepo.save(user)
+        : user;
 
     // Covers 3 of the 6 feed-cache invalidation triggers in one call site (level, technology
     // interests, content streams all change together here) — see coder.md, no need to re-diff
     // which sub-selection actually changed.
-    await this.feedCacheInvalidationService.invalidateForUser(userId);
+    if (levelChanged || timezoneChanged || taxonomyChanged || streamsChanged || completionChanged) {
+      await this.feedCacheInvalidationService.invalidateForUser(userId);
+    }
 
     this.logger.info('User onboarding completed/updated', {
       userId,
@@ -111,4 +156,10 @@ export class OnboardingService {
     }
     return user;
   }
+}
+
+function sameSet(left: string[], right: string[]): boolean {
+  const leftSet = new Set(left);
+  const rightSet = new Set(right);
+  return leftSet.size === rightSet.size && [...leftSet].every((value) => rightSet.has(value));
 }

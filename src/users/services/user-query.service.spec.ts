@@ -2,7 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { UserQueryService } from './user-query.service';
-import { User, UserRole } from '../entities/user.entity';
+import { User } from '../entities/user.entity';
 
 describe('UserQueryService', () => {
   let service: UserQueryService;
@@ -108,16 +108,6 @@ describe('UserQueryService', () => {
       });
     });
 
-    it('applies an exact role filter', async () => {
-      mockQueryBuilder.getManyAndCount.mockResolvedValue([[], 0]);
-
-      await service.findAll({ role: UserRole.ADMIN });
-
-      expect(mockQueryBuilder.andWhere).toHaveBeenCalledWith('user.role = :role', {
-        role: UserRole.ADMIN,
-      });
-    });
-
     it('only includes soft-deleted users when includeDeleted is explicitly true', async () => {
       mockQueryBuilder.getManyAndCount.mockResolvedValue([[], 0]);
 
@@ -146,8 +136,7 @@ describe('UserQueryService', () => {
       );
     });
 
-    // Decision #5 override: emailVerifiedAt IS NOT NULL is a hard gate on ANY digest, not the
-    // softer originally-recommended alternative of no gate at all.
+    // Verification is a hard gate for scheduled digests.
     it('excludes users with an unverified email', async () => {
       await service.findEligibleForDigestSweep();
 
@@ -159,6 +148,18 @@ describe('UserQueryService', () => {
 
       expect(mockQueryBuilder.andWhere).toHaveBeenCalledWith(
         '(user.dailyDigestEnabled = true OR user.weeklyDigestEnabled = true)',
+      );
+    });
+
+    it('requires verification and onboarding together before enabled digest settings matter', async () => {
+      await service.findEligibleForDigestSweep();
+
+      expect(mockQueryBuilder.andWhere.mock.calls.map(([clause]) => clause)).toEqual(
+        expect.arrayContaining([
+          'user.onboardingCompletedAt IS NOT NULL',
+          'user.emailVerifiedAt IS NOT NULL',
+          '(user.dailyDigestEnabled = true OR user.weeklyDigestEnabled = true)',
+        ]),
       );
     });
 

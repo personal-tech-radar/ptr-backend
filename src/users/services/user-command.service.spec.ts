@@ -2,7 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { UserCommandService } from './user-command.service';
-import { User, UserLevel, UserRole } from '../entities/user.entity';
+import { User, UserLevel } from '../entities/user.entity';
 import { FeedCacheInvalidationService } from '../../feed/services/feed-cache-invalidation.service';
 
 describe('UserCommandService', () => {
@@ -11,7 +11,7 @@ describe('UserCommandService', () => {
   const mockUserRepo = {
     findOne: jest.fn(),
     create: jest.fn((data) => data),
-    save: jest.fn((data) => Promise.resolve({ id: 'generated-id', role: UserRole.USER, ...data })),
+    save: jest.fn((data) => Promise.resolve({ id: 'generated-id', ...data })),
     softDelete: jest.fn(),
     restore: jest.fn(),
   };
@@ -60,83 +60,28 @@ describe('UserCommandService', () => {
       expect(mockUserRepo.save).not.toHaveBeenCalled();
     });
 
-    it('defaults role/emailVerifiedAt/onboardingCompletedAt when omitted (AuthService.register call shape)', async () => {
+    it('defaults verification and onboarding timestamps when omitted', async () => {
       mockUserRepo.findOne.mockResolvedValue(null);
 
       const result = await service.create(input);
 
-      expect(result.role).toBe(UserRole.USER);
       expect(result.emailVerifiedAt).toBeNull();
       expect(result.onboardingCompletedAt).toBeNull();
     });
 
-    it('honors explicitly provided role/emailVerifiedAt/onboardingCompletedAt', async () => {
+    it('honors explicitly provided verification and onboarding timestamps', async () => {
       mockUserRepo.findOne.mockResolvedValue(null);
       const verifiedAt = new Date();
       const onboardedAt = new Date();
 
       const result = await service.create({
         ...input,
-        role: UserRole.ADMIN,
         emailVerifiedAt: verifiedAt,
         onboardingCompletedAt: onboardedAt,
       });
 
-      expect(result.role).toBe(UserRole.ADMIN);
       expect(result.emailVerifiedAt).toBe(verifiedAt);
       expect(result.onboardingCompletedAt).toBe(onboardedAt);
-    });
-  });
-
-  describe('resurrectAsAdmin', () => {
-    it('restores the row, sets role to admin, and does not touch passwordHash', async () => {
-      mockUserRepo.restore.mockResolvedValue({ affected: 1 });
-      mockUserRepo.findOne.mockResolvedValue({
-        id: validId,
-        role: UserRole.USER,
-        passwordHash: 'existing-hash',
-        emailVerifiedAt: null,
-        onboardingCompletedAt: null,
-        deletedAt: null,
-      });
-
-      const result = await service.resurrectAsAdmin(validId);
-
-      expect(mockUserRepo.restore).toHaveBeenCalledWith(validId);
-      expect(mockUserRepo.findOne).toHaveBeenCalledWith({
-        where: { id: validId },
-        withDeleted: true,
-      });
-      expect(result.role).toBe(UserRole.ADMIN);
-      expect(result.passwordHash).toBe('existing-hash');
-      expect(result.emailVerifiedAt).toBeInstanceOf(Date);
-      expect(result.onboardingCompletedAt).toBeInstanceOf(Date);
-    });
-
-    it('does not overwrite emailVerifiedAt/onboardingCompletedAt when already set', async () => {
-      const existingVerifiedAt = new Date('2020-01-01');
-      const existingOnboardedAt = new Date('2020-01-02');
-      mockUserRepo.restore.mockResolvedValue({ affected: 1 });
-      mockUserRepo.findOne.mockResolvedValue({
-        id: validId,
-        role: UserRole.USER,
-        passwordHash: 'existing-hash',
-        emailVerifiedAt: existingVerifiedAt,
-        onboardingCompletedAt: existingOnboardedAt,
-        deletedAt: null,
-      });
-
-      const result = await service.resurrectAsAdmin(validId);
-
-      expect(result.emailVerifiedAt).toBe(existingVerifiedAt);
-      expect(result.onboardingCompletedAt).toBe(existingOnboardedAt);
-    });
-
-    it('throws NotFoundException when the row cannot be found after restore', async () => {
-      mockUserRepo.restore.mockResolvedValue({ affected: 0 });
-      mockUserRepo.findOne.mockResolvedValue(null);
-
-      await expect(service.resurrectAsAdmin(validId)).rejects.toThrow(NotFoundException);
     });
   });
 
@@ -185,14 +130,57 @@ describe('UserCommandService', () => {
 
       expect(result.level).toBe('senior');
       expect(result.displayName).toBe('Old Name');
+      expect(mockFeedCacheInvalidationService.invalidateForUser).toHaveBeenCalledWith(validId);
     });
 
-    it('invalidates the feed cache after any profile update', async () => {
+    it('updates digest flags without invalidating the feed cache', async () => {
+      mockUserRepo.findOne.mockResolvedValue({
+        id: validId,
+        displayName: 'Old Name',
+        dailyDigestEnabled: false,
+        weeklyDigestEnabled: false,
+      });
+
+      const result = await service.updateProfile(validId, {
+        dailyDigestEnabled: true,
+        weeklyDigestEnabled: true,
+      });
+
+      expect(result.dailyDigestEnabled).toBe(true);
+      expect(result.weeklyDigestEnabled).toBe(true);
+      expect(mockFeedCacheInvalidationService.invalidateForUser).not.toHaveBeenCalled();
+    });
+
+    it('does not invalidate for display-name changes', async () => {
       mockUserRepo.findOne.mockResolvedValue({ id: validId, displayName: 'Old Name' });
 
       await service.updateProfile(validId, { displayName: 'New Name' });
 
-      expect(mockFeedCacheInvalidationService.invalidateForUser).toHaveBeenCalledWith(validId);
+      expect(mockFeedCacheInvalidationService.invalidateForUser).not.toHaveBeenCalled();
+    });
+
+    it('does not save or invalidate when every submitted value is unchanged', async () => {
+      const existing = {
+        id: validId,
+        displayName: 'Same Name',
+        timezone: 'UTC',
+        githubUrl: null,
+        level: UserLevel.MIDDLE,
+        dailyDigestEnabled: true,
+        weeklyDigestEnabled: false,
+      };
+      mockUserRepo.findOne.mockResolvedValue(existing);
+
+      const result = await service.updateProfile(validId, {
+        displayName: 'Same Name',
+        timezone: 'UTC',
+        level: UserLevel.MIDDLE,
+        dailyDigestEnabled: true,
+      });
+
+      expect(result).toBe(existing);
+      expect(mockUserRepo.save).not.toHaveBeenCalled();
+      expect(mockFeedCacheInvalidationService.invalidateForUser).not.toHaveBeenCalled();
     });
   });
 

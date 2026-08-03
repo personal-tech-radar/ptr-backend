@@ -397,7 +397,7 @@ describe('FeedQueryService', () => {
   });
 
   describe('redirect link rendering', () => {
-    it('calls findOrCreateLinksBatch once with only the final trimmed article set, and renders /go/{linkId}', async () => {
+    it('calls findOrCreateLinksBatch once with only the final trimmed article set, and renders /r/{linkId}', async () => {
       const analyses = [makeAnalysis('article-1'), makeAnalysis('article-2')];
       scores['article-1'] = { score: 90, eligible: true };
       scores['article-2'] = { score: 10, eligible: false }; // dropped — not in the final set
@@ -416,7 +416,7 @@ describe('FeedQueryService', () => {
         ['article-1'],
         PersonalArticleLinkContext.FEED,
       );
-      expect(result.days[0].articles[0].url).toBe('https://app.example.com/go/link-article-1');
+      expect(result.days[0].articles[0].url).toBe('https://app.example.com/r/link-article-1');
       delete process.env.APP_URL;
     });
   });

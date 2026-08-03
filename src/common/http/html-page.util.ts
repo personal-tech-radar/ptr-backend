@@ -1,5 +1,5 @@
 // Shared minimal HTML response page for unguarded, token/signature-based endpoints reached from
-// email links (feedback clicks, save-from-email) — these always render HTML, never JSON, even on
+// opaque email actions and digest stream pages — these always render HTML, never JSON, even on
 // failure, since the "user" here is a browser tab opened from an email, not an API caller.
 export function htmlPage(title: string, message: string): string {
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>${title}</title>

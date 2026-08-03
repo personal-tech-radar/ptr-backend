@@ -13,7 +13,7 @@ export class PreviewFeedArticleItemDto {
 
   @ApiProperty({
     description:
-      'The raw article URL. Never a personal /go/{linkId} redirect — that mechanism requires a ' +
+      'The raw article URL. Never a personal /r/{linkId} redirect — that mechanism requires a ' +
       'real authenticated user, which this public endpoint does not have.',
     example: 'https://example.com/blog/nestjs-modules',
   })

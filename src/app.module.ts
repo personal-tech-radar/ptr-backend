@@ -7,6 +7,7 @@ import { AuthModule } from './auth/auth.module';
 import { DatabaseModule } from './common/database/database.module';
 import { ErrorModule } from './common/error/error.module';
 import { RedisModule } from './common/redis/redis.module';
+import { MetricsModule } from './common/metrics/metrics.module';
 import { S3Module } from './common/s3/s3.module';
 import { DigestModule } from './digest/digest.module';
 import { FeedModule } from './feed/feed.module';
@@ -21,6 +22,8 @@ import { SourcesModule } from './sources/sources.module';
 import { TaxonomyModule } from './taxonomy/taxonomy.module';
 import { UserActionsModule } from './user-actions/user-actions.module';
 import { UsersModule } from './users/users.module';
+import { AdministratorsModule } from './administrators/administrators.module';
+import { RedirectsModule } from './redirects/redirects.module';
 
 @Module({
   imports: [
@@ -28,6 +31,7 @@ import { UsersModule } from './users/users.module';
     ThrottlerModule.forRoot([{ ttl: 60000, limit: 60 }]),
     DatabaseModule,
     RedisModule,
+    MetricsModule,
     S3Module,
     ErrorModule,
     HealthModule,
@@ -41,6 +45,8 @@ import { UsersModule } from './users/users.module';
     SchedulerModule,
     UsersModule,
     AuthModule,
+    AdministratorsModule,
+    RedirectsModule,
     TaxonomyModule,
     ScoringModule,
     UserActionsModule,

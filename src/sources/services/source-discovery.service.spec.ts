@@ -17,6 +17,11 @@ describe('SourceDiscoveryService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockedFetchAndValidateFeed.mockResolvedValue({
+      ok: false,
+      reason: 'unreachable',
+      message: 'Feed URL is unreachable',
+    });
     mockPlaywrightFetchService.fetchRenderedHtml.mockResolvedValue({
       success: false,
       html: null,
@@ -273,6 +278,43 @@ describe('SourceDiscoveryService', () => {
   });
 
   describe('RSS/Atom discovery (Step C, shared with SourcesService.create)', () => {
+    it('recognizes a submitted Atom URL before website discovery', async () => {
+      mockedFetchAndValidateFeed.mockImplementation((url: string) => {
+        if (url === 'https://github.com/nestjs/nest/releases.atom') {
+          return {
+            ok: true,
+            feed: {
+              items: [
+                { link: 'https://github.com/nestjs/nest/releases/tag/v11.0.0' },
+                { link: 'https://github.com/nestjs/nest/releases/tag/v10.4.0' },
+              ],
+            },
+            rawText: '<feed xmlns="http://www.w3.org/2005/Atom"></feed>',
+          };
+        }
+        return { ok: false, reason: 'unreachable', message: 'Feed URL is unreachable' };
+      });
+
+      const result = await service.discoverEntryPoints(
+        'https://github.com/nestjs/nest/releases.atom',
+      );
+
+      expect(result).toEqual(
+        expect.objectContaining({
+          success: true,
+          method: WebDiscoveryMethod.ATOM,
+          feedUrl: 'https://github.com/nestjs/nest/releases.atom',
+          entryUrls: [
+            'https://github.com/nestjs/nest/releases/tag/v11.0.0',
+            'https://github.com/nestjs/nest/releases/tag/v10.4.0',
+          ],
+        }),
+      );
+      expect(mockHttpService.getText).not.toHaveBeenCalled();
+      expect(mockPlaywrightFetchService.fetchRenderedHtml).not.toHaveBeenCalled();
+      expect(mockedFetchAndValidateFeed).toHaveBeenCalledTimes(1);
+    });
+
     it('reuses fetchAndValidateFeed against the declared <link> feed and common paths', async () => {
       mockHttpService.getText.mockImplementation((url: string) => {
         if (url === 'https://example.com') {

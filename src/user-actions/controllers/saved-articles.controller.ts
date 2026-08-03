@@ -5,6 +5,7 @@ import {
   HttpCode,
   HttpStatus,
   Param,
+  ParseUUIDPipe,
   Post,
   Query,
   UseGuards,
@@ -37,13 +38,18 @@ export class SavedArticlesController {
   constructor(private readonly savedArticleService: SavedArticleService) {}
 
   @Post(':articleId')
-  @ApiOperation({ summary: 'Save an article for the current user (idempotent — safe to repeat)' })
+  @ApiOperation({
+    summary: 'Save an article for the current user',
+    description:
+      'JWT-protected interactive save operation. Creates at most one saved record and one source saved signal for the user/article pair; repeating the request is idempotent.',
+  })
   @ApiResponse({ status: 201, type: SavedArticleResponseDto })
+  @ApiResponse({ status: 400, type: ErrorResponseDto, description: 'Malformed article UUID' })
   @ApiResponse({ status: 401, type: ErrorResponseDto })
   @ApiResponse({ status: 404, type: ErrorResponseDto, description: 'Article not found' })
   async save(
     @CurrentUser() user: CurrentUserPayload,
-    @Param('articleId') articleId: string,
+    @Param('articleId', new ParseUUIDPipe({ version: '4' })) articleId: string,
   ): Promise<SavedArticleResponseDto> {
     const entity = await this.savedArticleService.create(user.id, articleId);
     return toSavedArticleResponseDto(entity);
@@ -52,19 +58,26 @@ export class SavedArticlesController {
   @Delete(':articleId')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
-    summary: 'Unsave an article. Idempotent — succeeds even if the article was not saved.',
+    summary: 'Remove an article from the current user’s saved list',
+    description:
+      'Removes the current saved state and updates the saved source signal when present. Repeating the request succeeds without creating additional effects.',
   })
   @ApiResponse({ status: 204, description: 'Article unsaved (or already not saved)' })
+  @ApiResponse({ status: 400, type: ErrorResponseDto, description: 'Malformed article UUID' })
   @ApiResponse({ status: 401, type: ErrorResponseDto })
   async unsave(
     @CurrentUser() user: CurrentUserPayload,
-    @Param('articleId') articleId: string,
+    @Param('articleId', new ParseUUIDPipe({ version: '4' })) articleId: string,
   ): Promise<void> {
     await this.savedArticleService.remove(user.id, articleId);
   }
 
   @Get()
-  @ApiOperation({ summary: "List the current user's saved articles" })
+  @ApiOperation({
+    summary: "List the current user's saved articles",
+    description:
+      'Returns the authenticated user’s saved articles with pagination. No other user’s saved state is exposed.',
+  })
   @ApiResponse({ status: 200, type: PaginatedResponseDto })
   @ApiResponse({ status: 401, type: ErrorResponseDto })
   async findAll(

@@ -46,6 +46,7 @@ Before planning or resuming work, inspect `.local-context/` when present.
 - Update `README.md` for user-visible, domain, or operational changes.
 - Add new environment variables to `.env.example`.
 - Update `CHANGELOG.md` for significant changes.
+- Prefer concise one-line comments that explain intent. Put longer design rationale in the relevant module README instead of narrative source comments.
 
 ## Workflow
 
@@ -78,6 +79,11 @@ For high-risk or substantial work only:
 If the invocation is unavailable or fails, report it and continue without retrying.
 
 ## Delivery
+
+Before finishing every implementation iteration, create or update a Markdown report in the
+ignored `./reports/` directory. Record completed and incomplete work, verification commands and
+exact results, encountered problems, unresolved risks, and the final working-tree status. Reports
+are local handoff artifacts and must never be staged or committed.
 
 - Stage only intended changes.
 - Never force-push, bypass hooks, amend shared history, or merge a pull request unless explicitly requested.

@@ -18,7 +18,7 @@ import { ArticleAnalysisProcessor } from '../../ai-analysis/processors/article-a
 import {
   PLAYWRIGHT_QUEUE_CONCURRENCY,
   QUEUE_WEB_SOURCE_BROWSER_FETCH,
-} from '../../queue/queue.service';
+} from '../../queue/services/queue.service';
 
 const PROCESSOR_METADATA = 'bullmq:processor_metadata';
 const WORKER_METADATA = 'bullmq:worker_metadata';
@@ -41,7 +41,12 @@ describe('PlaywrightFetchProcessor queue isolation', () => {
 
 describe('PlaywrightFetchProcessor', () => {
   let processor: PlaywrightFetchProcessor;
-  const mockSourcesService = { findOne: jest.fn() };
+  const mockSourcesService = {
+    findOne: jest.fn(),
+    beginIngestionAttempt: jest.fn().mockResolvedValue({ id: 'attempt' }),
+    recordIngestionSuccess: jest.fn(),
+    recordIngestionFailure: jest.fn(),
+  };
   const mockWebSourceFetcherService = { fetchSourceViaBrowser: jest.fn() };
   const originalEnv = { ...process.env };
 
@@ -52,6 +57,7 @@ describe('PlaywrightFetchProcessor', () => {
     processor = new PlaywrightFetchProcessor(
       mockSourcesService as any,
       mockWebSourceFetcherService as any,
+      { incrementStreams: jest.fn() } as any,
     );
   });
 

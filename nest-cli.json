@@ -5,8 +5,8 @@
   "compilerOptions": {
     "deleteOutDir": true,
     "assets": [
-      { "include": "**/*.md", "outDir": "dist", "watchAssets": true },
-      { "include": "**/instructions/**", "outDir": "dist", "watchAssets": true }
+      { "include": "**/*.md", "outDir": "dist", "watchAssets": false },
+      { "include": "**/instructions/**", "outDir": "dist", "watchAssets": false }
     ]
   }
 }

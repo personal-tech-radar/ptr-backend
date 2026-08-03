@@ -10,6 +10,8 @@ import { ArticleStatus } from '../../articles/entities/article.entity';
 import { ContentStreamQueryService } from '../../taxonomy/services/content-stream-query.service';
 import { TechnologyInterestResolverService } from '../../taxonomy/services/technology-interest-resolver.service';
 import { TechnologyInterestKind } from '../../taxonomy/entities/technology-interest.entity';
+import { TechnologyInterestQueryService } from '../../taxonomy/services/technology-interest-query.service';
+import { MetricsService } from '../../common/metrics/metrics.service';
 import {
   ArticleAnalysis,
   ArticleComplexityLevel,
@@ -65,6 +67,8 @@ export class AiAnalysisService implements OnModuleInit {
     private readonly articlesService: ArticlesService,
     private readonly technologyInterestResolverService: TechnologyInterestResolverService,
     private readonly contentStreamQueryService: ContentStreamQueryService,
+    private readonly technologyInterestQueryService: TechnologyInterestQueryService,
+    private readonly metricsService: MetricsService,
     @InjectDataSource()
     private readonly dataSource: DataSource,
   ) {}
@@ -104,7 +108,7 @@ export class AiAnalysisService implements OnModuleInit {
         articleId,
         publishedAt: article.publishedAt,
       });
-      await this.articlesService.updateStatus(articleId, ArticleStatus.ANALYZED);
+      await this.articlesService.updateStatus(articleId, ArticleStatus.SKIPPED);
       return;
     }
 
@@ -112,7 +116,7 @@ export class AiAnalysisService implements OnModuleInit {
 
     if (existing) {
       if (existing.preScreenIsRelevant === false) {
-        await this.articlesService.updateStatus(articleId, ArticleStatus.ANALYZED);
+        await this.articlesService.updateStatus(articleId, ArticleStatus.SKIPPED);
         return;
       }
       if (existing.fullAnalysisAt) {
@@ -143,9 +147,12 @@ export class AiAnalysisService implements OnModuleInit {
       });
 
       if (!preResult.isPotentiallyRelevant) {
-        await this.articlesService.updateStatus(articleId, ArticleStatus.ANALYZED);
+        await this.articlesService.updateStatus(articleId, ArticleStatus.SKIPPED);
+        await this.metricsService.increment('pre_analysis_total', { outcome: 'skipped' });
         return;
       }
+
+      await this.metricsService.increment('pre_analysis_total', { outcome: 'accepted' });
 
       await this.runFullAnalysis(article, analysis);
     } catch (err) {
@@ -161,8 +168,12 @@ export class AiAnalysisService implements OnModuleInit {
         }
         return;
       }
-      this.logger.error('Pre-screen failed', err, { articleId });
+      this.logger.error('Pre-screen failed', err, {
+        articleId,
+        ...this.providerErrorMeta(err, 'pre-analysis'),
+      });
       await this.articlesService.updateStatus(articleId, ArticleStatus.FAILED);
+      await this.metricsService.increment('pre_analysis_total', { outcome: 'failed' });
     }
   }
 
@@ -170,12 +181,21 @@ export class AiAnalysisService implements OnModuleInit {
   // analysis. Used by SourceCandidatesService to sample a bounded set of candidate articles
   // during promotion without spending full-analysis tokens on URLs that may never become a
   // real source. Idempotent: returns the existing analysis row if one is already there.
-  async preAnalyzeArticle(articleId: string): Promise<ArticleAnalysis> {
+  async preAnalyzeArticle(
+    articleId: string,
+    requiredTaxonomyName?: string,
+    requiredStreamKey?: string,
+  ): Promise<ArticleAnalysis> {
     const existing = await this.analysisRepo.findOne({ where: { articleId } });
     if (existing) return existing;
 
     const article = await this.articlesService.findOne(articleId);
-    const preResult = await this.callOpenAIPreAnalysis(article.title, article.summaryFromFeed);
+    const preResult = await this.callOpenAIPreAnalysis(
+      article.title,
+      article.summaryFromFeed,
+      requiredTaxonomyName,
+      requiredStreamKey,
+    );
 
     try {
       const saved = await this.analysisRepo.save(
@@ -279,6 +299,7 @@ export class AiAnalysisService implements OnModuleInit {
       });
 
       await this.articlesService.updateStatus(articleId, ArticleStatus.ANALYZED);
+      await this.metricsService.increment('full_analysis_total', { outcome: 'completed' });
 
       this.logger.info('Full analysis complete', {
         articleId,
@@ -287,9 +308,35 @@ export class AiAnalysisService implements OnModuleInit {
         include: result.shouldIncludeInDailyDigest,
       });
     } catch (err) {
-      this.logger.error('Full analysis failed', err, { articleId });
+      this.logger.error('Full analysis failed', err, {
+        articleId,
+        ...this.providerErrorMeta(err, 'full-analysis'),
+      });
       await this.articlesService.updateStatus(articleId, ArticleStatus.FAILED);
     }
+  }
+
+  private providerErrorMeta(
+    error: unknown,
+    requestContext: 'pre-analysis' | 'full-analysis',
+  ): {
+    provider: 'openai';
+    providerStatus: number | null;
+    retryable: boolean;
+    requestContext: string;
+  } {
+    const status =
+      typeof error === 'object' && error !== null && 'status' in error
+        ? (error as { status?: unknown }).status
+        : null;
+    const providerStatus = typeof status === 'number' ? status : null;
+
+    return {
+      provider: 'openai',
+      providerStatus,
+      retryable: providerStatus === null || providerStatus === 429 || providerStatus >= 500,
+      requestContext,
+    };
   }
 
   // Resolves each technologySignals/interestSignals entry against the existing taxonomy catalog
@@ -365,12 +412,34 @@ export class AiAnalysisService implements OnModuleInit {
   private async callOpenAIPreAnalysis(
     title: string,
     summaryFromFeed: string | null,
+    requiredTaxonomyName?: string,
+    requiredStreamKey?: string,
   ): Promise<PreAnalysisResult> {
     const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
+
+    const [taxonomy, streams] = await Promise.all([
+      this.technologyInterestQueryService.findAllActive(),
+      this.contentStreamQueryService.findAll(),
+    ]);
 
     const userContent = [
       `Title: ${title}`,
       summaryFromFeed ? `Description: ${summaryFromFeed.slice(0, 500)}` : null,
+      `Supported streams: ${requiredStreamKey ?? streams.map((stream) => stream.key).join(', ')}`,
+      `Technologies: ${
+        requiredTaxonomyName ??
+        taxonomy
+          .filter((item) => item.kind === TechnologyInterestKind.TECHNOLOGY)
+          .map((item) => item.name)
+          .join(', ')
+      }`,
+      `Interests: ${
+        requiredTaxonomyName ??
+        taxonomy
+          .filter((item) => item.kind === TechnologyInterestKind.INTEREST)
+          .map((item) => item.name)
+          .join(', ')
+      }`,
     ]
       .filter(Boolean)
       .join('\n');

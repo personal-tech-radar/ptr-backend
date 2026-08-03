@@ -74,11 +74,11 @@ describe('DigestBootstrapService', () => {
   it('does not seed any Source rows when building the daily digest against an empty sources table', async () => {
     await service.buildDailyDigest(userId);
 
-    expect(mockFeedFetcherService.fetchAllSources).toHaveBeenCalledTimes(1);
     expect(mockUserQueryService.findById).toHaveBeenCalledWith(userId);
     expect(mockPersonalDigestBuilderService.buildForUser).toHaveBeenCalledWith(
       mockUser,
       DigestType.DAILY,
+      undefined,
     );
   });
 
@@ -88,14 +88,15 @@ describe('DigestBootstrapService', () => {
     expect(mockPersonalDigestBuilderService.buildForUser).toHaveBeenCalledWith(
       mockUser,
       DigestType.WEEKLY,
+      undefined,
     );
   });
 
-  it('still analyzes pending articles before building (unaffected responsibility)', async () => {
+  it('does not analyze pending articles inline because analysis belongs to its queue', async () => {
     mockArticlesService.findPendingAnalysis.mockResolvedValue([{ id: 'article-1' }]);
 
     await service.buildDailyDigest(userId);
 
-    expect(mockAiAnalysisService.analyzeArticle).toHaveBeenCalledWith('article-1');
+    expect(mockAiAnalysisService.analyzeArticle).not.toHaveBeenCalled();
   });
 });

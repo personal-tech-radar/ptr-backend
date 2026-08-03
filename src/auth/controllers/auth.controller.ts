@@ -1,4 +1,14 @@
-import { Body, Controller, Get, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Patch,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import {
   ApiBadRequestResponse,
   ApiBearerAuth,
@@ -31,7 +41,11 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Post('register')
-  @ApiOperation({ summary: 'Register a new account and send a verification email' })
+  @ApiOperation({
+    summary: 'Register a new account and send a verification email',
+    description:
+      'Creates a normal user from email, password, and display name, then sends an email-verification link. The user may log in and complete onboarding before verification, but feeds and scheduled digests remain unavailable until both verification and onboarding are complete.',
+  })
   @ApiResponse({ status: 201, type: UserResponseDto })
   @ApiResponse({ status: 409, type: ErrorResponseDto, description: 'Email already registered' })
   async register(@Body() dto: RegisterDto): Promise<UserResponseDto> {
@@ -39,7 +53,11 @@ export class AuthController {
   }
 
   @Get('verify-email')
-  @ApiOperation({ summary: 'Verify an email address using the token sent at registration' })
+  @ApiOperation({
+    summary: 'Verify an email address using the token sent at registration',
+    description:
+      'Consumes the verification token and marks the user email as verified. Verification does not complete onboarding automatically.',
+  })
   @ApiResponse({ status: 200, type: MessageResponseDto })
   async verifyEmail(@Query() query: VerifyEmailDto): Promise<MessageResponseDto> {
     await this.authService.verifyEmail(query.token);
@@ -47,8 +65,13 @@ export class AuthController {
   }
 
   @Post('login')
+  @HttpCode(HttpStatus.OK)
   @UseGuards(LocalAuthGuard)
-  @ApiOperation({ summary: 'Log in with email and password' })
+  @ApiOperation({
+    summary: 'Log in with email and password',
+    description:
+      'Authenticates a normal user and returns a user access JWT plus a persisted, rotatable refresh token. Administrator credentials use the separate admin login endpoint.',
+  })
   @ApiResponse({ status: 200, type: AuthTokensResponseDto })
   @ApiResponse({ status: 401, type: ErrorResponseDto })
   // LoginDto documents the request body for Swagger; actual credential extraction and
@@ -58,7 +81,12 @@ export class AuthController {
   }
 
   @Post('refresh')
-  @ApiOperation({ summary: 'Rotate a refresh token and issue a new access token' })
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Rotate a refresh token and issue a new access token',
+    description:
+      'Validates and revokes the presented normal-user refresh token, then issues a replacement refresh token and a new user access JWT.',
+  })
   @ApiResponse({ status: 200, type: AuthTokensResponseDto })
   @ApiResponse({ status: 401, type: ErrorResponseDto })
   async refresh(@Body() dto: RefreshTokenDto): Promise<AuthTokensResponseDto> {
@@ -66,7 +94,12 @@ export class AuthController {
   }
 
   @Post('logout')
-  @ApiOperation({ summary: 'Revoke a refresh token' })
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Log out a normal-user refresh session',
+    description:
+      'Revokes the presented normal-user refresh token. This route does not accept or revoke administrator tokens.',
+  })
   @ApiResponse({ status: 200, type: MessageResponseDto })
   async logout(@Body() dto: RefreshTokenDto): Promise<MessageResponseDto> {
     await this.authService.logout(dto.refreshToken);
@@ -74,7 +107,11 @@ export class AuthController {
   }
 
   @Post('password/forgot')
-  @ApiOperation({ summary: 'Request a password reset email' })
+  @ApiOperation({
+    summary: 'Request a password reset email',
+    description:
+      'Sends a password-reset link when the normal-user account exists while returning the same response for unknown emails to avoid account enumeration.',
+  })
   @ApiResponse({ status: 200, type: MessageResponseDto })
   async forgotPassword(@Body() dto: ForgotPasswordDto): Promise<MessageResponseDto> {
     await this.authService.forgotPassword(dto);
@@ -82,7 +119,11 @@ export class AuthController {
   }
 
   @Post('password/reset')
-  @ApiOperation({ summary: 'Reset password using a password reset token' })
+  @ApiOperation({
+    summary: 'Reset password using a password reset token',
+    description:
+      'Consumes a valid normal-user password-reset token, stores the new password hash, and invalidates affected authentication state.',
+  })
   @ApiResponse({ status: 200, type: MessageResponseDto })
   async resetPassword(@Body() dto: ResetPasswordDto): Promise<MessageResponseDto> {
     await this.authService.resetPassword(dto);
@@ -92,7 +133,11 @@ export class AuthController {
   @Patch('password')
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
-  @ApiOperation({ summary: 'Change password while logged in' })
+  @ApiOperation({
+    summary: 'Change the current user password',
+    description:
+      'Changes the authenticated normal user password after validating the current password. Administrator password changes use the separate admin endpoint.',
+  })
   @ApiResponse({ status: 200, type: MessageResponseDto })
   @ApiResponse({ status: 401, type: ErrorResponseDto })
   async changePassword(

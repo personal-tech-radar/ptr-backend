@@ -4,14 +4,10 @@ import {
   ApiBearerAuth,
   ApiOperation,
   ApiResponse,
-  ApiSecurity,
   ApiTags,
 } from '@nestjs/swagger';
-import { Roles } from '../../auth/decorators/roles.decorator';
-import { HybridAuthGuard } from '../../auth/guards/hybrid-auth.guard';
-import { RolesGuard } from '../../auth/guards/roles.guard';
+import { AdministratorAuthGuard } from '../../administrators/guards/administrator-auth.guard';
 import { ErrorResponseDto } from '../../common/error/error-response.dto';
-import { UserRole } from '../../users/entities/user.entity';
 import { AdminQueryContentStreamDto } from '../dto/admin-query-content-stream.dto';
 import {
   ContentStreamResponseDto,
@@ -22,11 +18,9 @@ import { ContentStreamCommandService } from '../services/content-stream-command.
 import { ContentStreamQueryService } from '../services/content-stream-query.service';
 
 @ApiTags('Admin - Taxonomy')
-@ApiBearerAuth()
-@ApiSecurity('api-key')
+@ApiBearerAuth('administrator-bearer')
 @ApiBadRequestResponse({ type: ErrorResponseDto })
-@UseGuards(HybridAuthGuard, RolesGuard)
-@Roles(UserRole.ADMIN)
+@UseGuards(AdministratorAuthGuard)
 @Controller('admin/content-streams')
 export class AdminContentStreamsController {
   constructor(
@@ -36,7 +30,9 @@ export class AdminContentStreamsController {
 
   @Get()
   @ApiOperation({
-    summary: 'List content streams, optionally including disabled ones (admin only)',
+    summary: 'List content streams, optionally including disabled ones',
+    description:
+      'Returns the fixed system stream catalog. The optional filter allows administrators to inspect disabled streams; users only receive enabled streams.',
   })
   @ApiResponse({ status: 200, type: [ContentStreamResponseDto] })
   @ApiResponse({ status: 401, type: ErrorResponseDto })
@@ -48,7 +44,9 @@ export class AdminContentStreamsController {
 
   @Patch(':id')
   @ApiOperation({
-    summary: 'Edit a content stream name/description/sortOrder/enabled (admin only)',
+    summary: 'Edit a content stream name/description/sortOrder/enabled',
+    description:
+      'Updates presentation and enabled state for a system stream. It does not create custom streams or alter the fixed stream keys and scheduling semantics.',
   })
   @ApiResponse({ status: 200, type: ContentStreamResponseDto })
   @ApiResponse({ status: 401, type: ErrorResponseDto })

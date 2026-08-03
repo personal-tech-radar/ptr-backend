@@ -49,6 +49,14 @@ describe('DigestQueryService', () => {
       const result = await service.findAll({ page: 1, limit: 20 });
 
       expect(mockQueryBuilder.leftJoinAndSelect).toHaveBeenCalledWith('digest.user', 'user');
+      expect(mockQueryBuilder.leftJoinAndSelect).toHaveBeenCalledWith(
+        'digest.streamPages',
+        'streamPage',
+      );
+      expect(mockQueryBuilder.leftJoinAndSelect).toHaveBeenCalledWith(
+        'streamPage.stream',
+        'stream',
+      );
       expect(mockQueryBuilder.andWhere).not.toHaveBeenCalled();
       expect(mockQueryBuilder.orderBy).toHaveBeenCalledWith('digest.createdAt', 'DESC');
       expect(mockQueryBuilder.skip).toHaveBeenCalledWith(0);
@@ -96,8 +104,18 @@ describe('DigestQueryService', () => {
         periodEnd: new Date('2026-01-02'),
         subject: 'Subject',
         status: DigestStatus.SENT,
+        deliveryMode: 'scheduled',
+        triggeringAdministratorId: null,
+        actualRecipientEmail: null,
         sentAt: new Date('2026-01-02'),
         createdAt: new Date('2026-01-01'),
+        streamPages: [
+          {
+            id: 'page-1',
+            streamId: 'stream-1',
+            stream: { key: 'security', name: 'Security' },
+          },
+        ],
       } as unknown as Digest;
       mockQueryBuilder.getManyAndCount.mockResolvedValue([[digest], 21]);
 
@@ -114,8 +132,20 @@ describe('DigestQueryService', () => {
           periodEnd: digest.periodEnd,
           subject: 'Subject',
           status: DigestStatus.SENT,
+          deliveryMode: 'scheduled',
+          triggeringAdministratorId: null,
+          actualRecipientEmail: null,
           sentAt: digest.sentAt,
           createdAt: digest.createdAt,
+          streamPages: [
+            {
+              id: 'page-1',
+              streamId: 'stream-1',
+              streamKey: 'security',
+              streamName: 'Security',
+              url: 'http://localhost:3000/digest-stream/page-1',
+            },
+          ],
         },
       ]);
       expect(result.meta).toEqual({ total: 21, page: 2, limit: 20, totalPages: 2 });
@@ -130,7 +160,7 @@ describe('DigestQueryService', () => {
       await expect(service.findByIdWithItems(validId)).resolves.toEqual(digest);
       expect(mockDigestRepo.findOne).toHaveBeenCalledWith({
         where: { id: validId },
-        relations: ['items', 'items.article', 'user'],
+        relations: ['items', 'items.article', 'user', 'streamPages', 'streamPages.stream'],
       });
     });
 

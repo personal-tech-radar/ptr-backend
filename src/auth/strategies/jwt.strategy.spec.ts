@@ -1,6 +1,5 @@
 import { UnauthorizedException } from '@nestjs/common';
 import { JwtStrategy } from './jwt.strategy';
-import { UserRole } from '../../users/entities/user.entity';
 
 describe('JwtStrategy', () => {
   let strategy: JwtStrategy;
@@ -28,23 +27,25 @@ describe('JwtStrategy', () => {
 
   it('returns the current user payload for an active, existing user', async () => {
     const onboardingCompletedAt = new Date('2026-01-01T00:00:00Z');
+    const emailVerifiedAt = new Date('2025-12-31T00:00:00Z');
     mockUserQueryService.findById.mockResolvedValue({
       id: 'user-1',
       email: 'jane@example.com',
-      role: UserRole.USER,
+      emailVerifiedAt,
       onboardingCompletedAt,
     });
 
     const result = await strategy.validate({
       sub: 'user-1',
       email: 'jane@example.com',
-      role: UserRole.USER,
+      subjectType: 'user',
     });
 
     expect(result).toEqual({
       id: 'user-1',
       email: 'jane@example.com',
-      role: UserRole.USER,
+      subjectType: 'user',
+      emailVerifiedAt,
       onboardingCompletedAt,
     });
   });
@@ -55,7 +56,7 @@ describe('JwtStrategy', () => {
     mockUserQueryService.findById.mockRejectedValue(new Error('not found'));
 
     await expect(
-      strategy.validate({ sub: 'deleted-user', email: 'gone@example.com', role: UserRole.USER }),
+      strategy.validate({ sub: 'deleted-user', email: 'gone@example.com', subjectType: 'user' }),
     ).rejects.toThrow(UnauthorizedException);
   });
 });

@@ -3,11 +3,11 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ArticleAnalysis } from '../../ai-analysis/entities/article-analysis.entity';
 import { ArticleStatus } from '../../articles/entities/article.entity';
+import { PublicArticlesService } from '../../articles/services/public-articles.service';
 import { LoggingService } from '../../common/logging/logging.service';
 import { zonedEndOfDayExclusiveUTC, zonedStartOfDayUTC } from '../../common/util/timezone.util';
 import { ContentStream } from '../../taxonomy/entities/content-stream.entity';
 import { ContentStreamQueryService } from '../../taxonomy/services/content-stream-query.service';
-import { PublicFeedArticleItemDto } from '../dto/public-feed-article-item.dto';
 import { PublicFeedResponseDto } from '../dto/public-feed-response.dto';
 import { QueryPublicFeedDto } from '../dto/query-public-feed.dto';
 
@@ -24,6 +24,7 @@ export class PublicFeedQueryService {
     @InjectRepository(ArticleAnalysis)
     private readonly analysisRepo: Repository<ArticleAnalysis>,
     private readonly contentStreamQueryService: ContentStreamQueryService,
+    private readonly publicArticlesService: PublicArticlesService,
   ) {}
 
   // No day-grouping, no scoring — flat, paginated, strictly publishedAt DESC. No 30-day freshness
@@ -72,7 +73,9 @@ export class PublicFeedQueryService {
     }
 
     const [analyses, total] = await qb
-      .orderBy('a.publishedAt', 'DESC')
+      .orderBy('a.publishedAt', 'DESC', 'NULLS LAST')
+      .addOrderBy('a.createdAt', 'DESC')
+      .addOrderBy('a.id', 'DESC')
       .skip((page - 1) * limit)
       .take(limit)
       .getManyAndCount();
@@ -84,8 +87,9 @@ export class PublicFeedQueryService {
       streamFilterCount: streamIds.length,
     });
 
+    const publicArticles = await this.publicArticlesService.mapMany(analyses);
     return {
-      data: analyses.map((analysis) => this.toItemDto(analysis)),
+      data: publicArticles.map((article) => ({ ...article, articleId: article.id })),
       meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
     };
   }
@@ -101,18 +105,5 @@ export class PublicFeedQueryService {
       throw new BadRequestException(`Unknown content stream key(s): ${missing.join(', ')}`);
     }
     return resolved.map((cs) => (cs as ContentStream).id);
-  }
-
-  private toItemDto(analysis: ArticleAnalysis): PublicFeedArticleItemDto {
-    return {
-      articleId: analysis.articleId,
-      title: analysis.article.title,
-      // Raw URL — never a /go/{linkId} redirect, which requires a real authenticated userId that
-      // an anonymous public caller doesn't have.
-      url: analysis.article.url,
-      sourceId: analysis.article.sourceId,
-      sourceName: analysis.article.source?.name ?? '',
-      publishedAt: analysis.article.publishedAt as Date,
-    };
   }
 }

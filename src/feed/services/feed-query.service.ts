@@ -77,19 +77,20 @@ export class FeedQueryService {
 
     const maxDays = Number(process.env.FEED_MAX_DAYS) || DEFAULT_MAX_DAYS;
     const days = Math.min(query.days ?? DEFAULT_DAYS, maxDays);
-    const beforeDateStr = query.beforeDate ?? getLocalDateString(new Date(), user.timezone);
+    const timezone = user.timezone!;
+    const beforeDateStr = query.beforeDate ?? getLocalDateString(new Date(), timezone);
     const rangeStartStr = addDaysToDateString(beforeDateStr, -(days - 1));
 
-    const toDateExclusive = zonedEndOfDayExclusiveUTC(beforeDateStr, user.timezone);
-    let fromDateInclusive = zonedStartOfDayUTC(rangeStartStr, user.timezone);
+    const toDateExclusive = zonedEndOfDayExclusiveUTC(beforeDateStr, timezone);
+    let fromDateInclusive = zonedStartOfDayUTC(rangeStartStr, timezone);
 
     // Permanent 30-day floor (FEED_MAX_DAYS-configurable) — unconditional for every path except
     // saved=true, which must always be able to surface a user's own saved articles regardless of
     // age (see coder.md decision #2).
     if (!isSaved) {
-      const todayStr = getLocalDateString(new Date(), user.timezone);
+      const todayStr = getLocalDateString(new Date(), timezone);
       const floorDateStr = addDaysToDateString(todayStr, -(maxDays - 1));
-      const floorDate = zonedStartOfDayUTC(floorDateStr, user.timezone);
+      const floorDate = zonedStartOfDayUTC(floorDateStr, timezone);
       if (floorDate.getTime() > fromDateInclusive.getTime()) {
         fromDateInclusive = floorDate;
       }
@@ -107,7 +108,7 @@ export class FeedQueryService {
     }
 
     const dayStrings = this.buildDayRange(beforeDateStr, days);
-    const byDay = this.groupByLocalDay(scored, user.timezone);
+    const byDay = this.groupByLocalDay(scored, timezone);
 
     const rawDayGroups = dayStrings.map((date) => ({
       date,
@@ -265,14 +266,24 @@ export class FeedQueryService {
     const articleIds = analyses.map((a) => a.articleId);
     const sourceIds = [...new Set(analyses.map((a) => a.article.sourceId))];
 
-    const [{ streamIdsByArticle, technologyInterestIdsByArticle }, profile] = await Promise.all([
+    const [
+      {
+        streamIdsByArticle,
+        technologyInterestIdsByArticle,
+        technologyIdsByArticle,
+        interestIdsByArticle,
+      },
+      profile,
+    ] = await Promise.all([
       this.buildScorableMaps(articleIds),
-      this.userScoringProfileService.buildProfile(userId, sourceIds, articleIds),
+      this.userScoringProfileService.buildProfile(userId, sourceIds),
     ]);
 
     const candidates: FeedCandidate[] = analyses.map((analysis) => ({
       analysis,
       technologyInterestIds: technologyInterestIdsByArticle.get(analysis.articleId) ?? [],
+      technologyIds: technologyIdsByArticle.get(analysis.articleId) ?? [],
+      interestIds: interestIdsByArticle.get(analysis.articleId) ?? [],
       streamIds: streamIdsByArticle.get(analysis.articleId) ?? [],
       alwaysInclude: isSaved,
     }));
@@ -290,10 +301,15 @@ export class FeedQueryService {
   private async buildScorableMaps(articleIds: string[]): Promise<{
     streamIdsByArticle: Map<string, string[]>;
     technologyInterestIdsByArticle: Map<string, string[]>;
+    technologyIdsByArticle: Map<string, string[]>;
+    interestIdsByArticle: Map<string, string[]>;
   }> {
     const [streams, technologyInterests] = await Promise.all([
       this.articleStreamRepo.find({ where: { articleId: In(articleIds) } }),
-      this.articleTechnologyInterestRepo.find({ where: { articleId: In(articleIds) } }),
+      this.articleTechnologyInterestRepo.find({
+        where: { articleId: In(articleIds) },
+        relations: { technologyInterest: true },
+      }),
     ]);
 
     const streamIdsByArticle = new Map<string, string[]>();
@@ -304,13 +320,23 @@ export class FeedQueryService {
     }
 
     const technologyInterestIdsByArticle = new Map<string, string[]>();
+    const technologyIdsByArticle = new Map<string, string[]>();
+    const interestIdsByArticle = new Map<string, string[]>();
     for (const t of technologyInterests) {
       const list = technologyInterestIdsByArticle.get(t.articleId) ?? [];
       list.push(t.technologyInterestId);
       technologyInterestIdsByArticle.set(t.articleId, list);
+      const target =
+        t.technologyInterest.kind === 'technology' ? technologyIdsByArticle : interestIdsByArticle;
+      target.set(t.articleId, [...(target.get(t.articleId) ?? []), t.technologyInterestId]);
     }
 
-    return { streamIdsByArticle, technologyInterestIdsByArticle };
+    return {
+      streamIdsByArticle,
+      technologyInterestIdsByArticle,
+      technologyIdsByArticle,
+      interestIdsByArticle,
+    };
   }
 
   // Descending, most-recent-first — [beforeDate, beforeDate-1, ..., beforeDate-(days-1)].
@@ -473,7 +499,7 @@ export class FeedQueryService {
       title: analysis.article.title,
       // Falls back to the raw URL only if the batch link call somehow didn't cover this article
       // id — should never happen since finalArticleIds is built from the same rawDayGroups.
-      url: linkId ? `${appUrl}/go/${linkId}` : analysis.article.url,
+      url: linkId ? `${appUrl}/r/${linkId}` : analysis.article.url,
       sourceName: analysis.article.source?.name ?? '',
       publishedAt: analysis.article.publishedAt as Date,
       shortSummary: analysis.shortSummary ?? '',

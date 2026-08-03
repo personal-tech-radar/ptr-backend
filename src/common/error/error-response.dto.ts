@@ -7,9 +7,16 @@ export class ErrorResponseDto {
   @ApiProperty({ description: 'Request path where the error occurred', example: '/api/resource' })
   path: string;
 
-  @ApiProperty({ description: 'Error message describing what went wrong', example: 'Validation failed' })
+  @ApiProperty({
+    description: 'Error message describing what went wrong',
+    example: 'Validation failed',
+  })
   message: string;
 
-  @ApiProperty({ description: 'Machine-readable error code', example: 'USER_NOT_FOUND', required: false })
+  @ApiProperty({
+    description: 'Machine-readable error code',
+    example: 'USER_NOT_FOUND',
+    required: false,
+  })
   errorCode?: string;
 }

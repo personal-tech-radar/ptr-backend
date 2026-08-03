@@ -5,8 +5,7 @@ import { LoggingService } from '../../common/logging/logging.service';
 import { TechnologyInterest, TechnologyInterestKind } from '../entities/technology-interest.entity';
 import { normalizeTechnologyInterestName } from '../util/normalize-technology-interest-name.util';
 
-// Threshold read once at module load, same pattern as PLAYWRIGHT_QUEUE_CONCURRENCY
-// (src/queue/queue.service.ts) — a per-feature constant living alongside the logic it tunes.
+// Read once at startup so similarity behavior is stable for the process lifetime.
 export const TAXONOMY_SIMILARITY_THRESHOLD = parseFloat(
   process.env.TAXONOMY_SIMILARITY_THRESHOLD || '0.6',
 );
@@ -16,9 +15,7 @@ export interface ResolveResult {
   created: boolean;
 }
 
-// Pure normalization/dedup pipeline: exact match -> alias match -> pg_trgm similarity match ->
-// create. No user-linking, no queue side effects — those are orchestrated by
-// TechnologyInterestCommandService.createOrReuse, which calls resolve() and then links/enqueues.
+// Resolve in exact, alias, similarity, then create order; linking is handled by the command service.
 @Injectable()
 export class TechnologyInterestResolverService {
   private readonly logger = new LoggingService(TechnologyInterestResolverService.name);
@@ -28,7 +25,11 @@ export class TechnologyInterestResolverService {
     private readonly technologyInterestRepo: Repository<TechnologyInterest>,
   ) {}
 
-  async resolve(kind: TechnologyInterestKind, rawName: string): Promise<ResolveResult> {
+  async resolve(
+    kind: TechnologyInterestKind,
+    rawName: string,
+    beforeCreate?: (normalizedName: string) => Promise<void>,
+  ): Promise<ResolveResult> {
     const normalized = normalizeTechnologyInterestName(rawName);
 
     const exactMatch = await this.technologyInterestRepo.findOne({
@@ -70,6 +71,8 @@ export class TechnologyInterestResolverService {
       }
       return { entity: similarityMatch, created: false };
     }
+
+    await beforeCreate?.(normalized);
 
     const created = this.technologyInterestRepo.create({
       kind,

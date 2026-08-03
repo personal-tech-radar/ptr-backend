@@ -44,7 +44,7 @@ export class PublicFeedPreviewService {
     const technologyInterestIds = dto.technologyInterestIds ?? [];
     await this.validateTaxonomyIds(technologyInterestIds, dto.contentStreamIds);
 
-    const cacheKey = this.publicFeedCacheService.buildPreviewKey(
+    const cacheKey = await this.publicFeedCacheService.buildVersionedPreviewKey(
       technologyInterestIds,
       dto.contentStreamIds,
     );
@@ -136,16 +136,29 @@ export class PublicFeedPreviewService {
     if (analyses.length === 0) return [];
 
     const articleIds = analyses.map((a) => a.articleId);
-    const { streamIdsByArticle, technologyInterestIdsByArticle } =
-      await this.buildScorableMaps(articleIds);
+    const {
+      streamIdsByArticle,
+      technologyInterestIdsByArticle,
+      technologyIdsByArticle,
+      interestIdsByArticle,
+    } = await this.buildScorableMaps(articleIds);
 
-    const profile: ScoringProfile = { technologyInterestIds, contentStreamIds, level: null };
+    const selected = await this.technologyInterestQueryService.findByIds(technologyInterestIds);
+    const profile: ScoringProfile = {
+      technologyInterestIds,
+      technologyIds: selected.filter((item) => item.kind === 'technology').map((item) => item.id),
+      interestIds: selected.filter((item) => item.kind === 'interest').map((item) => item.id),
+      contentStreamIds,
+      level: null,
+    };
 
     return analyses
       .map((analysis) => {
         const scorable: ScorableArticle = {
           analysis,
           technologyInterestIds: technologyInterestIdsByArticle.get(analysis.articleId) ?? [],
+          technologyIds: technologyIdsByArticle.get(analysis.articleId) ?? [],
+          interestIds: interestIdsByArticle.get(analysis.articleId) ?? [],
           streamIds: streamIdsByArticle.get(analysis.articleId) ?? [],
         };
         return {
@@ -164,10 +177,15 @@ export class PublicFeedPreviewService {
   private async buildScorableMaps(articleIds: string[]): Promise<{
     streamIdsByArticle: Map<string, string[]>;
     technologyInterestIdsByArticle: Map<string, string[]>;
+    technologyIdsByArticle: Map<string, string[]>;
+    interestIdsByArticle: Map<string, string[]>;
   }> {
     const [streams, technologyInterests] = await Promise.all([
       this.articleStreamRepo.find({ where: { articleId: In(articleIds) } }),
-      this.articleTechnologyInterestRepo.find({ where: { articleId: In(articleIds) } }),
+      this.articleTechnologyInterestRepo.find({
+        where: { articleId: In(articleIds) },
+        relations: { technologyInterest: true },
+      }),
     ]);
 
     const streamIdsByArticle = new Map<string, string[]>();
@@ -178,13 +196,23 @@ export class PublicFeedPreviewService {
     }
 
     const technologyInterestIdsByArticle = new Map<string, string[]>();
+    const technologyIdsByArticle = new Map<string, string[]>();
+    const interestIdsByArticle = new Map<string, string[]>();
     for (const t of technologyInterests) {
       const list = technologyInterestIdsByArticle.get(t.articleId) ?? [];
       list.push(t.technologyInterestId);
       technologyInterestIdsByArticle.set(t.articleId, list);
+      const target =
+        t.technologyInterest.kind === 'technology' ? technologyIdsByArticle : interestIdsByArticle;
+      target.set(t.articleId, [...(target.get(t.articleId) ?? []), t.technologyInterestId]);
     }
 
-    return { streamIdsByArticle, technologyInterestIdsByArticle };
+    return {
+      streamIdsByArticle,
+      technologyInterestIdsByArticle,
+      technologyIdsByArticle,
+      interestIdsByArticle,
+    };
   }
 
   private toItemDto(analysis: ArticleAnalysis, score: number): PreviewFeedArticleItemDto {

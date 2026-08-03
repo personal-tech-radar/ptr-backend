@@ -4,31 +4,29 @@ import {
   ApiBearerAuth,
   ApiOperation,
   ApiResponse,
-  ApiSecurity,
   ApiTags,
 } from '@nestjs/swagger';
-import { Roles } from '../../auth/decorators/roles.decorator';
-import { HybridAuthGuard } from '../../auth/guards/hybrid-auth.guard';
-import { RolesGuard } from '../../auth/guards/roles.guard';
+import { AdministratorAuthGuard } from '../../administrators/guards/administrator-auth.guard';
 import { PaginatedResponseDto } from '../../common/dto/paginated-response.dto';
 import { ErrorResponseDto } from '../../common/error/error-response.dto';
-import { UserRole } from '../../users/entities/user.entity';
 import { AdminArticleFeedbackResponseDto } from '../dto/admin-article-feedback-response.dto';
 import { AdminQueryArticleFeedbackDto } from '../dto/admin-query-article-feedback.dto';
 import { ArticleFeedbackService } from '../services/article-feedback.service';
 
-@ApiTags('Admin - Articles')
-@ApiBearerAuth()
-@ApiSecurity('api-key')
+@ApiTags('Admin - User Actions')
+@ApiBearerAuth('administrator-bearer')
 @ApiBadRequestResponse({ type: ErrorResponseDto })
-@UseGuards(HybridAuthGuard, RolesGuard)
-@Roles(UserRole.ADMIN)
+@UseGuards(AdministratorAuthGuard)
 @Controller('admin/article-feedback')
 export class AdminArticleFeedbackController {
   constructor(private readonly articleFeedbackService: ArticleFeedbackService) {}
 
   @Get()
-  @ApiOperation({ summary: 'List article feedback across all users (admin only)' })
+  @ApiOperation({
+    summary: 'List article feedback across all users',
+    description:
+      'Read-only paginated view of each user/article current explicit useful or not_useful value for auditing and support. Administrators cannot edit or delete feedback here.',
+  })
   @ApiResponse({ status: 200, type: PaginatedResponseDto })
   @ApiResponse({ status: 401, type: ErrorResponseDto })
   @ApiResponse({ status: 403, type: ErrorResponseDto })

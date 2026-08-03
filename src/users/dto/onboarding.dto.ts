@@ -6,11 +6,16 @@ import {
   IsEnum,
   IsNotEmpty,
   IsString,
+  IsTimeZone,
+  IsOptional,
+  IsUrl,
+  Matches,
   IsUUID,
   ValidateNested,
 } from 'class-validator';
 import { TechnologyInterestKind } from '../../taxonomy/entities/technology-interest.entity';
 import { UserLevel } from '../entities/user.entity';
+import { GITHUB_PROFILE_URL_PATTERN } from './update-profile.dto';
 
 export class TechnologyInterestSelectionDto {
   @ApiProperty({ enum: TechnologyInterestKind, example: TechnologyInterestKind.TECHNOLOGY })
@@ -25,6 +30,27 @@ export class TechnologyInterestSelectionDto {
 }
 
 export class OnboardingDto {
+  @ApiProperty({ description: 'Browser IANA timezone', example: 'Europe/Berlin' })
+  @IsTimeZone()
+  @Transform(({ value }: { value: string }) => value?.trim())
+  timezone: string;
+
+  @ApiProperty({
+    description: 'Optional HTTPS github.com profile URL',
+    example: 'https://github.com/janedoe',
+    required: false,
+    nullable: true,
+  })
+  @IsOptional()
+  @IsUrl()
+  @Matches(GITHUB_PROFILE_URL_PATTERN, {
+    message: 'githubUrl must be an HTTPS github.com profile URL',
+  })
+  @Transform(({ value }: { value: string | null }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
+  githubUrl?: string | null;
+
   @ApiProperty({ enum: UserLevel, example: UserLevel.MIDDLE })
   @IsEnum(UserLevel)
   level: UserLevel;

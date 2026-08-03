@@ -1,7 +1,7 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type, TransformFnParams } from 'class-transformer';
 import { IsBoolean, IsEnum, IsInt, IsOptional, Max, Min } from 'class-validator';
-import { SourceCategory, SourceType } from '../entities/source.entity';
+import { SourceCategory, SourceStatus, SourceType } from '../entities/source.entity';
 
 // Reads the raw value from `obj[key]` rather than the pipeline-provided `value`. The global
 // ValidationPipe's `enableImplicitConversion` runs class-transformer's own Boolean(value) coercion
@@ -46,6 +46,11 @@ export class QuerySourceDto {
   @IsOptional()
   @IsEnum(SourceCategory)
   category?: SourceCategory;
+
+  @ApiPropertyOptional({ description: 'Filter by lifecycle status', enum: SourceStatus })
+  @IsOptional()
+  @IsEnum(SourceStatus)
+  status?: SourceStatus;
 
   @ApiPropertyOptional({ description: 'Filter by enabled status', example: true })
   @IsOptional()

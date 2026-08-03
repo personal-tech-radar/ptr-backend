@@ -24,6 +24,7 @@ describe('SourcesService', () => {
     update: jest.fn(),
     find: jest.fn().mockResolvedValue([]),
   };
+  const mockSourceCoverageRepo = { find: jest.fn().mockResolvedValue([]) };
   const mockSourceDiscoveryService = {
     discoverEntryPoints: jest.fn(),
   };
@@ -57,8 +58,15 @@ describe('SourcesService', () => {
     service = new SourcesService(
       mockSourceRepo as any,
       mockWebSourceConfigRepo as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      mockSourceCoverageRepo as any,
       mockSourceDiscoveryService as any,
       mockSourceStructureAiService as any,
+      {} as any,
+      {} as any,
+      {} as any,
       mockDataSource as any,
     );
   });
@@ -168,7 +176,9 @@ describe('SourcesService', () => {
       expect(mockQueryBuilder.take).toHaveBeenCalledWith(20);
       expect(mockQueryBuilder.withDeleted).not.toHaveBeenCalled();
       expect(result.meta).toEqual({ total: 1, page: 1, limit: 20, totalPages: 1 });
-      expect(result.data).toEqual([{ id: 'source-1', type: SourceType.RSS }]);
+      expect(result.data).toEqual([
+        expect.objectContaining({ id: 'source-1', type: SourceType.RSS }),
+      ]);
     });
 
     it('applies type, category, and enabled filters', async () => {

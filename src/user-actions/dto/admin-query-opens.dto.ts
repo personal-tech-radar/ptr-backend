@@ -3,13 +3,9 @@ import { Transform, Type, TransformFnParams } from 'class-transformer';
 import { IsBoolean, IsEnum, IsInt, IsOptional, IsString, Min } from 'class-validator';
 import { PersonalArticleLinkContext } from '../entities/personal-article-link.entity';
 
-// Reads the raw value from `obj[key]` rather than the pipeline-provided `value`. The global
-// ValidationPipe's `enableImplicitConversion` runs class-transformer's own Boolean(value) coercion
-// on the property BEFORE this @Transform executes (design:type Boolean is reflected for the field),
-// and Boolean('false') is `true` — any non-empty string is truthy. Reading obj[key] bypasses that
-// already-corrupted `value` and parses the original query string directly.
+// Read the raw query string so "false" is not coerced to true before validation.
 const toBoolean = ({ obj, key }: TransformFnParams): boolean | undefined => {
-  const raw = obj[key];
+  const raw = (obj as Record<string, unknown>)[key];
   if (raw === undefined) return undefined;
   if (typeof raw === 'boolean') return raw;
   return raw === 'true';

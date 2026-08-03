@@ -10,7 +10,7 @@ import { UserSourcePreferenceService } from '../../sources/services/user-source-
 import { ContentStreamQueryService } from '../../taxonomy/services/content-stream-query.service';
 import { TechnologyInterestKind } from '../../taxonomy/entities/technology-interest.entity';
 import { OnboardingDto } from '../dto/onboarding.dto';
-import { User, UserLevel, UserRole } from '../entities/user.entity';
+import { User, UserLevel } from '../entities/user.entity';
 import { OnboardingService } from './onboarding.service';
 import { UserCommandService } from './user-command.service';
 import { UserQueryService } from './user-query.service';
@@ -87,9 +87,7 @@ function validateLegacyUserManifestEntry(entry: LegacyUserManifestEntry): void {
   };
 
   if (!entry.email || typeof entry.email !== 'string') fail('email is required');
-  if (!Object.values(UserRole).includes(entry.role as UserRole)) {
-    fail(`role "${entry.role}" is not a valid UserRole`);
-  }
+  if (entry.role !== 'user') fail('role must be "user"');
   if (!entry.timezone || typeof entry.timezone !== 'string') fail('timezone is required');
   if (!Object.values(UserLevel).includes(entry.level as UserLevel)) {
     fail(`level "${entry.level}" is not a valid UserLevel`);
@@ -159,6 +157,7 @@ export class LegacyUserSyncService {
 
     const contentStreamIds = await this.resolveContentStreamIds(entry.contentStreamKeys);
     const onboardingDto: OnboardingDto = {
+      timezone: user.timezone ?? entry.timezone,
       level: entry.level as UserLevel,
       technologyInterests: entry.technologyInterests.map((selection) => ({
         kind: selection.kind as TechnologyInterestKind,
@@ -226,7 +225,6 @@ export class LegacyUserSyncService {
       // Hardcoded rather than read from entry.role (validated in validateLegacyUserManifestEntry
       // but deliberately not consumed here): editing the manifest file alone must never be able to
       // grant admin. Only AdminBootstrapService's own ADMIN_EMAIL/ADMIN_PASSWORD path can do that.
-      role: UserRole.USER,
       emailVerifiedAt: new Date(),
     });
     this.logger.info('Legacy user created', { userId: created.id });

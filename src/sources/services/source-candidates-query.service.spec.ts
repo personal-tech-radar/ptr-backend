@@ -45,10 +45,10 @@ describe('SourceCandidatesQueryService', () => {
     it('filters by status when provided', async () => {
       mockQueryBuilder.getManyAndCount.mockResolvedValue([[], 0]);
 
-      await service.findAll({ status: SourceCandidateStatus.NEEDS_REVIEW, page: 2, limit: 10 });
+      await service.findAll({ status: SourceCandidateStatus.REJECTED, page: 2, limit: 10 });
 
       expect(mockQueryBuilder.andWhere).toHaveBeenCalledWith('candidate.status = :status', {
-        status: SourceCandidateStatus.NEEDS_REVIEW,
+        status: SourceCandidateStatus.REJECTED,
       });
       expect(mockQueryBuilder.skip).toHaveBeenCalledWith(10);
       expect(mockQueryBuilder.take).toHaveBeenCalledWith(10);

@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository, UpdateResult } from 'typeorm';
 import { PaginatedResponseDto } from '../../common/dto/paginated-response.dto';
 import { LoggingService } from '../../common/logging/logging.service';
 import { UserSourcePreferenceService } from '../../sources/services/user-source-preference.service';
@@ -16,6 +16,7 @@ export class ArticleFeedbackService {
   constructor(
     @InjectRepository(ArticleFeedback)
     private readonly feedbackRepo: Repository<ArticleFeedback>,
+    private readonly dataSource: DataSource,
     private readonly articlesService: ArticlesService,
     private readonly userSourcePreferenceService: UserSourcePreferenceService,
   ) {}
@@ -27,33 +28,30 @@ export class ArticleFeedbackService {
   ): Promise<ArticleFeedback> {
     const article = await this.articlesService.findOne(articleId);
 
-    const existing = await this.feedbackRepo.findOne({
-      where: { articleId, userId },
+    const result = await this.dataSource.transaction(async (manager) => {
+      const repo = manager.getRepository(ArticleFeedback);
+      const existing = await repo.findOne({
+        where: { articleId, userId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      const previousType = existing?.type ?? null;
+      const feedback = existing ?? repo.create({ articleId, userId, type });
+      feedback.type = type;
+      const saved = await repo.save(feedback);
+      await this.userSourcePreferenceService.applyFeedback(
+        userId,
+        article.sourceId,
+        type,
+        previousType,
+        manager,
+      );
+      return saved;
     });
-    let result: ArticleFeedback;
-    let previousType: ArticleFeedbackType | null = null;
-    if (existing) {
-      previousType = existing.type;
-      existing.type = type;
-      result = await this.feedbackRepo.save(existing);
-      this.logger.info('Article feedback updated', { articleId, userId, type });
-    } else {
-      result = await this.feedbackRepo.save(this.feedbackRepo.create({ articleId, userId, type }));
-      this.logger.info('Article feedback created', { articleId, userId, type });
-    }
-
-    await this.userSourcePreferenceService.applyFeedback(
-      userId,
-      article.sourceId,
-      type,
-      previousType,
-    );
+    this.logger.info('Article feedback stored', { articleId, userId, type });
     return result;
   }
 
-  // Flattened, admin-only listing across all users' article feedback. userId is a real FK to
-  // User (see ArticleFeedback entity, MVP3 Phase 11) — the join is a declared relation, and
-  // userEmail is guaranteed to resolve for every row.
+  // Admin listing uses declared article and user relations.
   async findAllAdmin(
     query: AdminQueryArticleFeedbackDto,
   ): Promise<PaginatedResponseDto<AdminArticleFeedbackResponseDto>> {
@@ -90,21 +88,13 @@ export class ArticleFeedbackService {
     };
   }
 
-  // One-off MVP3 Phase 11 data migration: retags every article_feedbacks row still holding a
-  // legacy userId literal (fromUserId) to the new real per-user identity (toUserId). Idempotent
-  // across two scenarios: (1) no matching rows left — a normal no-op update, and (2) the
-  // LinkArticleFeedbackAndUserSourcePreferencesToUsers migration has already converted userId to
-  // a uuid column — the legacy string literal can no longer match anything, and Postgres rejects
-  // it at bind time (22P02) before any row could be touched, which we treat the same as "0 rows
-  // matched" rather than an error. Must run before that migration converts userId to a uuid FK
-  // column, which fails loudly if any row still holds a non-uuid string.
-  // See LegacyUserSyncService (src/users/services/legacy-user-sync.service.ts), the sole caller.
+  // Retag legacy feedback before the userId column becomes a UUID foreign key.
   async retagLegacyUser(fromUserId: string, toUserId: string): Promise<number> {
-    let result;
+    let result: UpdateResult;
     try {
       result = await this.feedbackRepo.update({ userId: fromUserId }, { userId: toUserId });
-    } catch (err) {
-      if (err?.code === '22P02') {
+    } catch (err: unknown) {
+      if (this.hasErrorCode(err, '22P02')) {
         this.logger.info(
           'Skipped legacy article feedback retag — userId column is no longer varchar, legacy literal cannot match',
           { fromUserId, toUserId },
@@ -122,6 +112,10 @@ export class ArticleFeedbackService {
       });
     }
     return affected;
+  }
+
+  private hasErrorCode(error: unknown, code: string): boolean {
+    return typeof error === 'object' && error !== null && 'code' in error && error.code === code;
   }
 
   private toAdminResponseDto(entity: ArticleFeedback): AdminArticleFeedbackResponseDto {

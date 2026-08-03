@@ -1,12 +1,22 @@
+/* eslint-disable @typescript-eslint/require-await, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return */
 import { BadRequestException } from '@nestjs/common';
 import { PUBLIC_FEED_MIN_QUALITY_SCORE, PublicFeedQueryService } from './public-feed-query.service';
 import { ArticleStatus } from '../../articles/entities/article.entity';
 import { QueryPublicFeedDto } from '../dto/query-public-feed.dto';
+import { ArticleAnalysis } from '../../ai-analysis/entities/article-analysis.entity';
 
 // Chainable TypeORM QueryBuilder mock — mirrors FeedQueryService's spec helper.
 function buildQb(result: unknown[] = [], total = 0) {
   const qb: Record<string, jest.Mock> = {};
-  for (const method of ['innerJoinAndSelect', 'where', 'andWhere', 'orderBy', 'skip', 'take']) {
+  for (const method of [
+    'innerJoinAndSelect',
+    'where',
+    'andWhere',
+    'orderBy',
+    'addOrderBy',
+    'skip',
+    'take',
+  ]) {
     qb[method] = jest.fn().mockReturnValue(qb);
   }
   qb.getManyAndCount = jest.fn().mockResolvedValue([result, total || result.length]);
@@ -43,6 +53,18 @@ describe('PublicFeedQueryService', () => {
     service = new PublicFeedQueryService(
       mockAnalysisRepo as any,
       mockContentStreamQueryService as any,
+      {
+        mapMany: jest.fn(async (rows: ArticleAnalysis[]) =>
+          rows.map((row) => ({
+            id: row.articleId,
+            title: row.article.title,
+            originalUrl: row.article.url,
+            publicRedirectUrl: `/go/articles/${row.articleId}`,
+            source: { id: row.article.sourceId, name: row.article.source.name },
+            publishedAt: row.article.publishedAt,
+          })),
+        ),
+      } as any,
     );
   });
 
@@ -56,14 +78,16 @@ describe('PublicFeedQueryService', () => {
 
       expect(qb.skip).toHaveBeenCalledWith(20);
       expect(qb.take).toHaveBeenCalledWith(20);
-      expect(qb.orderBy).toHaveBeenCalledWith('a.publishedAt', 'DESC');
+      expect(qb.orderBy).toHaveBeenCalledWith('a.publishedAt', 'DESC', 'NULLS LAST');
+      expect(qb.addOrderBy).toHaveBeenNthCalledWith(1, 'a.createdAt', 'DESC');
+      expect(qb.addOrderBy).toHaveBeenNthCalledWith(2, 'a.id', 'DESC');
       expect(result.data).toHaveLength(2);
-      expect(result.data[0]).toEqual({
+      expect(result.data[0]).toMatchObject({
+        id: 'a1',
         articleId: 'a1',
         title: 'Title a1',
-        url: 'https://example.com/a1',
-        sourceId: 'source-1',
-        sourceName: 'Source',
+        originalUrl: 'https://example.com/a1',
+        publicRedirectUrl: '/go/articles/a1',
         publishedAt: analyses[0].article.publishedAt,
       });
       expect(result.meta).toEqual({ total: 42, page: 2, limit: 20, totalPages: 3 });

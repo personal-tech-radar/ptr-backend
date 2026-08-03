@@ -4,7 +4,7 @@ describe('FeedCacheInvalidationService', () => {
   let service: FeedCacheInvalidationService;
 
   const mockRedisService = {
-    delByPattern: jest.fn(),
+    incrementUser: jest.fn(),
   };
 
   beforeEach(() => {
@@ -12,11 +12,8 @@ describe('FeedCacheInvalidationService', () => {
     service = new FeedCacheInvalidationService(mockRedisService as any);
   });
 
-  it('delegates to RedisService.delByPattern with the feed:{userId}:* prefix', async () => {
-    mockRedisService.delByPattern.mockResolvedValue(3);
-
+  it('increments the user cache version', async () => {
     await service.invalidateForUser('user-1');
-
-    expect(mockRedisService.delByPattern).toHaveBeenCalledWith('feed:user-1:*');
+    expect(mockRedisService.incrementUser).toHaveBeenCalledWith('user-1');
   });
 });

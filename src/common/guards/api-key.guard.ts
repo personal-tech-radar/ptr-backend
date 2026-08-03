@@ -20,7 +20,10 @@ export class ApiKeyGuard implements CanActivate {
     }
 
     if (!providedKey || providedKey !== validKey) {
-      throw new UnauthorizedException({ message: 'Invalid or missing API key.', errorCode: 'INVALID_API_KEY' });
+      throw new UnauthorizedException({
+        message: 'Invalid or missing API key.',
+        errorCode: 'INVALID_API_KEY',
+      });
     }
 
     return true;
