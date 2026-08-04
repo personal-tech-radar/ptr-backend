@@ -37,3 +37,11 @@ All inserts use stable natural keys and conflict-safe relationship creation insi
 migration transaction. Existing user-controlled profile values are preserved. The conservative
 `down` migration leaves shared business data intact because it cannot prove that later operational
 records do not reference it; it never removes articles, analyses, digests, interactions, or users.
+
+## Legacy placeholder compatibility
+
+The user-identity migration retags historical `default_user` feedback and source-preference rows
+before converting their columns to UUID foreign keys. If the legacy user is absent, it creates a
+non-authenticating placeholder with the password-setup sentinel; the later bootstrap migration
+completes its profile and catalog links. A separate legacy-user sync is not required before the
+one-shot migration container runs.

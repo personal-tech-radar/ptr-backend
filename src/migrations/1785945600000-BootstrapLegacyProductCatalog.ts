@@ -42,9 +42,9 @@ export class BootstrapLegacyProductCatalog1785945600000 implements MigrationInte
     const email = user.email.trim().toLowerCase();
 
     const [existingUser] = (await queryRunner.query(
-      `SELECT "id" FROM "users" WHERE lower("email") = $1 LIMIT 1`,
+      `SELECT "id", "passwordHash" FROM "users" WHERE lower("email") = $1 LIMIT 1`,
       [email],
-    )) as { id: string }[];
+    )) as { id: string; passwordHash: string }[];
     if (!existingUser) {
       await queryRunner.query(
         `INSERT INTO "users" (
@@ -59,6 +59,24 @@ export class BootstrapLegacyProductCatalog1785945600000 implements MigrationInte
           user.level,
           user.dailyDigestEnabled,
           user.weeklyDigestEnabled,
+        ],
+      );
+    } else if (existingUser.passwordHash === DISABLED_PASSWORD_SENTINEL) {
+      // Complete the placeholder created by the legacy-user retag migration.
+      await queryRunner.query(
+        `UPDATE "users" SET
+          "displayName" = 'Miter Sidorov', "timezone" = $1, "githubUrl" = $2, "level" = $3,
+          "dailyDigestEnabled" = $4, "weeklyDigestEnabled" = $5,
+          "emailVerifiedAt" = COALESCE("emailVerifiedAt", now()),
+          "onboardingCompletedAt" = COALESCE("onboardingCompletedAt", now())
+         WHERE "id" = $6`,
+        [
+          user.timezone,
+          user.githubUrl,
+          user.level,
+          user.dailyDigestEnabled,
+          user.weeklyDigestEnabled,
+          existingUser.id,
         ],
       );
     }

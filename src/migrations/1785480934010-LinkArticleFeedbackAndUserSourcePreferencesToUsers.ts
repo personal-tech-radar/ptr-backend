@@ -1,11 +1,6 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
-// DEPLOYMENT ORDERING (MVP3 Phase 11): this migration will FAIL LOUDLY — "invalid input syntax
-// for type uuid" — if any article_feedbacks/user_source_preferences row still holds the legacy
-// literal string 'default_user' in its userId column. Run `npm run seed:legacy-user:sync` (or
-// `seed:legacy-user:sync:prod`) FIRST — it retags every such row onto the real legacy user's uuid
-// before this migration ever runs. That retag is ordinary idempotent application code, not part
-// of this migration, since it's a pure data change with no accompanying entity diff.
+// Retag the historical default_user sentinel before converting both columns to UUID.
 //
 // Deliberately hand-adjusted from the raw `migration:generate` output (see typeorm-migration-
 // workflow skill — normally never done): TypeORM's CLI cannot produce a `USING` cast for an
@@ -24,6 +19,41 @@ export class LinkArticleFeedbackAndUserSourcePreferencesToUsers1785480934010 imp
   name = 'LinkArticleFeedbackAndUserSourcePreferencesToUsers1785480934010';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
+    const [legacyRows] = (await queryRunner.query(
+      `SELECT EXISTS (
+        SELECT 1 FROM "user_source_preferences" WHERE "userId" = 'default_user'
+        UNION ALL
+        SELECT 1 FROM "article_feedbacks" WHERE "userId" = 'default_user'
+      ) AS "exists"`,
+    )) as { exists: boolean | string }[];
+
+    if (legacyRows?.exists === true || legacyRows?.exists === 'true') {
+      const [existingUser] = (await queryRunner.query(
+        `SELECT "id" FROM "users" WHERE lower("email") = 'miter.sidorov@gmail.com' LIMIT 1`,
+      )) as { id: string }[];
+
+      let legacyUserId = existingUser?.id;
+      if (!legacyUserId) {
+        const [createdUser] = (await queryRunner.query(
+          `INSERT INTO "users" (
+            "email", "passwordHash", "displayName", "timezone", "role",
+            "dailyDigestEnabled", "weeklyDigestEnabled"
+          ) VALUES ('miter.sidorov@gmail.com', '!password-setup-required!', 'Miter Sidorov', 'UTC', 'user', false, false)
+          RETURNING "id"`,
+        )) as { id: string }[];
+        legacyUserId = createdUser.id;
+      }
+
+      await queryRunner.query(
+        `UPDATE "user_source_preferences" SET "userId" = $1 WHERE "userId" = 'default_user'`,
+        [legacyUserId],
+      );
+      await queryRunner.query(
+        `UPDATE "article_feedbacks" SET "userId" = $1 WHERE "userId" = 'default_user'`,
+        [legacyUserId],
+      );
+    }
+
     await queryRunner.query(
       `ALTER TABLE "user_source_preferences" ALTER COLUMN "userId" TYPE uuid USING "userId"::uuid`,
     );
