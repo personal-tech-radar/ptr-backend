@@ -50,7 +50,8 @@ export class HttpService {
         const response = await fetch(url, fetchOptions);
         clearTimeout(timeoutId);
 
-        const responseData = responseType === 'text' ? await response.text() : await response.json();
+        const responseData =
+          responseType === 'text' ? await response.text() : await response.json();
 
         const result: HttpResponse<T> = {
           status: response.status,
@@ -99,15 +100,27 @@ export class HttpService {
     return this.request<string>({ method: 'GET', url, headers, responseType: 'text' });
   }
 
-  async post<T = any>(url: string, body: any, headers?: Record<string, string>): Promise<HttpResponse<T>> {
+  async post<T = any>(
+    url: string,
+    body: any,
+    headers?: Record<string, string>,
+  ): Promise<HttpResponse<T>> {
     return this.request<T>({ method: 'POST', url, body, headers });
   }
 
-  async put<T = any>(url: string, body: any, headers?: Record<string, string>): Promise<HttpResponse<T>> {
+  async put<T = any>(
+    url: string,
+    body: any,
+    headers?: Record<string, string>,
+  ): Promise<HttpResponse<T>> {
     return this.request<T>({ method: 'PUT', url, body, headers });
   }
 
-  async patch<T = any>(url: string, body: any, headers?: Record<string, string>): Promise<HttpResponse<T>> {
+  async patch<T = any>(
+    url: string,
+    body: any,
+    headers?: Record<string, string>,
+  ): Promise<HttpResponse<T>> {
     return this.request<T>({ method: 'PATCH', url, body, headers });
   }
 

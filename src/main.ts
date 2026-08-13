@@ -8,10 +8,10 @@ import { loadDockerSecrets } from './common/util/secrets.util';
 loadDockerSecrets();
 
 const getSwaggerServerUrl = (): string => {
-  const port = process.env.PORT || '3000';
-  if (process.env.NODE_ENV === 'production') {
-    return process.env.SWAGGER_SERVER_URL + '/';
+  if (process.env.SWAGGER_SERVER_URL) {
+    return `${process.env.SWAGGER_SERVER_URL.replace(/\/$/, '')}/`;
   }
+  const port = process.env.PORT || '3000';
   return `http://localhost:${port}`;
 };
 
@@ -50,7 +50,30 @@ async function bootstrap() {
     .setDescription('NestJS REST API')
     .setVersion('1.0.0')
     .addServer(getSwaggerServerUrl())
+    .addTag('Health', 'Service health and readiness')
+    .addTag('Auth', 'Public registration and user authentication')
+    .addTag('Public Content', 'Public article and feed access')
+    .addTag('Redirects', 'Public and personal article redirects')
+    .addTag('Email Actions', 'Opaque-link actions and digest pages opened from email')
+    .addTag('Users', 'Authenticated user profile, onboarding, feedback, and source discovery')
+    .addTag('Taxonomy', 'Authenticated user taxonomy and stream catalog access')
+    .addTag('Feed', 'Authenticated personalized feed')
+    .addTag('Saved Articles', 'Authenticated saved-article management')
+    .addTag('Admin - Auth', 'Administrator authentication')
+    .addTag('Admin - Admins', 'Administrator management')
+    .addTag('Admin - Users', 'User administration')
+    .addTag('Admin - Articles', 'Article administration')
+    .addTag('Admin - Sources', 'Source, candidate, preference, and coverage administration')
+    .addTag('Admin - Taxonomy', 'Taxonomy and stream administration')
+    .addTag('Admin - Digests', 'Digest administration and preview delivery')
+    .addTag('Admin - Jobs', 'Queue operations')
+    .addTag('Admin - User Actions', 'User feedback, saves, and opens administration')
     .addApiKey({ type: 'apiKey', name: 'X-API-KEY', in: 'header' }, 'api-key')
+    .addBearerAuth({ type: 'http', scheme: 'bearer', bearerFormat: 'JWT' }, 'bearer')
+    .addBearerAuth(
+      { type: 'http', scheme: 'bearer', bearerFormat: 'JWT', description: 'Administrator JWT' },
+      'administrator-bearer',
+    )
     .build();
 
   const document = SwaggerModule.createDocument(app, config);

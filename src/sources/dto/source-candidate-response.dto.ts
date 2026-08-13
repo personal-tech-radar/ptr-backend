@@ -16,9 +16,6 @@ export class SourceCandidateResponseDto {
   domain: string;
 
   @ApiPropertyOptional()
-  discoveredFromArticleId: string | null;
-
-  @ApiPropertyOptional()
   seedKey: string | null;
 
   @ApiProperty({ enum: SourceCandidateStatus })
@@ -32,6 +29,12 @@ export class SourceCandidateResponseDto {
 
   @ApiPropertyOptional()
   validationError: string | null;
+
+  @ApiPropertyOptional()
+  rejectionCode: string | null;
+
+  @ApiPropertyOptional()
+  activatedSourceId: string | null;
 
   @ApiPropertyOptional()
   lastValidatedAt: Date | null;
@@ -54,12 +57,13 @@ export function toSourceCandidateResponseDto(
   dto.id = candidate.id;
   dto.normalizedUrl = candidate.normalizedUrl;
   dto.domain = candidate.domain;
-  dto.discoveredFromArticleId = candidate.discoveredFromArticleId;
   dto.seedKey = candidate.seedKey;
   dto.status = candidate.status;
   dto.detectedType = candidate.detectedType;
   dto.proposedConfig = candidate.proposedConfig;
   dto.validationError = candidate.validationError;
+  dto.rejectionCode = candidate.rejectionCode;
+  dto.activatedSourceId = candidate.activatedSourceId;
   dto.lastValidatedAt = candidate.lastValidatedAt;
   dto.createdAt = candidate.createdAt;
   dto.updatedAt = candidate.updatedAt;

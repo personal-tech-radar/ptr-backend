@@ -1,0 +1,4 @@
+interface:
+  display_name: "Test Backend Service"
+  short_description: "Write focused service and guard tests"
+  default_prompt: "Use $test-backend-service to add focused tests for this backend service or guard."

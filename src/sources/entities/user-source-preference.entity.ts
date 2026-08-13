@@ -8,6 +8,7 @@ import {
   Unique,
   UpdateDateColumn,
 } from 'typeorm';
+import { User } from '../../users/entities/user.entity';
 import { Source } from './source.entity';
 
 @Entity('user_source_preferences')
@@ -16,8 +17,12 @@ export class UserSourcePreference {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ type: 'varchar' })
+  @Column({ type: 'uuid' })
   userId: string;
+
+  @ManyToOne(() => User, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'userId' })
+  user: User;
 
   @Column({ type: 'uuid' })
   sourceId: string;
@@ -31,6 +36,12 @@ export class UserSourcePreference {
 
   @Column({ type: 'int', default: 0 })
   notUsefulCount: number;
+
+  @Column({ type: 'int', default: 0 })
+  savedCount: number;
+
+  @Column({ type: 'int', default: 0 })
+  openedCount: number;
 
   @Column({ type: 'decimal', precision: 4, scale: 2, default: 0 })
   feedbackAdjustment: number;

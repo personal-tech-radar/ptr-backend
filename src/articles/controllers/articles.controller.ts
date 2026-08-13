@@ -5,60 +5,87 @@ import {
   HttpCode,
   HttpStatus,
   Param,
+  ParseUUIDPipe,
   Post,
   Query,
   UseGuards,
 } from '@nestjs/common';
 import {
+  ApiBadRequestResponse,
+  ApiBearerAuth,
   ApiSecurity,
   ApiOperation,
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
+import { CurrentUser } from '../../auth/decorators/current-user.decorator';
+import type { CurrentUserPayload } from '../../auth/decorators/current-user.decorator';
+import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { ApiKeyGuard } from '../../common/guards/api-key.guard';
 import { PaginatedResponseDto } from '../../common/dto/paginated-response.dto';
+import { ErrorResponseDto } from '../../common/error/error-response.dto';
 import { ArticleFeedbackResponseDto } from '../dto/article-feedback-response.dto';
 import { ArticleListQueryDto } from '../dto/article-list-query.dto';
-import { ArticleResponseDto } from '../dto/article-response.dto';
 import { CreateArticleFeedbackDto } from '../dto/create-article-feedback.dto';
 import { ArticleFeedbackService } from '../services/article-feedback.service';
-import { ArticlesService } from '../services/articles.service';
+import { PublicArticlesService } from '../services/public-articles.service';
+import { PublicArticleResponseDto } from '../dto/public-article-response.dto';
 
-@ApiTags('Articles')
-@ApiSecurity('api-key')
-@UseGuards(ApiKeyGuard)
+@ApiTags('Public Content')
 @Controller('articles')
 export class ArticlesController {
   constructor(
-    private readonly articlesService: ArticlesService,
+    private readonly publicArticlesService: PublicArticlesService,
     private readonly articleFeedbackService: ArticleFeedbackService,
   ) {}
 
   @Get()
-  @ApiOperation({ summary: 'List articles with pagination and filtering' })
+  @UseGuards(ApiKeyGuard)
+  @ApiSecurity('api-key')
+  @ApiOperation({
+    summary: 'List public articles with pagination and filtering',
+    description:
+      'API-key content endpoint returning globally analyzed public article data, taxonomy, streams, source information, redirect URL, and public/personal click counters without personalized state or internal processing fields.',
+  })
   @ApiResponse({ status: 200, type: PaginatedResponseDto })
   findAll(
     @Query() query: ArticleListQueryDto,
-  ): Promise<PaginatedResponseDto<ArticleResponseDto>> {
-    return this.articlesService.findAll(query);
+  ): Promise<PaginatedResponseDto<PublicArticleResponseDto>> {
+    return this.publicArticlesService.findAll(query);
   }
 
   @Get(':id')
-  @ApiOperation({ summary: 'Get a single article by ID' })
-  @ApiResponse({ status: 200, type: ArticleResponseDto })
-  findOne(@Param('id') id: string): Promise<ArticleResponseDto> {
-    return this.articlesService.findOne(id);
+  @UseGuards(ApiKeyGuard)
+  @ApiSecurity('api-key')
+  @ApiOperation({
+    summary: 'Get one public article by ID',
+    description:
+      'Returns renderable public metadata for an eligible globally analyzed article. Internal queue, validation, raw analysis, saved, feedback, and user-specific scoring fields are excluded.',
+  })
+  @ApiResponse({ status: 200, type: PublicArticleResponseDto })
+  findOne(@Param('id') id: string): Promise<PublicArticleResponseDto> {
+    return this.publicArticlesService.findOne(id);
   }
 
   @Post(':id/feedback')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Submit or update feedback for an article' })
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Submit or replace article feedback',
+    description:
+      'Stores the authenticated user’s current useful or not_useful value. Repeating the same value is idempotent; submitting the other value replaces it and updates personal/global source aggregates. Feedback cannot be deleted.',
+  })
   @ApiResponse({ status: 200, type: ArticleFeedbackResponseDto })
+  @ApiBadRequestResponse({ type: ErrorResponseDto, description: 'Malformed article UUID or body' })
+  @ApiResponse({ status: 401, type: ErrorResponseDto })
+  @ApiResponse({ status: 403, type: ErrorResponseDto })
   @ApiResponse({ status: 404, description: 'Article not found' })
   addFeedback(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @Body() dto: CreateArticleFeedbackDto,
+    @CurrentUser() user: CurrentUserPayload,
   ): Promise<ArticleFeedbackResponseDto> {
-    return this.articleFeedbackService.upsertFeedback(id, dto.type);
+    return this.articleFeedbackService.upsertFeedback(id, dto.type, user.id);
   }
 }

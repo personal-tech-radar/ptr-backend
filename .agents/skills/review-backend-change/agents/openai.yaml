@@ -1,0 +1,4 @@
+interface:
+  display_name: "Review Backend Change"
+  short_description: "Review backend diffs against project rules"
+  default_prompt: "Use $review-backend-change to review this backend change for concrete violations."

@@ -7,49 +7,34 @@ export interface DigestEmailItem {
   sourceName: string;
   shortSummary: string;
   whyItMatters?: string;
-  url: string;
+  trackingUrl: string;
+  originalUrl: string;
+  openUrl: string;
+  usefulUrl: string;
+  notUsefulUrl: string;
   matchedInterests?: string[];
-  articleId?: string;
+  saveUrl?: string;
 }
 
-const FONT_URL =
-  'https://fonts.googleapis.com/css2?family=Google+Sans+Code:ital,wght@0,400;0,500;0,700;1,400&display=swap';
+export interface DigestEmailStreamLink {
+  name: string;
+  url: string;
+}
 
 const FONT_STACK =
-  "'Google Sans Code',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,monospace";
-
-const STYLES = {
-  body: `font-family:${FONT_STACK};max-width:640px;margin:0 auto;padding:0;background:#ffffff;color:#111827;`,
-  header:
-    'display:flex;align-items:center;padding:28px 32px 20px;border-bottom:2px solid #f3f4f6;margin-bottom:28px;',
-  brand: 'margin-left:12px;font-size:15px;font-weight:700;color:#111827;letter-spacing:-0.01em;',
-  content: 'padding:0 32px 32px;',
-  subject:
-    'font-size:13px;font-weight:500;color:#6b7280;text-transform:uppercase;letter-spacing:0.06em;margin:0 0 8px 0;',
-  intro:
-    'font-size:14px;color:#374151;margin:0 0 32px 0;line-height:1.7;border-bottom:1px solid #f3f4f6;padding-bottom:24px;',
-  item: 'margin-bottom:28px;padding-bottom:24px;border-bottom:1px solid #f3f4f6;',
-  itemTitle: 'margin:0 0 3px 0;font-size:15px;font-weight:600;color:#111827;',
-  itemSource:
-    'margin:0 0 10px 0;font-size:11px;color:#9ca3af;text-transform:uppercase;letter-spacing:0.05em;',
-  itemSummary: 'margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.6;',
-  itemWhy: 'margin:0 0 8px 0;font-size:13px;color:#6b7280;line-height:1.5;',
-  interests: 'font-size:12px;color:#9ca3af;margin:0 0 8px 0;',
-  link: 'font-size:12px;color:#2563eb;text-decoration:none;word-break:break-all;',
-  feedbackRow: 'margin-top:10px;',
-  feedbackBtn:
-    'display:inline-block;padding:4px 12px;border-radius:4px;font-size:12px;font-weight:500;text-decoration:none;margin-right:8px;',
-  feedbackUseful: 'background:#f0fdf4;color:#166534;border:1px solid #bbf7d0;',
-  feedbackNot: 'background:#fef2f2;color:#991b1b;border:1px solid #fecaca;',
-  stats:
-    'margin-top:24px;padding:16px;background:#f9fafb;border-radius:8px;border:1px solid #f3f4f6;',
-  statsLabel:
-    'font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.06em;margin:0 0 8px 0;',
-  statsRow: 'font-size:12px;color:#6b7280;margin:4px 0;',
-  statsNum: 'font-weight:600;color:#374151;',
-  footer: 'padding:20px 32px 28px;border-top:1px solid #f3f4f6;text-align:center;',
-  footerText: 'font-size:11px;color:#d1d5db;margin:0;',
-  footerLink: 'color:#9ca3af;text-decoration:none;',
+  "'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,'Liberation Mono','Courier New',monospace";
+const COLORS = {
+  background: '#1E1F22',
+  surface: '#2D2E32',
+  line: '#3A3B40',
+  text: '#BCBEC3',
+  muted: '#8E8F94',
+  steel: '#A9B7C5',
+  blue: '#57A8F5',
+  green: '#6AAB73',
+  orange: '#CE8E6D',
+  purple: '#C87DBB',
+  cyan: '#2DBBC5',
 };
 
 @Injectable()
@@ -59,7 +44,9 @@ export class EmailTemplateService {
     intro: string,
     items: DigestEmailItem[],
     stats?: DigestStats,
+    streamLinks: DigestEmailStreamLink[] = [],
   ): string {
+    const cadence = /weekly/i.test(subject) ? 'Weekly digest' : 'Daily digest';
     const renderedItems = items.map((item) => this.renderItemHtml(item)).join('');
 
     return `<!DOCTYPE html>
@@ -67,22 +54,32 @@ export class EmailTemplateService {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <meta name="color-scheme" content="dark">
+  <meta name="supported-color-schemes" content="dark">
   <title>${escapeHtml(subject)}</title>
-  <link href="${FONT_URL}" rel="stylesheet">
+  <style>
+    body { margin:0; padding:0; background:${COLORS.background}; color:${COLORS.text}; font-family:${FONT_STACK}; }
+    a { color:${COLORS.blue}; }
+  </style>
 </head>
-<body style="${STYLES.body}">
-  <div style="${STYLES.header}">
-    <span style="font-size:32px;line-height:1;">📡</span>
-    <span style="${STYLES.brand}">Personal Tech Radar</span>
-  </div>
-  <div style="${STYLES.content}">
-    <p style="${STYLES.subject}">${escapeHtml(subject)}</p>
-    <p style="${STYLES.intro}">${escapeHtml(intro)}</p>
-    ${renderedItems}
-    ${stats ? this.renderStatsHtml(stats) : ''}
-  </div>
-  <div style="${STYLES.footer}">
-    <p style="${STYLES.footerText}">Personal Tech Radar &nbsp;·&nbsp; <a href="https://personalradar.dev" style="${STYLES.footerLink}">personalradar.dev</a></p>
+<body style="margin:0;padding:0;background:${COLORS.background};color:${COLORS.text};font-family:${FONT_STACK};">
+  <div style="background:${COLORS.background};color:${COLORS.text};padding:40px 16px;box-sizing:border-box;min-height:100vh;">
+    <div style="max-width:640px;margin:0 auto;">
+      <div style="font-size:22px;font-weight:700;color:${COLORS.text};letter-spacing:-0.01em;margin-bottom:8px;">Personal Tech Radar<span>_</span></div>
+      <div style="font-size:12px;color:${COLORS.cyan};margin-bottom:28px;">${cadence}</div>
+      <div style="border-top:1px dashed ${COLORS.line};margin-bottom:28px;"></div>
+
+      <p style="font-size:13.5px;line-height:1.85;color:${COLORS.muted};margin:0 0 36px;">${escapeHtml(intro)}</p>
+      ${this.renderStreamLinksHtml(streamLinks)}
+      ${renderedItems}
+      ${stats ? this.renderStatsHtml(stats) : ''}
+
+      <div style="border-top:1px dashed ${COLORS.line};margin:8px 0 28px;"></div>
+      <div style="font-size:11.5px;color:${COLORS.muted};text-align:center;line-height:1.8;">
+        <span>You receive this because your radar is configured for a ${cadence.toLowerCase()}.</span><br>
+        <span>© 2026 Personal Tech Radar</span>
+      </div>
+    </div>
   </div>
 </body>
 </html>`;
@@ -93,85 +90,100 @@ export class EmailTemplateService {
     intro: string,
     items: DigestEmailItem[],
     stats?: DigestStats,
+    streamLinks: DigestEmailStreamLink[] = [],
   ): string {
     const lines: string[] = ['Personal Tech Radar', subject, '', intro, ''];
+    if (streamLinks.length > 0) {
+      lines.push('Browse by stream');
+      for (const stream of streamLinks) lines.push(`${stream.name}: ${stream.url}`);
+      lines.push('');
+    }
     for (const item of items) {
       lines.push(`${item.position}. ${item.title}`, item.sourceName, item.shortSummary);
       if (item.whyItMatters) lines.push(item.whyItMatters);
+      if (item.matchedInterests?.length) lines.push(`Topics: ${item.matchedInterests.join(', ')}`);
       lines.push(
-        item.matchedInterests?.length ? item.matchedInterests.join(', ') : '',
-        item.url,
-        '',
+        `Publication: ${item.trackingUrl}`,
+        `Useful: ${item.usefulUrl}`,
+        `Not useful: ${item.notUsefulUrl}`,
       );
+      if (item.saveUrl) lines.push(`Save: ${item.saveUrl}`);
+      lines.push('');
     }
     if (stats) {
       const label = stats.windowHours >= 168 ? 'Last 7 days' : `Last ${stats.windowHours}h`;
       lines.push(
-        `── Pipeline · ${label} ──`,
+        `── Your radar · ${label} ──`,
+        `${stats.totalSourcesActive} active sources`,
+        `${stats.publicationsProcessed} articles collected`,
+        `${stats.articlesAnalyzed} articles analyzed`,
+        `${stats.publicationsIncluded} selected for your radar`,
         `${stats.articlesIngested} ingested · ${stats.articlesPassedPreanalysis} passed pre-analysis · ${stats.articlesAnalyzed} fully analyzed`,
         `DB: ${stats.totalArticlesInDb} total articles · ${stats.totalSourcesActive} active sources`,
-        `Sources: ${stats.feedSourcesActive} feed active · ${stats.webSourcesActive} web active · ${stats.sourceCandidatesPending} candidates pending`,
+        `Sources: ${stats.feedSourcesActive} feed active · ${stats.webSourcesActive} web active · ${stats.degradedSources} degraded · ${stats.disabledSources} disabled · ${stats.sourceCandidatesPending} candidates pending`,
         '',
       );
     }
-    lines.push('', 'Personal Tech Radar · personalradar.dev');
+    lines.push('', 'Personal Tech Radar');
     return lines.join('\n');
   }
 
   private renderItemHtml(item: DigestEmailItem): string {
-    const feedbackHtml = this.renderFeedbackButtons(item);
     return `
-  <div style="${STYLES.item}">
-    <p style="${STYLES.itemTitle}">${item.position}. ${escapeHtml(item.title)}</p>
-    <p style="${STYLES.itemSource}">${escapeHtml(item.sourceName)}</p>
-    <p style="${STYLES.itemSummary}">${escapeHtml(item.shortSummary)}</p>
-    ${item.whyItMatters ? `<p style="${STYLES.itemWhy}">${escapeHtml(item.whyItMatters)}</p>` : ''}
-    ${item.matchedInterests?.length ? `<p style="${STYLES.interests}">${escapeHtml(item.matchedInterests.join(', '))}</p>` : ''}
-    <a href="${item.url}" style="${STYLES.link}">${item.url}</a>
-    ${feedbackHtml}
-  </div>`;
+      <div style="margin-bottom:28px;padding-bottom:24px;border-bottom:1px dashed ${COLORS.line};">
+        <a href="${escapeAttribute(item.trackingUrl)}" style="display:block;text-decoration:none;color:${COLORS.text};font-size:16px;font-weight:600;line-height:1.5;margin-bottom:4px;">${item.position}. ${escapeHtml(item.title)}</a>
+        <div style="font-size:11.5px;color:${COLORS.purple};margin-bottom:8px;">${escapeHtml(item.sourceName)}</div>
+        <p style="font-size:13px;line-height:1.8;color:${COLORS.muted};margin:0 0 12px;">${escapeHtml(item.shortSummary)}</p>
+        ${item.whyItMatters ? `<p style="font-size:12px;line-height:1.7;color:${COLORS.steel};margin:0 0 12px;">${escapeHtml(item.whyItMatters)}</p>` : ''}
+        ${item.matchedInterests?.length ? `<div style="font-size:11.5px;color:${COLORS.cyan};margin:0 0 12px;">${escapeHtml(item.matchedInterests.join(' · '))}</div>` : ''}
+        <div style="font-size:11.5px;line-height:1.8;margin-bottom:12px;">
+          <a href="${escapeAttribute(item.trackingUrl)}" style="color:${COLORS.blue};word-break:break-all;">${escapeHtml(item.originalUrl)}</a>
+        </div>
+        <div style="font-size:11.5px;line-height:1.8;">
+          <a href="${escapeAttribute(item.usefulUrl)}" style="color:${COLORS.green};text-decoration:none;border:1px solid ${COLORS.green};padding:6px 12px;margin:0 6px 6px 0;display:inline-block;">[+] Useful</a>
+          <a href="${escapeAttribute(item.notUsefulUrl)}" style="color:${COLORS.muted};text-decoration:none;border:1px solid ${COLORS.line};padding:6px 12px;margin:0 6px 6px 0;display:inline-block;">[-] Not useful</a>
+          ${item.saveUrl ? `<a href="${escapeAttribute(item.saveUrl)}" style="color:${COLORS.orange};text-decoration:none;border:1px solid ${COLORS.orange};padding:6px 12px;margin:0 6px 6px 0;display:inline-block;">[x] Save</a>` : ''}
+        </div>
+      </div>`;
   }
 
-  private renderFeedbackButtons(item: DigestEmailItem): string {
-    const appUrl = process.env.APP_URL;
-    const token = process.env.FEEDBACK_TOKEN;
-    if (!appUrl || !token || !item.articleId) return '';
-
-    const base = `${appUrl}/articles/${item.articleId}/feedback/click?token=${encodeURIComponent(token)}`;
-    return `
-    <div style="${STYLES.feedbackRow}">
-      <a href="${base}&type=useful" style="${STYLES.feedbackBtn}${STYLES.feedbackUseful}">👍 Useful</a>
-      <a href="${base}&type=not_useful" style="${STYLES.feedbackBtn}${STYLES.feedbackNot}">👎 Not for me</a>
-    </div>`;
+  private renderStreamLinksHtml(streamLinks: DigestEmailStreamLink[]): string {
+    if (streamLinks.length === 0) return '';
+    const links = streamLinks
+      .map(
+        (stream) =>
+          `<a href="${escapeAttribute(stream.url)}" style="color:${COLORS.blue};">${escapeHtml(stream.name)}</a>`,
+      )
+      .join(' &nbsp;·&nbsp; ');
+    return `<div style="margin:0 0 28px;padding:14px 16px;background:${COLORS.surface};border:1px solid ${COLORS.line};font-size:11.5px;line-height:1.8;"><strong style="color:${COLORS.steel};">Browse by stream</strong><br>${links}</div>`;
   }
 
   private renderStatsHtml(stats: DigestStats): string {
     const label = stats.windowHours >= 168 ? 'Last 7 days' : `Last ${stats.windowHours}h`;
-    return `
-  <div style="${STYLES.stats}">
-    <p style="${STYLES.statsLabel}">Pipeline · ${label}</p>
-    <p style="${STYLES.statsRow}">
-      <span style="${STYLES.statsNum}">${stats.articlesIngested}</span> ingested &nbsp;·&nbsp;
-      <span style="${STYLES.statsNum}">${stats.articlesPassedPreanalysis}</span> passed pre-analysis &nbsp;·&nbsp;
-      <span style="${STYLES.statsNum}">${stats.articlesAnalyzed}</span> fully analyzed
-    </p>
-    <p style="${STYLES.statsRow}">
-      DB: <span style="${STYLES.statsNum}">${stats.totalArticlesInDb}</span> total articles &nbsp;·&nbsp;
-      <span style="${STYLES.statsNum}">${stats.totalSourcesActive}</span> active sources
-    </p>
-    <p style="${STYLES.statsRow}">
-      Sources: <span style="${STYLES.statsNum}">${stats.feedSourcesActive}</span> feed active &nbsp;·&nbsp;
-      <span style="${STYLES.statsNum}">${stats.webSourcesActive}</span> web active &nbsp;·&nbsp;
-      <span style="${STYLES.statsNum}">${stats.sourceCandidatesPending}</span> candidates pending
-    </p>
-  </div>`;
+    const row = (value: number, labelText: string) =>
+      `<div style="font-size:13px;line-height:2;"><span style="color:${COLORS.cyan};">${value}</span> ${labelText}</div>`;
+    return `<div style="margin:8px 0 32px;color:${COLORS.text};">
+      <div style="font-size:12px;color:${COLORS.muted};margin-bottom:12px;letter-spacing:0.04em;">Your radar · ${label}</div>
+      ${row(stats.totalSourcesActive, 'active sources')}
+      ${row(stats.publicationsProcessed, 'articles collected')}
+      ${row(stats.articlesAnalyzed, 'articles analyzed')}
+      ${row(stats.publicationsIncluded, 'selected for your radar')}
+      <div style="font-size:11.5px;line-height:1.8;color:${COLORS.muted};margin-top:10px;">${stats.articlesIngested} ingested · ${stats.articlesPassedPreanalysis} passed pre-analysis · ${stats.articlesAnalyzed} fully analyzed</div>
+      <div style="font-size:11.5px;line-height:1.8;color:${COLORS.muted};">DB: ${stats.totalArticlesInDb} total articles · ${stats.totalSourcesActive} active sources</div>
+      <div style="font-size:11.5px;line-height:1.8;color:${COLORS.muted};">Sources: ${stats.feedSourcesActive} feed active · ${stats.webSourcesActive} web active · ${stats.degradedSources} degraded · ${stats.disabledSources} disabled · ${stats.sourceCandidatesPending} candidates pending</div>
+    </div>`;
   }
 }
 
-function escapeHtml(str: string): string {
-  return str
+function escapeHtml(value: string): string {
+  return value
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function escapeAttribute(value: string): string {
+  return escapeHtml(value);
 }

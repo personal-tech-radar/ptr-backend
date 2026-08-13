@@ -9,7 +9,7 @@ import {
 } from 'typeorm';
 import { Digest } from './digest.entity';
 import { Article } from '../../articles/entities/article.entity';
-import { DigestItemScoreBreakdown } from '../digest.types';
+import { ScoringResultBreakdown } from '../../scoring/scoring.types';
 
 @Entity('digest_items')
 export class DigestItem {
@@ -34,7 +34,7 @@ export class DigestItem {
   position: number;
 
   @Column({ type: 'jsonb', nullable: true, default: null })
-  scoreBreakdown: DigestItemScoreBreakdown | null;
+  scoreBreakdown: ScoringResultBreakdown | null;
 
   @DeleteDateColumn({ type: 'timestamp', nullable: true })
   deletedAt: Date | null;

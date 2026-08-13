@@ -2,9 +2,9 @@ import { Injectable, OnModuleInit } from '@nestjs/common';
 import { readFileSync } from 'fs';
 import OpenAI from 'openai';
 import * as path from 'path';
+import { ArticleAnalysis } from '../../ai-analysis/entities/article-analysis.entity';
 import { LoggingService } from '../../common/logging/logging.service';
 import { DigestType } from '../entities/digest.entity';
-import { ScoredCandidate } from '../digest.types';
 
 @Injectable()
 export class AiDigestService implements OnModuleInit {
@@ -16,7 +16,6 @@ export class AiDigestService implements OnModuleInit {
     this.openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     this.loadPrompt(DigestType.DAILY, 'generate-daily-intro.txt');
     this.loadPrompt(DigestType.WEEKLY, 'generate-weekly-intro.txt');
-    this.loadPrompt(DigestType.DEEP_DIVE_WEEKLY, 'generate-deep-dive-intro.txt');
   }
 
   private loadPrompt(type: DigestType, filename: string): void {
@@ -29,16 +28,16 @@ export class AiDigestService implements OnModuleInit {
     }
   }
 
-  async generateIntro(type: DigestType, selected: ScoredCandidate[]): Promise<string> {
+  async generateIntro(type: DigestType, selected: ArticleAnalysis[]): Promise<string> {
     const template = this.prompts.get(type) ?? '';
     if (!template) {
       return this.fallbackIntro(type);
     }
 
     const articlesList = selected
-      .map((c, i) => {
-        const article = c.analysis.article;
-        const tags = c.analysis.tags?.join(', ') ?? '';
+      .map((analysis, i) => {
+        const article = analysis.article;
+        const tags = analysis.tags?.join(', ') ?? '';
         return `${i + 1}. "${article.title}" — ${article.source?.name ?? ''} [${tags}]`;
       })
       .join('\n');

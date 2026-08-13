@@ -5,21 +5,30 @@ import { ArticlesModule } from '../articles/articles.module';
 import { FeedFetcherModule } from '../feed-fetcher/feed-fetcher.module';
 import { MailModule } from '../mail/mail.module';
 import { QueueModule } from '../queue/queue.module';
-import { SourcesModule } from '../sources/sources.module';
+import { ScoringModule } from '../scoring/scoring.module';
+import { TaxonomyModule } from '../taxonomy/taxonomy.module';
+import { UserActionsModule } from '../user-actions/user-actions.module';
+import { UsersModule } from '../users/users.module';
 import { ArticleAnalysis } from '../ai-analysis/entities/article-analysis.entity';
-import { ArticleRelevance } from '../ai-analysis/entities/article-relevance.entity';
-import { Article } from '../articles/entities/article.entity';
-import { SourceCandidate } from '../sources/entities/source-candidate.entity';
-import { Source } from '../sources/entities/source.entity';
-import { DigestController } from './controllers/digest.controller';
+import { ArticleStream } from '../ai-analysis/entities/article-stream.entity';
+import { ArticleTechnologyInterest } from '../ai-analysis/entities/article-technology-interest.entity';
+import { AdminDigestController } from './controllers/admin-digest.controller';
+import { DigestStreamPageController } from './controllers/digest-stream-page.controller';
 import { DigestItem } from './entities/digest-item.entity';
 import { Digest } from './entities/digest.entity';
+import { DigestStreamPage } from './entities/digest-stream-page.entity';
+import { Article } from '../articles/entities/article.entity';
+import { Source } from '../sources/entities/source.entity';
+import { SourceCandidate } from '../sources/entities/source-candidate.entity';
+import { SourceIngestionAttempt } from '../sources/entities/source-ingestion-attempt.entity';
 import { DigestProcessor } from './processors/digest.processor';
 import { AiDigestService } from './services/ai-digest.service';
 import { DigestBootstrapService } from './services/digest-bootstrap.service';
-import { DigestBuilderService } from './services/digest-builder.service';
 import { DigestQueryService } from './services/digest-query.service';
+import { DigestSweepService } from './services/digest-sweep.service';
 import { EmailTemplateService } from './services/email-template.service';
+import { PersonalDigestBuilderService } from './services/personal-digest-builder.service';
+import { DigestStreamPageService } from './services/digest-stream-page.service';
 
 @Module({
   imports: [
@@ -27,27 +36,35 @@ import { EmailTemplateService } from './services/email-template.service';
       Digest,
       DigestItem,
       ArticleAnalysis,
-      ArticleRelevance,
+      ArticleStream,
+      ArticleTechnologyInterest,
       Article,
       Source,
       SourceCandidate,
+      SourceIngestionAttempt,
+      DigestStreamPage,
     ]),
     MailModule,
     QueueModule,
     AiAnalysisModule,
     ArticlesModule,
     FeedFetcherModule,
-    SourcesModule,
+    TaxonomyModule,
+    ScoringModule,
+    UserActionsModule,
+    UsersModule,
   ],
-  controllers: [DigestController],
+  controllers: [AdminDigestController, DigestStreamPageController],
   providers: [
     AiDigestService,
     EmailTemplateService,
-    DigestBuilderService,
+    PersonalDigestBuilderService,
+    DigestSweepService,
     DigestQueryService,
     DigestProcessor,
     DigestBootstrapService,
+    DigestStreamPageService,
   ],
-  exports: [DigestBuilderService, DigestQueryService],
+  exports: [DigestQueryService],
 })
 export class DigestModule {}

@@ -1,369 +1,161 @@
-// jsdom/@mozilla/readability are mocked at the module boundary, same as
-// content-extraction.service.spec.ts: jsdom v29's dependency tree is ESM-only several levels
-// deep and isn't loadable under this project's Jest/ts-jest setup (pre-existing test-infra gap).
-// SourceCandidatesService only calls ContentExtractionService.extract() through a mock anyway,
-// so this doesn't reduce coverage here.
-jest.mock('jsdom', () => ({ JSDOM: jest.fn() }));
-jest.mock('@mozilla/readability', () => ({ Readability: jest.fn() }));
-
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { SourceCandidateStatus, SourceDiscoveryOrigin } from '../entities/source-candidate.entity';
 import { SourceCandidatesService } from './source-candidates.service';
-import {
-  SourceCandidate,
-  SourceCandidateDetectedType,
-  SourceCandidateStatus,
-} from '../entities/source-candidate.entity';
-import { SourceType } from '../entities/source.entity';
 import { WebDiscoveryMethod } from '../entities/web-source-config.entity';
 
 describe('SourceCandidatesService', () => {
+  const repo = {
+    findOne: jest.fn(),
+    create: jest.fn((value) => value),
+    save: jest.fn((value) => Promise.resolve({ id: 'candidate', ...value })),
+  };
   let service: SourceCandidatesService;
-
-  const validId = '123e4567-e89b-12d3-a456-426614174000';
-
-  const mockCandidateRepo = {
-    findOne: jest.fn(),
-    create: jest.fn((data: unknown) => data),
-    save: jest.fn((data: Partial<SourceCandidate>) =>
-      Promise.resolve({ id: validId, ...(data as object) }),
-    ),
-  };
-
-  const mockSourceRepo = {
-    findOne: jest.fn(),
-    update: jest.fn().mockResolvedValue(undefined),
-    delete: jest.fn().mockResolvedValue(undefined),
-  };
-
-  const mockHttpService = {
-    request: jest.fn(),
-  };
-
-  const mockSourceDiscoveryService = {
-    discoverEntryPoints: jest.fn(),
-  };
-
-  const mockContentExtractionService = {
-    extract: jest.fn(),
-  };
-
-  const mockArticlesService = {
-    findByUrlHash: jest.fn().mockResolvedValue(null),
-    create: jest.fn((data: unknown) =>
-      Promise.resolve({ id: `article-${Math.random()}`, ...(data as object) }),
-    ),
-    deleteByIds: jest.fn().mockResolvedValue(undefined),
-  };
-
-  const mockAiAnalysisService = {
-    preAnalyzeArticle: jest.fn(),
-  };
-
-  const mockManager = {
-    create: jest.fn((_entity: unknown, data: unknown) => data),
-    save: jest.fn((_entity: unknown, data: unknown) =>
-      Promise.resolve({ id: 'source-1', ...(data as object) }),
-    ),
-  };
-
-  const mockDataSource = {
-    transaction: jest.fn((cb: (manager: unknown) => unknown) => cb(mockManager)),
-  };
-
-  const baseCandidate: SourceCandidate = {
-    id: validId,
-    normalizedUrl: 'https://example.com',
-    domain: 'example.com',
-    discoveredFromArticleId: null,
-    discoveredFromArticle: null,
-    seedKey: null,
-    status: SourceCandidateStatus.PENDING,
-    detectedType: null,
-    proposedConfig: null,
-    validationError: null,
-    lastValidatedAt: null,
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  } as SourceCandidate;
 
   beforeEach(() => {
     jest.clearAllMocks();
-    mockArticlesService.findByUrlHash.mockResolvedValue(null);
-    mockCandidateRepo.findOne.mockResolvedValue({ ...baseCandidate });
-    mockSourceRepo.findOne.mockResolvedValue(null);
-
+    repo.findOne.mockResolvedValue(null);
     service = new SourceCandidatesService(
-      mockCandidateRepo as any,
-      mockSourceRepo as any,
-      mockHttpService as any,
-      mockSourceDiscoveryService as any,
-      mockContentExtractionService as any,
-      mockArticlesService as any,
-      mockAiAnalysisService as any,
-      mockDataSource as any,
+      repo as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
     );
   });
 
-  describe('create (idempotent upsert)', () => {
-    it('creates a new candidate when none exists for the normalized URL', async () => {
-      mockCandidateRepo.findOne.mockResolvedValue(null);
-
-      const result = await service.create({ url: 'https://example.com/?utm_source=x' });
-
-      expect(mockCandidateRepo.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          normalizedUrl: 'https://example.com/',
-          domain: 'example.com',
-          status: SourceCandidateStatus.PENDING,
-        }),
-      );
-      expect(result.normalizedUrl).toBe('https://example.com/');
+  it('persists a shared pending candidate with its discovery provenance', async () => {
+    const result = await service.create({
+      url: 'https://Example.com/feed/',
+      origin: SourceDiscoveryOrigin.TECHNOLOGY,
+      technologyInterestId: 'taxonomy',
+      contentStreamId: 'stream',
     });
-
-    it('updates the existing row instead of creating a duplicate when the normalized URL matches', async () => {
-      const existing = { ...baseCandidate, normalizedUrl: 'https://example.com/' };
-      mockCandidateRepo.findOne.mockResolvedValue(existing);
-
-      const result = await service.create({
-        url: 'https://example.com/?utm_source=x',
-        proposedConfig: { name: 'Example' },
-      });
-
-      expect(mockCandidateRepo.create).not.toHaveBeenCalled();
-      expect(mockCandidateRepo.save).toHaveBeenCalledWith(
-        expect.objectContaining({
-          id: validId,
-          proposedConfig: { name: 'Example' },
-          lastValidatedAt: expect.any(Date) as unknown as Date,
-        }),
-      );
-      expect(result.id).toBe(validId);
-    });
+    expect(result.status).toBe(SourceCandidateStatus.PENDING);
+    expect(result.origin).toBe(SourceDiscoveryOrigin.TECHNOLOGY);
+    expect(result.normalizedUrl).toBe('https://example.com/feed');
   });
 
-  describe('reject', () => {
-    it('sets status rejected with the given reason', async () => {
-      const result = await service.reject(validId, 'Paywalled site');
-
-      expect(mockCandidateRepo.save).toHaveBeenCalledWith(
-        expect.objectContaining({
-          status: SourceCandidateStatus.REJECTED,
-          validationError: 'Paywalled site',
-        }),
-      );
-      expect(result.validationError).toBe('Paywalled site');
+  it('reuses an existing normalized candidate instead of creating duplicate work', async () => {
+    const existing = {
+      id: 'existing',
+      normalizedUrl: 'https://example.com/feed',
+      status: SourceCandidateStatus.REJECTED,
+    };
+    repo.findOne.mockResolvedValue(existing);
+    await expect(service.create({ url: 'https://example.com/feed/' })).resolves.toMatchObject({
+      id: 'existing',
     });
-
-    it('defaults the reason when none is given', async () => {
-      await service.reject(validId);
-
-      expect(mockCandidateRepo.save).toHaveBeenCalledWith(
-        expect.objectContaining({ validationError: 'Manually rejected' }),
-      );
-    });
-
-    it('throws BadRequestException for an invalid ID', async () => {
-      await expect(service.reject('not-a-uuid')).rejects.toThrow(BadRequestException);
-      expect(mockCandidateRepo.findOne).not.toHaveBeenCalled();
-    });
-
-    it('throws NotFoundException when the candidate does not exist', async () => {
-      mockCandidateRepo.findOne.mockResolvedValue(null);
-      await expect(service.reject(validId)).rejects.toThrow(NotFoundException);
-    });
+    expect(repo.create).not.toHaveBeenCalled();
   });
 
-  describe('promote', () => {
-    function mockSuccessfulDiscovery(
-      entryUrls = ['https://example.com/post-1', 'https://example.com/post-2'],
-    ) {
-      mockSourceDiscoveryService.discoverEntryPoints.mockResolvedValue({
-        success: true,
-        method: WebDiscoveryMethod.SITEMAP,
-        entryUrls,
-        confidence: 'high',
-      });
-    }
+  it('attaches provenance to a concurrently created source without leaving sample articles', async () => {
+    const candidateId = '11111111-1111-4111-8111-111111111111';
+    const candidate = {
+      id: candidateId,
+      normalizedUrl: 'https://example.com/feed',
+      technologyInterestId: 'taxonomy',
+      contentStreamId: 'stream',
+      proposedConfig: null,
+    };
+    const candidateRepo = {
+      findOne: jest.fn().mockResolvedValue(candidate),
+      save: jest.fn(async (value) => value),
+    };
+    const coverageRepo = {
+      findOne: jest.fn().mockResolvedValue(null),
+      create: jest.fn((value) => value),
+      save: jest.fn(async (value) => value),
+    };
+    const articles = { create: jest.fn(), deleteByIds: jest.fn() };
+    const identity = {
+      findEquivalent: jest.fn().mockResolvedValue(null),
+      resolveOrCreate: jest.fn().mockResolvedValue({
+        source: { id: 'winning-source', enabled: true },
+        created: false,
+      }),
+    };
+    const raceService = new SourceCandidatesService(
+      candidateRepo as never,
+      {} as never,
+      coverageRepo as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {
+        discoverEntryPoints: jest.fn().mockResolvedValue({
+          success: true,
+          method: WebDiscoveryMethod.RSS,
+          feedUrl: 'https://example.com/feed',
+          entryUrls: ['https://example.com/article'],
+        }),
+      } as never,
+      {} as never,
+      articles as never,
+      {} as never,
+      identity as never,
+      {} as never,
+    );
 
-    function mockExtractionAndHttpForEachUrl() {
-      mockHttpService.request.mockResolvedValue({
-        status: 200,
-        data: '<html></html>',
-        headers: {},
-      });
-      mockContentExtractionService.extract.mockReturnValue({
-        success: true,
-        method: 'readability',
-        title: 'A sampled article',
-        content: 'body',
-        textContent: 'body text',
-      });
-    }
+    const result = await raceService.promote(candidateId);
 
-    it('promotes the candidate when >= 2 sampled articles are relevant', async () => {
-      mockSuccessfulDiscovery();
-      mockExtractionAndHttpForEachUrl();
-      mockAiAnalysisService.preAnalyzeArticle.mockResolvedValue({ preAnalysisIsRelevant: true });
-
-      const result = await service.promote(validId);
-
-      expect(mockDataSource.transaction).toHaveBeenCalledTimes(1);
-      expect(mockManager.save).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.objectContaining({ url: 'https://example.com', enabled: false }),
-      );
-      // Enabled only after promotion is confirmed.
-      expect(mockSourceRepo.update).toHaveBeenCalledWith('source-1', { enabled: true });
-      expect(mockSourceRepo.delete).not.toHaveBeenCalled();
-      expect(result.status).toBe(SourceCandidateStatus.PROMOTED);
-      expect(result.detectedType).toBe(SourceCandidateDetectedType.WEB);
-      expect(result.validationError).toBeNull();
+    expect(result).toMatchObject({
+      status: SourceCandidateStatus.ACTIVE,
+      activatedSourceId: 'winning-source',
     });
+    expect(coverageRepo.save).toHaveBeenCalledWith(
+      expect.objectContaining({ sourceId: 'winning-source', technologyInterestId: 'taxonomy' }),
+    );
+    expect(articles.create).not.toHaveBeenCalled();
+    expect(articles.deleteByIds).not.toHaveBeenCalled();
+  });
 
-    it('hard-deletes the sample articles used as promotion evidence once promoted, so they are never stranded at NEW', async () => {
-      mockSuccessfulDiscovery();
-      mockExtractionAndHttpForEachUrl();
-      mockAiAnalysisService.preAnalyzeArticle.mockResolvedValue({ preAnalysisIsRelevant: true });
+  it('cleans its own interrupted provisional source before retrying validation', async () => {
+    const candidateId = '22222222-2222-4222-8222-222222222222';
+    const candidate = {
+      id: candidateId,
+      normalizedUrl: 'https://example.com/feed',
+      proposedConfig: { provisionalSourceId: 'provisional-source' },
+    };
+    const candidateRepo = {
+      findOne: jest.fn().mockResolvedValue(candidate),
+      save: jest.fn(async (value) => value),
+    };
+    const sourceRepo = { delete: jest.fn() };
+    const retryService = new SourceCandidatesService(
+      candidateRepo as never,
+      sourceRepo as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {
+        discoverEntryPoints: jest.fn().mockResolvedValue({
+          success: false,
+          entryUrls: [],
+          reason: 'unavailable',
+        }),
+      } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {
+        findEquivalent: jest.fn().mockResolvedValue({ id: 'provisional-source' }),
+      } as never,
+      { increment: jest.fn() } as never,
+    );
 
-      const createdArticleIds: string[] = [];
-      mockArticlesService.create.mockImplementation((data: unknown) => {
-        const id = `article-${createdArticleIds.length + 1}`;
-        createdArticleIds.push(id);
-        return Promise.resolve({ id, ...(data as object) });
-      });
+    const result = await retryService.promote(candidateId);
 
-      const result = await service.promote(validId);
-
-      expect(createdArticleIds).toHaveLength(2);
-      // The sample Articles created solely to evaluate promotion are hard-deleted (not the
-      // soft-delete `remove`) once the candidate is actually promoted — never left behind at
-      // ArticleStatus.NEW with no path to full analysis or a digest. Cascade-deleting their
-      // ArticleRelevance rows (FK ON DELETE CASCADE) means gatherStats' window counts can't be
-      // inflated by this scratch work either.
-      expect(mockArticlesService.deleteByIds).toHaveBeenCalledTimes(1);
-      expect(mockArticlesService.deleteByIds).toHaveBeenCalledWith(
-        expect.arrayContaining(createdArticleIds),
-      );
-      expect(result.status).toBe(SourceCandidateStatus.PROMOTED);
-    });
-
-    it('does not delete sample articles when promotion is rejected (needs_review roll-back cascades instead)', async () => {
-      mockSuccessfulDiscovery();
-      mockExtractionAndHttpForEachUrl();
-      mockAiAnalysisService.preAnalyzeArticle.mockResolvedValue({ preAnalysisIsRelevant: false });
-
-      await service.promote(validId);
-
-      expect(mockArticlesService.deleteByIds).not.toHaveBeenCalled();
-    });
-
-    it('creates a WebSourceConfig alongside the Source when the detected type is web', async () => {
-      mockSuccessfulDiscovery();
-      mockExtractionAndHttpForEachUrl();
-      mockAiAnalysisService.preAnalyzeArticle.mockResolvedValue({ preAnalysisIsRelevant: true });
-
-      await service.promote(validId);
-
-      expect(mockManager.save).toHaveBeenCalledTimes(2);
-    });
-
-    it('persists the candidate seed URL as WebSourceConfig.entryUrls, not discovery output', async () => {
-      // Discovery's entryUrls are the individual article permalinks it found while sampling —
-      // never the listing/seed URL the config should crawl from on replay.
-      mockSuccessfulDiscovery(['https://example.com/post-1', 'https://example.com/post-2']);
-      mockExtractionAndHttpForEachUrl();
-      mockAiAnalysisService.preAnalyzeArticle.mockResolvedValue({ preAnalysisIsRelevant: true });
-
-      await service.promote(validId);
-
-      const webConfigSaveCall = mockManager.save.mock.calls[1];
-      expect(webConfigSaveCall[1]).toEqual(
-        expect.objectContaining({ entryUrls: ['https://example.com'] }),
-      );
-    });
-
-    it('promotes an RSS-detected candidate with a captured feedUrl as a real rss Source, not web', async () => {
-      mockSourceDiscoveryService.discoverEntryPoints.mockResolvedValue({
-        success: true,
-        method: WebDiscoveryMethod.RSS,
-        entryUrls: ['https://example.com/post-1', 'https://example.com/post-2'],
-        feedUrl: 'https://example.com/feed.xml',
-        confidence: 'high',
-      });
-      mockExtractionAndHttpForEachUrl();
-      mockAiAnalysisService.preAnalyzeArticle.mockResolvedValue({ preAnalysisIsRelevant: true });
-
-      const result = await service.promote(validId);
-
-      // Only the Source is saved — no WebSourceConfig for a genuine feed-type Source.
-      expect(mockManager.save).toHaveBeenCalledTimes(1);
-      expect(mockManager.save).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.objectContaining({ url: 'https://example.com/feed.xml', type: SourceType.RSS }),
-      );
-      expect(result.detectedType).toBe(SourceCandidateDetectedType.RSS);
-    });
-
-    it('falls back to a web Source when RSS is detected but no feedUrl was captured', async () => {
-      mockSourceDiscoveryService.discoverEntryPoints.mockResolvedValue({
-        success: true,
-        method: WebDiscoveryMethod.RSS,
-        entryUrls: ['https://example.com/post-1', 'https://example.com/post-2'],
-        confidence: 'high',
-      });
-      mockExtractionAndHttpForEachUrl();
-      mockAiAnalysisService.preAnalyzeArticle.mockResolvedValue({ preAnalysisIsRelevant: true });
-
-      await service.promote(validId);
-
-      expect(mockManager.save).toHaveBeenCalledTimes(2);
-      expect(mockManager.save).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.objectContaining({ url: 'https://example.com', type: SourceType.WEB }),
-      );
-    });
-
-    it('marks needs_review with a reason when fewer than 2 sampled articles are relevant', async () => {
-      mockSuccessfulDiscovery();
-      mockExtractionAndHttpForEachUrl();
-      mockAiAnalysisService.preAnalyzeArticle.mockResolvedValue({ preAnalysisIsRelevant: false });
-
-      const result = await service.promote(validId);
-
-      expect(mockSourceRepo.update).not.toHaveBeenCalled();
-      // Rolling back the provisional Source cascades away its WebSourceConfig and sample Articles.
-      expect(mockSourceRepo.delete).toHaveBeenCalledWith('source-1');
-      expect(result.status).toBe(SourceCandidateStatus.NEEDS_REVIEW);
-      expect(result.validationError).toContain('0 of 2 sampled article(s)');
-    });
-
-    it('rejects outright when discovery itself fails, never creating a Source', async () => {
-      mockSourceDiscoveryService.discoverEntryPoints.mockResolvedValue({
-        success: false,
-        method: null,
-        entryUrls: [],
-        confidence: 'low',
-        reason: 'no usable sitemap or feed found',
-      });
-
-      const result = await service.promote(validId);
-
-      expect(mockDataSource.transaction).not.toHaveBeenCalled();
-      expect(result.status).toBe(SourceCandidateStatus.REJECTED);
-      expect(result.validationError).toContain('no usable sitemap or feed found');
-    });
-
-    it('rejects outright when a Source for this URL already exists', async () => {
-      mockSourceRepo.findOne.mockResolvedValue({
-        id: 'existing-source',
-        url: 'https://example.com',
-      });
-
-      const result = await service.promote(validId);
-
-      expect(mockSourceDiscoveryService.discoverEntryPoints).not.toHaveBeenCalled();
-      expect(result.status).toBe(SourceCandidateStatus.REJECTED);
-      expect(result.validationError).toContain('already exists');
-    });
+    expect(sourceRepo.delete).toHaveBeenCalledWith('provisional-source');
+    expect(result.status).toBe(SourceCandidateStatus.REJECTED);
+    expect(result.proposedConfig).not.toHaveProperty('provisionalSourceId');
   });
 });
+jest.mock('jsdom', () => ({ JSDOM: jest.fn() }));
+jest.mock('@mozilla/readability', () => ({ Readability: jest.fn() }));

@@ -3,17 +3,27 @@ import { ConfigModule } from '@nestjs/config';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { AiAnalysisModule } from './ai-analysis/ai-analysis.module';
 import { ArticlesModule } from './articles/articles.module';
+import { AuthModule } from './auth/auth.module';
 import { DatabaseModule } from './common/database/database.module';
 import { ErrorModule } from './common/error/error.module';
 import { RedisModule } from './common/redis/redis.module';
+import { MetricsModule } from './common/metrics/metrics.module';
 import { S3Module } from './common/s3/s3.module';
 import { DigestModule } from './digest/digest.module';
+import { FeedModule } from './feed/feed.module';
 import { FeedFetcherModule } from './feed-fetcher/feed-fetcher.module';
 import { HealthModule } from './health/health.module';
 import { MailModule } from './mail/mail.module';
+import { PublicFeedModule } from './public-feed/public-feed.module';
 import { QueueModule } from './queue/queue.module';
 import { SchedulerModule } from './scheduler/scheduler.module';
+import { ScoringModule } from './scoring/scoring.module';
 import { SourcesModule } from './sources/sources.module';
+import { TaxonomyModule } from './taxonomy/taxonomy.module';
+import { UserActionsModule } from './user-actions/user-actions.module';
+import { UsersModule } from './users/users.module';
+import { AdministratorsModule } from './administrators/administrators.module';
+import { RedirectsModule } from './redirects/redirects.module';
 
 @Module({
   imports: [
@@ -21,6 +31,7 @@ import { SourcesModule } from './sources/sources.module';
     ThrottlerModule.forRoot([{ ttl: 60000, limit: 60 }]),
     DatabaseModule,
     RedisModule,
+    MetricsModule,
     S3Module,
     ErrorModule,
     HealthModule,
@@ -32,6 +43,15 @@ import { SourcesModule } from './sources/sources.module';
     DigestModule,
     MailModule,
     SchedulerModule,
+    UsersModule,
+    AuthModule,
+    AdministratorsModule,
+    RedirectsModule,
+    TaxonomyModule,
+    ScoringModule,
+    UserActionsModule,
+    FeedModule,
+    PublicFeedModule,
   ],
 })
 export class AppModule {}

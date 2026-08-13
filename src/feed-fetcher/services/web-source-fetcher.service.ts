@@ -19,7 +19,7 @@ import { isPlaywrightEnabled } from '../../sources/services/playwright-fetch.ser
 import { SourcesService } from '../../sources/services/sources.service';
 import { Source } from '../../sources/entities/source.entity';
 import { WebSourceConfig } from '../../sources/entities/web-source-config.entity';
-import { QueueService } from '../../queue/queue.service';
+import { QueueService } from '../../queue/services/queue.service';
 
 type SourceWithWebConfig = Source & { webConfig?: WebSourceConfig };
 
@@ -32,7 +32,7 @@ const SUMMARY_PREVIEW_LENGTH = 500;
  * fallback chain via `SourceDiscoveryService`. When the chain succeeds with a
  * method different from the stored recipe, the new method is persisted back
  * onto `WebSourceConfig` (self-healing). Total failure is logged and swallowed
- * so `FeedFetcherService.fetchAllSources`'s continue-on-error pattern keeps working.
+ * so slow or failed browser work remains isolated from the primary ingestion worker.
  */
 @Injectable()
 export class WebSourceFetcherService {
@@ -47,26 +47,30 @@ export class WebSourceFetcherService {
     private readonly queueService: QueueService,
   ) {}
 
-  async fetchSource(source: SourceWithWebConfig): Promise<void> {
+  async fetchSource(
+    source: SourceWithWebConfig,
+    streamIds: string[] = [],
+    attemptId?: string,
+  ): Promise<number | null> {
     const config = source.webConfig;
     if (!config) {
       this.logger.error('Web source has no WebSourceConfig, skipping', null, {
         sourceId: source.id,
         name: source.name,
       });
-      return;
+      throw new Error('Web source has no WebSourceConfig');
     }
 
     const { result, usedStoredRecipe } = await this.discover(source, config);
 
     if (!result.success) {
       if (result.browserFallbackAvailable && isPlaywrightEnabled()) {
-        await this.queueService.addBrowserFetchSourceJob(source.id);
+        await this.queueService.addBrowserFetchSourceJob(source.id, streamIds, attemptId);
         this.logger.info(
           'Deterministic discovery exhausted; queued isolated browser fallback fetch',
           { sourceId: source.id, name: source.name },
         );
-        return;
+        return null;
       }
 
       this.logger.error('Web source discovery failed across the full fallback chain', null, {
@@ -74,24 +78,24 @@ export class WebSourceFetcherService {
         name: source.name,
         reason: result.reason,
       });
-      return;
+      throw new Error(result.reason ?? 'Web source discovery failed');
     }
 
-    await this.ingest(source, config, result, usedStoredRecipe);
+    return this.ingest(source, config, result, usedStoredRecipe);
   }
 
   // Invoked only by PlaywrightFetchProcessor, once the hourly cycle has already exhausted the
   // deterministic chain and enqueued this source for an out-of-band browser fetch. Reuses the
   // exact same ingestion path (dedup, publish-date priority, self-healing persistence) as
   // `fetchSource` so the two entry points can never drift apart.
-  async fetchSourceViaBrowser(source: SourceWithWebConfig): Promise<void> {
+  async fetchSourceViaBrowser(source: SourceWithWebConfig): Promise<number> {
     const config = source.webConfig;
     if (!config) {
       this.logger.error('Web source has no WebSourceConfig, skipping browser fallback', null, {
         sourceId: source.id,
         name: source.name,
       });
-      return;
+      throw new Error('Web source has no WebSourceConfig');
     }
 
     const result = await this.sourceDiscoveryService.discoverViaPlaywright(source.url, config);
@@ -102,10 +106,10 @@ export class WebSourceFetcherService {
         name: source.name,
         reason: result.reason,
       });
-      return;
+      throw new Error(result.reason ?? 'Playwright source discovery failed');
     }
 
-    await this.ingest(source, config, result, false);
+    return this.ingest(source, config, result, false);
   }
 
   private async discover(
@@ -135,7 +139,7 @@ export class WebSourceFetcherService {
     config: WebSourceConfig,
     result: DiscoveryResult,
     usedStoredRecipe: boolean,
-  ): Promise<void> {
+  ): Promise<number> {
     if (!usedStoredRecipe && result.method !== config.preferredDiscoveryMethod) {
       await this.sourcesService.updateWebSourceConfigRecipe(source.id, {
         preferredDiscoveryMethod: result.method,
@@ -166,6 +170,7 @@ export class WebSourceFetcherService {
       newCount,
       method: result.method,
     });
+    return newCount;
   }
 
   private async tryIngestArticle(

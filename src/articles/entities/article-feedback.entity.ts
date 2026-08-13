@@ -8,6 +8,7 @@ import {
   Unique,
   UpdateDateColumn,
 } from 'typeorm';
+import { User } from '../../users/entities/user.entity';
 import { Article } from './article.entity';
 
 export enum ArticleFeedbackType {
@@ -28,8 +29,12 @@ export class ArticleFeedback {
   @JoinColumn({ name: 'articleId' })
   article: Article;
 
-  @Column({ type: 'varchar' })
+  @Column({ type: 'uuid' })
   userId: string;
+
+  @ManyToOne(() => User, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'userId' })
+  user: User;
 
   @Column({ type: 'enum', enum: ArticleFeedbackType })
   type: ArticleFeedbackType;

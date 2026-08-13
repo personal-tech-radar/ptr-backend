@@ -14,8 +14,9 @@ import {
   QUEUE_ARTICLE_ANALYSIS,
   QUEUE_DIGEST,
   QUEUE_FEED_FETCH,
+  QUEUE_TAXONOMY_SOURCE_DISCOVERY,
   QUEUE_WEB_SOURCE_BROWSER_FETCH,
-} from './queue/queue.service';
+} from './queue/services/queue.service';
 
 // Proves the Nest DI graph resolves end-to-end, catching regressions like a `forwardRef()`
 // accidentally reverted back to a plain import (the SourcesModule <-> ArticlesModule/
@@ -34,13 +35,20 @@ describe('AppModule', () => {
   // needs a placeholder value regardless of whether a real key is configured in the environment
   // (CI sets none). This is only about proving the DI graph wires up, not a real API call.
   const originalResendApiKey = process.env.RESEND_API_KEY;
+  // AuthModule's JwtModule.registerAsync() factory (and JwtStrategy's constructor, transitively
+  // instantiated as part of this DI graph) reads JWT_SECRET via getJwtSecret(), which throws if
+  // unset — same placeholder-around-the-test treatment as RESEND_API_KEY above. This now only
+  // needs to be set before compile() runs, not before AppModule is imported.
+  const originalJwtSecret = process.env.JWT_SECRET;
 
   beforeAll(() => {
     process.env.RESEND_API_KEY = 're_test_dummy_key';
+    process.env.JWT_SECRET = 'test-dummy-jwt-secret';
   });
 
   afterAll(() => {
     process.env.RESEND_API_KEY = originalResendApiKey;
+    process.env.JWT_SECRET = originalJwtSecret;
   });
 
   it('resolves the full DI graph without throwing', async () => {
@@ -59,6 +67,8 @@ describe('AppModule', () => {
       .overrideProvider(getQueueToken(QUEUE_DIGEST))
       .useValue({})
       .overrideProvider(getQueueToken(QUEUE_WEB_SOURCE_BROWSER_FETCH))
+      .useValue({})
+      .overrideProvider(getQueueToken(QUEUE_TAXONOMY_SOURCE_DISCOVERY))
       .useValue({})
       .compile();
 

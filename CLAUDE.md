@@ -56,7 +56,8 @@ Domain modules live at `src/<domain>/` and contain `controllers/`, `services/`, 
 - **`synchronize: false`** always. Schema changes via migrations only.
 - For complex domains, split services into `command`, `query`, and `domain` services.
 - Prefer existing patterns over new abstractions. Prefer minimal and local changes.
-- **Isolate slow, resource-heavy, or hang-prone background work in its own BullMQ queue** — separate from the domain's regular processing queue(s) — with an explicit concurrency limit. A single stuck job (headless browser automation, a long-running third-party call) must never be able to block unrelated work. See `src/queue/queue.service.ts` (`web-source-browser-fetch` queue) for a worked example.
+- **Isolate slow, resource-heavy, or hang-prone background work in its own BullMQ queue** — separate from the domain's regular processing queue(s) — with an explicit concurrency limit. A single stuck job (headless browser automation, a long-running third-party call) must never be able to block unrelated work. See `src/queue/services/queue.service.ts` (`web-source-browser-fetch` queue) for a worked example.
+- **Fail fast on a missing required secret or credential.** Never fall back to a hardcoded literal default (e.g. `'insecure-dev-jwt-secret'`) when a required env-driven secret is unset — throw instead, so misconfiguration is loud at startup or first use, not a silent security hole. See `ApiKeyGuard` (`src/common/guards/`), which throws `InternalServerErrorException` when `API_KEY` is unset, for the established pattern. When the secret is read inside a module's synchronous registration call (e.g. `JwtModule.register({...})`), a throwing read forces awkward workarounds in tests and can crash the process at import time — use the module's async registration form (e.g. `JwtModule.registerAsync({ useFactory: ... })`) instead, so the throwing read happens lazily at DI-instantiation time.
 
 ---
 
@@ -119,6 +120,10 @@ See `.claude/agents/team-lead.md`, `system-analyst.md`, and `template-maintainer
 ## Maintenance Rules
 
 When you change the project in ways that affect behavior or structure:
+- **Iteration report** — before finishing every implementation iteration, create or update a
+  Markdown report in ignored `./reports/`. Record completed and incomplete work, verification
+  commands with exact results, problems, unresolved risks, and working-tree status. Never stage
+  or commit these local reports.
 - **`README.md`** — update when adding domains, changing behavior, or adding env variables.
 - **`.env.example`** — add every new env variable with a description and a safe default.
 - **Instruction files** — update `CLAUDE.md` and the relevant `.claude/agents/` or `.claude/skills/` file when a new pattern or convention is established. Use the `template-maintainer` agent (curation direction) to judge whether a new pattern is specific to this service or belongs in the shared template instructions for every project built from it.
@@ -137,6 +142,7 @@ When you change the project in ways that affect behavior or structure:
 
 - Use clear naming so code reads without explanation.
 - Write comments only where they add information the code cannot convey — non-obvious business rules, important architectural constraints.
+- Prefer a concise single-line comment; move narrative design rationale into the module README.
 - Do not write multi-line comment blocks that are larger than the code they describe.
 - Do not add docstrings, JSDoc, or explanatory comments to standard CRUD code.
 - Do not add error handling for scenarios the framework or internal contracts already prevent.

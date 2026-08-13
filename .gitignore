@@ -1,6 +1,12 @@
 # Claude Code
 .claude/
 
+# Local agent task context
+.local-context/
+
+# Local implementation iteration reports (kept for handoff, never committed)
+/reports/
+
 # IDE
 .idea/
 .vscode/

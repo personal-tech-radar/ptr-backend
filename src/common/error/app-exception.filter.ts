@@ -15,11 +15,23 @@ function statusToCode(status: number): string {
     403: 'FORBIDDEN',
     404: 'NOT_FOUND',
     409: 'CONFLICT',
+    413: 'PAYLOAD_TOO_LARGE',
     422: 'UNPROCESSABLE_ENTITY',
     429: 'RATE_LIMITED',
     500: 'INTERNAL_ERROR',
   };
   return map[status] ?? 'UNKNOWN_ERROR';
+}
+
+export function redactSensitiveQueryValues(url: string): string {
+  const [path, query] = url.split('?', 2);
+  if (!query) return path;
+
+  const params = new URLSearchParams(query);
+  for (const key of ['token', 'refreshToken', 'accessToken', 'apiKey']) {
+    if (params.has(key)) params.set(key, '[REDACTED]');
+  }
+  return `${path}?${params.toString()}`;
 }
 
 @Catch()
@@ -30,9 +42,10 @@ export class AppExceptionFilter implements ExceptionFilter {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
     const request = ctx.getRequest<Request>();
+    const safePath = redactSensitiveQueryValues(request.url);
 
     let status = HttpStatus.INTERNAL_SERVER_ERROR;
-    let message = 'Internal server error';
+    let message: string | string[] = 'Internal server error';
     let errorCode: string | undefined;
 
     if (exception instanceof HttpException) {
@@ -41,24 +54,42 @@ export class AppExceptionFilter implements ExceptionFilter {
       if (typeof res === 'string') {
         message = res;
       } else {
-        message = (res as any).message ?? message;
-        errorCode = (res as any).errorCode ?? statusToCode(status);
+        const details = res as { message?: string | string[]; errorCode?: string };
+        message = details.message ?? message;
+        errorCode = details.errorCode ?? statusToCode(status);
       }
-      if (status >= 500) {
-        this.logger.error(`${request.method} ${request.url} → ${status}`, (exception as Error).stack);
+      if (Number(status) >= 500) {
+        this.logger.error(`${request.method} ${safePath} → ${status}`, (exception as Error).stack);
+      }
+    } else if (isHttpErrorWithStatus(exception)) {
+      const externalStatus = exception.status;
+      status = externalStatus;
+      message = externalStatus === 413 ? 'Request payload is too large' : message;
+      errorCode = statusToCode(externalStatus);
+      if (externalStatus >= 500) {
+        this.logger.error(
+          `${request.method} ${safePath} → ${status}`,
+          exception instanceof Error ? exception.stack : JSON.stringify(exception),
+        );
       }
     } else {
       this.logger.error(
-        `Unhandled exception on ${request.method} ${request.url}`,
+        `Unhandled exception on ${request.method} ${safePath}`,
         exception instanceof Error ? exception.stack : String(exception),
       );
     }
 
     response.status(status).json({
       statusCode: status,
-      path: request.url,
+      path: safePath,
       message,
       ...(errorCode !== undefined && { errorCode }),
     });
   }
+}
+
+function isHttpErrorWithStatus(exception: unknown): exception is { status: number } {
+  if (typeof exception !== 'object' || exception === null) return false;
+  const status = (exception as { status?: unknown }).status;
+  return typeof status === 'number' && status >= 400 && status < 600;
 }

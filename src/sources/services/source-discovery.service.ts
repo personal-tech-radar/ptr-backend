@@ -138,6 +138,13 @@ export class SourceDiscoveryService {
     config?: Partial<WebSourceConfig> | null,
     options?: DiscoveryOptions,
   ): Promise<DiscoveryResult> {
+    // A submitted URL may itself be a feed (for example GitHub's releases.atom endpoint).
+    // Probe it before any website-oriented discovery so a valid feed never falls through to
+    // sitemap, HTML, or Playwright handling. Ordinary websites retain the existing sitemap-first
+    // fallback chain after this inexpensive feed validation fails.
+    const directFeed = await this.validateFeedCandidate(baseUrl);
+    if (directFeed) return directFeed;
+
     const chain: WebDiscoveryMethod[] = [
       WebDiscoveryMethod.SITEMAP,
       WebDiscoveryMethod.RSS,
@@ -402,25 +409,30 @@ export class SourceDiscoveryService {
     COMMON_FEED_PATHS.forEach((path) => candidates.add(new URL(path, baseUrl).toString()));
 
     for (const candidate of candidates) {
-      const result = await fetchAndValidateFeed(candidate);
-      if (result.ok) {
-        const method = /<feed[\s>]/i.test(result.rawText)
-          ? WebDiscoveryMethod.ATOM
-          : WebDiscoveryMethod.RSS;
-        return {
-          success: true,
-          method,
-          entryUrls: (result.feed.items ?? [])
-            .map((item) => item.link)
-            .filter((link): link is string => !!link)
-            .slice(0, SITEMAP_SAMPLE_SIZE),
-          feedUrl: candidate,
-          confidence: 'high',
-        };
-      }
+      const result = await this.validateFeedCandidate(candidate);
+      if (result) return result;
     }
 
     return this.failure('No usable RSS/Atom feed found');
+  }
+
+  private async validateFeedCandidate(candidateUrl: string): Promise<DiscoveryResult | null> {
+    const result = await fetchAndValidateFeed(candidateUrl);
+    if (!result.ok) return null;
+
+    const method = /<feed[\s>]/i.test(result.rawText)
+      ? WebDiscoveryMethod.ATOM
+      : WebDiscoveryMethod.RSS;
+    return {
+      success: true,
+      method,
+      entryUrls: (result.feed.items ?? [])
+        .map((item) => item.link)
+        .filter((link): link is string => !!link)
+        .slice(0, SITEMAP_SAMPLE_SIZE),
+      feedUrl: candidateUrl,
+      confidence: 'high',
+    };
   }
 
   private async readDeclaredFeedLinks(baseUrl: string): Promise<string[]> {

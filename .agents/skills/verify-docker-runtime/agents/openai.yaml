@@ -1,0 +1,4 @@
+interface:
+  display_name: "Verify Docker Runtime"
+  short_description: "Boot and verify the local Docker stack"
+  default_prompt: "Use $verify-docker-runtime to boot and verify this service against its local Docker stack."

@@ -248,7 +248,7 @@ export class SourceSyncService {
       try {
         await this.syncEntry(entry, force, existingByNormalizedUrl, summary);
       } catch (err) {
-        // Continue-on-error, matching FeedFetcherService.fetchAllSources's per-source isolation
+        // Continue per manifest entry so one invalid source does not block independent entries.
         // (each source's fetch is wrapped so one failure can't stop the rest of the cycle): one
         // bad manifest entry must never abort the rest of the sync run.
         this.logger.error(`Failed to sync manifest entry "${entry.seedKey}"`, err);
@@ -340,7 +340,7 @@ export class SourceSyncService {
       return { ok: false, reason: `No working feed at ${entry.seedUrl}: ${validation.message}` };
     }
 
-    await this.sourcesService.create({
+    await this.sourcesService.createOrReuse({
       name: entry.name,
       url: entry.seedUrl,
       type: entry.sourceType ?? this.sniffFeedType(validation.rawText),
@@ -359,7 +359,7 @@ export class SourceSyncService {
     // orchestration in one place and avoids a second copy of the AI-fallback wiring.
     const feedValidation = await fetchAndValidateFeed(entry.seedUrl);
     if (feedValidation.ok) {
-      await this.sourcesService.create({
+      await this.sourcesService.createOrReuse({
         name: entry.name,
         url: entry.seedUrl,
         type: entry.sourceType ?? this.sniffFeedType(feedValidation.rawText),
@@ -383,7 +383,7 @@ export class SourceSyncService {
     // reaches this method at all), so the gap has no effect on current behavior; flagged here for
     // whoever adds the first real 'web'/'auto' manifest entry.
     try {
-      await this.sourcesService.create({
+      await this.sourcesService.createOrReuse({
         name: entry.name,
         url: entry.seedUrl,
         type: SourceType.WEB,
@@ -430,7 +430,7 @@ export class SourceSyncService {
     };
     const candidate = await this.sourceCandidatesService.create(input);
     await this.sourceCandidateRepo.update(candidate.id, {
-      status: SourceCandidateStatus.NEEDS_REVIEW,
+      status: SourceCandidateStatus.REJECTED,
       validationError: reason,
     });
   }

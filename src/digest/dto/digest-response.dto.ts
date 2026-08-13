@@ -1,10 +1,21 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEnum } from 'class-validator';
-import { DigestStatus, DigestType } from '../entities/digest.entity';
+import { IsEnum, IsUUID } from 'class-validator';
+import { ArticleResponseDto } from '../../articles/dto/article-response.dto';
+import { ScoringResultBreakdown } from '../../scoring/scoring.types';
+import { Digest, DigestDeliveryMode, DigestStatus, DigestType } from '../entities/digest.entity';
+import { DigestItem } from '../entities/digest-item.entity';
 
 export class DigestResponseDto {
   @ApiProperty()
   id: string;
+
+  @ApiPropertyOptional({
+    description: 'Recipient user id — real FK to users.id (nullable only for pre-Phase-10 rows)',
+  })
+  userId: string | null;
+
+  @ApiPropertyOptional({ description: 'Recipient user email, joined from users.email' })
+  userEmail: string | null;
 
   @ApiProperty({ enum: DigestType })
   type: DigestType;
@@ -21,18 +32,135 @@ export class DigestResponseDto {
   @ApiProperty({ enum: DigestStatus })
   status: DigestStatus;
 
+  @ApiProperty({ enum: DigestDeliveryMode })
+  deliveryMode: DigestDeliveryMode;
+
+  @ApiPropertyOptional()
+  triggeringAdministratorId: string | null;
+
+  @ApiPropertyOptional()
+  actualRecipientEmail: string | null;
+
   @ApiPropertyOptional()
   sentAt: Date | null;
 
   @ApiProperty()
   createdAt: Date;
+
+  @ApiProperty({
+    type: () => [DigestStreamPageLinkResponseDto],
+    description: 'Temporary backend-rendered pages for the streams included in this digest',
+  })
+  streamPages: DigestStreamPageLinkResponseDto[];
+}
+
+export class DigestStreamPageLinkResponseDto {
+  @ApiProperty({ format: 'uuid' })
+  id: string;
+
+  @ApiProperty({ format: 'uuid' })
+  streamId: string;
+
+  @ApiProperty()
+  streamKey: string;
+
+  @ApiProperty()
+  streamName: string;
+
+  @ApiProperty({ description: 'Permanent opaque URL for the temporary rendered stream page' })
+  url: string;
+}
+
+export class DigestItemResponseDto {
+  @ApiProperty()
+  id: string;
+
+  @ApiProperty()
+  articleId: string;
+
+  @ApiProperty({ type: ArticleResponseDto })
+  article: ArticleResponseDto;
+
+  @ApiProperty()
+  position: number;
+
+  @ApiPropertyOptional({ description: 'Ranking score breakdown for this item, if recorded' })
+  scoreBreakdown: ScoringResultBreakdown | null;
+}
+
+export class DigestDetailResponseDto extends DigestResponseDto {
+  @ApiProperty({ type: [DigestItemResponseDto] })
+  items: DigestItemResponseDto[];
+}
+
+// digest.user must be loaded (joined) for userEmail to resolve — see
+// DigestQueryService.findAll/findByIdWithItems.
+export function toDigestResponseDto(digest: Digest): DigestResponseDto {
+  const appUrl = (process.env.APP_URL || 'http://localhost:3000').replace(/\/$/, '');
+  return {
+    id: digest.id,
+    userId: digest.userId,
+    userEmail: digest.user?.email ?? null,
+    type: digest.type,
+    periodStart: digest.periodStart,
+    periodEnd: digest.periodEnd,
+    subject: digest.subject,
+    status: digest.status,
+    deliveryMode: digest.deliveryMode,
+    triggeringAdministratorId: digest.triggeringAdministratorId,
+    actualRecipientEmail: digest.actualRecipientEmail,
+    sentAt: digest.sentAt,
+    createdAt: digest.createdAt,
+    streamPages: (digest.streamPages ?? []).map((page) => ({
+      id: page.id,
+      streamId: page.streamId,
+      streamKey: page.stream.key,
+      streamName: page.stream.name,
+      url: `${appUrl}/digest-stream/${page.id}`,
+    })),
+  };
+}
+
+function toDigestItemResponseDto(item: DigestItem): DigestItemResponseDto {
+  return {
+    id: item.id,
+    articleId: item.articleId,
+    article: {
+      id: item.article.id,
+      sourceId: item.article.sourceId,
+      title: item.article.title,
+      url: item.article.url,
+      urlHash: item.article.urlHash,
+      author: item.article.author,
+      publishedAt: item.article.publishedAt,
+      summaryFromFeed: item.article.summaryFromFeed,
+      status: item.article.status,
+      createdAt: item.article.createdAt,
+      updatedAt: item.article.updatedAt,
+    },
+    position: item.position,
+    scoreBreakdown: item.scoreBreakdown,
+  };
+}
+
+// entity.items and each item.article must be loaded (relations: ['items', 'items.article'])
+// before calling this — see DigestQueryService.findByIdWithItems.
+export function toDigestDetailResponseDto(digest: Digest): DigestDetailResponseDto {
+  return {
+    ...toDigestResponseDto(digest),
+    items: digest.items.map(toDigestItemResponseDto),
+  };
 }
 
 export class TriggerDigestDto {
+  @ApiProperty({ description: 'Recipient user id — a single-recipient personal digest trigger' })
+  @IsUUID()
+  userId: string;
+
   @ApiProperty({
     enum: DigestType,
     enumName: 'DigestType',
-    description: 'Digest type to build and send. Options: daily, weekly, deep_dive_weekly',
+    description: 'Digest type to build and send. Options: daily, weekly',
   })
   @IsEnum(DigestType)
   type: DigestType;

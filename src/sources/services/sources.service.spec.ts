@@ -7,12 +7,24 @@ import { WebDiscoveryMethod } from '../entities/web-source-config.entity';
 describe('SourcesService', () => {
   let service: SourcesService;
 
+  const mockQueryBuilder = {
+    withDeleted: jest.fn().mockReturnThis(),
+    andWhere: jest.fn().mockReturnThis(),
+    orderBy: jest.fn().mockReturnThis(),
+    skip: jest.fn().mockReturnThis(),
+    take: jest.fn().mockReturnThis(),
+    getManyAndCount: jest.fn(),
+  };
+
   const mockSourceRepo = {
     findOne: jest.fn(),
+    createQueryBuilder: jest.fn(() => mockQueryBuilder),
   };
   const mockWebSourceConfigRepo = {
     update: jest.fn(),
+    find: jest.fn().mockResolvedValue([]),
   };
+  const mockSourceCoverageRepo = { find: jest.fn().mockResolvedValue([]) };
   const mockSourceDiscoveryService = {
     discoverEntryPoints: jest.fn(),
   };
@@ -39,14 +51,22 @@ describe('SourcesService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockSourceRepo.findOne.mockResolvedValue(null);
+    mockWebSourceConfigRepo.find.mockResolvedValue([]);
 
     mockSourceStructureAiService.suggestAndValidate.mockResolvedValue(null);
 
     service = new SourcesService(
       mockSourceRepo as any,
       mockWebSourceConfigRepo as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      mockSourceCoverageRepo as any,
       mockSourceDiscoveryService as any,
       mockSourceStructureAiService as any,
+      {} as any,
+      {} as any,
+      {} as any,
       mockDataSource as any,
     );
   });
@@ -140,6 +160,87 @@ describe('SourcesService', () => {
           lastValidatedAt: expect.any(Date) as unknown as Date,
         }),
       );
+    });
+  });
+
+  describe('findAll', () => {
+    it('paginates with default params', async () => {
+      mockQueryBuilder.getManyAndCount.mockResolvedValue([
+        [{ id: 'source-1', type: SourceType.RSS }],
+        1,
+      ]);
+
+      const result = await service.findAll({});
+
+      expect(mockQueryBuilder.skip).toHaveBeenCalledWith(0);
+      expect(mockQueryBuilder.take).toHaveBeenCalledWith(20);
+      expect(mockQueryBuilder.withDeleted).not.toHaveBeenCalled();
+      expect(result.meta).toEqual({ total: 1, page: 1, limit: 20, totalPages: 1 });
+      expect(result.data).toEqual([
+        expect.objectContaining({ id: 'source-1', type: SourceType.RSS }),
+      ]);
+    });
+
+    it('applies type, category, and enabled filters', async () => {
+      mockQueryBuilder.getManyAndCount.mockResolvedValue([[], 0]);
+
+      await service.findAll({
+        type: SourceType.RSS,
+        category: SourceCategory.AI_ENGINEERING,
+        enabled: true,
+      });
+
+      expect(mockQueryBuilder.andWhere).toHaveBeenCalledWith('source.type = :type', {
+        type: SourceType.RSS,
+      });
+      expect(mockQueryBuilder.andWhere).toHaveBeenCalledWith('source.category = :category', {
+        category: SourceCategory.AI_ENGINEERING,
+      });
+      expect(mockQueryBuilder.andWhere).toHaveBeenCalledWith('source.enabled = :enabled', {
+        enabled: true,
+      });
+    });
+
+    it('only includes soft-deleted sources when includeDeleted is explicitly true', async () => {
+      mockQueryBuilder.getManyAndCount.mockResolvedValue([[], 0]);
+
+      await service.findAll({ includeDeleted: true });
+
+      expect(mockQueryBuilder.withDeleted).toHaveBeenCalledTimes(1);
+    });
+
+    it('attaches web configs only for web-type sources in the current page', async () => {
+      mockQueryBuilder.getManyAndCount.mockResolvedValue([
+        [
+          { id: 'source-1', type: SourceType.WEB },
+          { id: 'source-2', type: SourceType.RSS },
+        ],
+        2,
+      ]);
+      mockWebSourceConfigRepo.find.mockResolvedValue([
+        { sourceId: 'source-1', sitemapUrl: 'https://example.com/sitemap.xml' },
+      ]);
+
+      const result = await service.findAll({});
+
+      expect(mockWebSourceConfigRepo.find).toHaveBeenCalledWith({
+        where: { sourceId: expect.anything() as unknown },
+      });
+      expect(result.data[0]).toMatchObject({
+        id: 'source-1',
+        webConfig: { sourceId: 'source-1', sitemapUrl: 'https://example.com/sitemap.xml' },
+      });
+      expect(result.data[1]).toMatchObject({ id: 'source-2', webConfig: undefined });
+    });
+
+    it('computes correct pagination math for a non-default page/limit', async () => {
+      mockQueryBuilder.getManyAndCount.mockResolvedValue([[], 45]);
+
+      const result = await service.findAll({ page: 3, limit: 10 });
+
+      expect(mockQueryBuilder.skip).toHaveBeenCalledWith(20);
+      expect(mockQueryBuilder.take).toHaveBeenCalledWith(10);
+      expect(result.meta).toEqual({ total: 45, page: 3, limit: 10, totalPages: 5 });
     });
   });
 });
