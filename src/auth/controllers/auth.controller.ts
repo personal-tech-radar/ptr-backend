@@ -16,6 +16,7 @@ import {
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { User } from '../../users/entities/user.entity';
 import { UserResponseDto } from '../../users/dto/user-response.dto';
 import { ErrorResponseDto } from '../../common/error/error-response.dto';
@@ -28,6 +29,7 @@ import { LoginDto } from '../dto/login.dto';
 import { MessageResponseDto } from '../dto/message-response.dto';
 import { RefreshTokenDto } from '../dto/refresh-token.dto';
 import { RegisterDto } from '../dto/register.dto';
+import { ResendVerificationDto } from '../dto/resend-verification.dto';
 import { ResetPasswordDto } from '../dto/reset-password.dto';
 import { VerifyEmailDto } from '../dto/verify-email.dto';
 import { JwtAuthGuard } from '../guards/jwt-auth.guard';
@@ -62,6 +64,25 @@ export class AuthController {
   async verifyEmail(@Query() query: VerifyEmailDto): Promise<MessageResponseDto> {
     await this.authService.verifyEmail(query.token);
     return { message: 'Email verified' };
+  }
+
+  @Post('verification/resend')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 3, ttl: 60 * 60 * 1000 } })
+  @ApiOperation({
+    summary: 'Resend the email verification link',
+    description:
+      'Requests a new verification email for an unverified account. The same response is returned for unknown or already verified emails to prevent account enumeration. Limited to three requests per hour per client.',
+  })
+  @ApiResponse({ status: 200, type: MessageResponseDto })
+  @ApiResponse({ status: 400, type: ErrorResponseDto })
+  @ApiResponse({ status: 429, type: ErrorResponseDto, description: 'Resend rate limit exceeded' })
+  async resendVerification(@Body() dto: ResendVerificationDto): Promise<MessageResponseDto> {
+    await this.authService.resendVerificationEmail(dto.email);
+    return {
+      message: 'If the account exists and is not verified, a verification email has been sent',
+    };
   }
 
   @Post('login')

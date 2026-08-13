@@ -18,6 +18,7 @@ describe('AuthService', () => {
     create: jest.fn((data) => data),
     save: jest.fn((data) => Promise.resolve({ id: 'evt-1', ...data })),
     findOne: jest.fn(),
+    update: jest.fn(),
   };
   const mockPasswordResetTokenRepo = {
     create: jest.fn((data) => data),
@@ -147,6 +148,41 @@ describe('AuthService', () => {
 
       await expect(service.verifyEmail('bad-token')).rejects.toThrow(BadRequestException);
       expect(mockUserCommandService.markEmailVerified).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('resendVerificationEmail', () => {
+    it('supersedes active tokens and sends a replacement without revealing account state', async () => {
+      mockUserQueryService.findByEmail.mockResolvedValue({
+        ...mockUser,
+        emailVerifiedAt: null,
+      });
+
+      await service.resendVerificationEmail(' JANE@EXAMPLE.COM ');
+
+      expect(mockUserQueryService.findByEmail).toHaveBeenCalledWith('jane@example.com');
+      expect(mockEmailVerificationTokenRepo.update).toHaveBeenCalledWith(
+        { userId: mockUser.id, consumedAt: expect.anything() },
+        { consumedAt: expect.any(Date) },
+      );
+      expect(mockEmailVerificationTokenRepo.save).toHaveBeenCalledTimes(1);
+      expect(mockMailService.sendVerificationEmail).toHaveBeenCalledWith(
+        mockUser.email,
+        mockUser.displayName,
+        expect.any(String),
+      );
+    });
+
+    it.each([
+      ['unknown', null],
+      ['already verified', { ...mockUser, emailVerifiedAt: new Date() }],
+    ])('does not reveal an %s account', async (_case, user) => {
+      mockUserQueryService.findByEmail.mockResolvedValue(user);
+
+      await expect(service.resendVerificationEmail('jane@example.com')).resolves.toBeUndefined();
+      expect(mockEmailVerificationTokenRepo.update).not.toHaveBeenCalled();
+      expect(mockEmailVerificationTokenRepo.save).not.toHaveBeenCalled();
+      expect(mockMailService.sendVerificationEmail).not.toHaveBeenCalled();
     });
   });
 

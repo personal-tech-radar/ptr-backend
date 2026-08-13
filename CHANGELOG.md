@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-08-13
+
+- Updated digest and account-notification emails with the dark Personal Tech Radar design,
+  preserving dynamic tracking, action, stream, verification, and password-reset links.
+
+- Added the public `POST /auth/verification/resend` endpoint with generic responses,
+  rate limiting, token supersession, and Swagger documentation.
+
 ## 2026-08-03
 
 - Validated saved-article and feedback IDs before database access and made first-open, save/unsave,

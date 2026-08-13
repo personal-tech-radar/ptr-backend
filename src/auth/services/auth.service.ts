@@ -101,6 +101,35 @@ export class AuthService {
     this.logger.info('Email verified', { userId: record.userId });
   }
 
+  async resendVerificationEmail(email: string): Promise<void> {
+    const user = await this.userQueryService.findByEmail(email.trim().toLowerCase());
+    if (!user || user.emailVerifiedAt) {
+      this.logger.info('Verification email resend requested without an eligible account');
+      return;
+    }
+
+    await this.emailVerificationTokenRepo.update(
+      { userId: user.id, consumedAt: IsNull() },
+      { consumedAt: new Date() },
+    );
+
+    const rawToken = this.generateRawToken();
+    await this.emailVerificationTokenRepo.save(
+      this.emailVerificationTokenRepo.create({
+        userId: user.id,
+        tokenHash: this.hashToken(rawToken),
+        expiresAt: this.hoursFromNow(this.getEnvHours('EMAIL_VERIFICATION_TOKEN_TTL_HOURS', 48)),
+      }),
+    );
+
+    try {
+      await this.mailService.sendVerificationEmail(user.email, user.displayName, rawToken);
+    } catch (err) {
+      this.logger.error('Failed to resend verification email', err as Error, { userId: user.id });
+    }
+    this.logger.info('Verification email resend processed', { userId: user.id });
+  }
+
   async login(user: User): Promise<AuthTokensResponseDto> {
     return this.issueTokens(user);
   }
