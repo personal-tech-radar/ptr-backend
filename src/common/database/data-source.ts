@@ -13,6 +13,7 @@ export const AppDataSource = new DataSource({
   password: process.env.DB_PASSWORD || 'postgres',
   database: process.env.DB_NAME || 'ptr',
   entities: ['src/**/*.entity.ts'],
-  migrations: ['src/migrations/*.ts'],
+  // Keep Jest migration specs out of the TypeORM migration loader.
+  migrations: ['src/migrations/!(*.spec).ts'],
   synchronize: false,
 });

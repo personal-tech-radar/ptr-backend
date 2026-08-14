@@ -15,6 +15,8 @@ import { FeedCacheModule } from './feed-cache.module';
 import { OnboardingCompletedGuard } from './guards/onboarding-completed.guard';
 import { FeedCacheService } from './services/feed-cache.service';
 import { FeedQueryService } from './services/feed-query.service';
+import { PersonalFeedStatisticsService } from './services/personal-feed-statistics.service';
+import { PublicFeedModule } from '../public-feed/public-feed.module';
 
 @Module({
   imports: [
@@ -31,8 +33,14 @@ import { FeedQueryService } from './services/feed-query.service';
     UsersModule,
     UserActionsModule,
     FeedCacheModule,
+    PublicFeedModule,
   ],
   controllers: [FeedController],
-  providers: [FeedQueryService, FeedCacheService, OnboardingCompletedGuard],
+  providers: [
+    FeedQueryService,
+    FeedCacheService,
+    PersonalFeedStatisticsService,
+    OnboardingCompletedGuard,
+  ],
 })
 export class FeedModule {}

@@ -10,7 +10,9 @@ the sources service.
 
 The primary feed-fetch queue receives one source/time-bucket job with all due streams. Web extraction
 may delegate hang-prone rendering to the isolated browser queue, then rejoins the same pipeline.
-Articles are upserted by URL hash and sent to the separate analysis queue.
+Articles are upserted by URL hash and sent to the separate analysis queue. RSS/Atom dates and
+structured web dates are preserved; malformed or absent dates remain null instead of being replaced
+with ingestion time. Undated or stale web publications are retained but are not queued for analysis.
 
 ## Invariants and extension
 

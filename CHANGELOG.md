@@ -10,6 +10,17 @@
 
 ## 2026-08-14
 
+- Improved article enrichment with taxonomy-aware prompts, bounded canonical signal matching, and
+  grounded three-paragraph `longSummary` fields for article pages; existing summaries are backfilled
+  by migration while lists and digests continue using `shortSummary`.
+- Preserved valid RSS/Atom and structured web publication dates, stopped queueing stale or undated web
+  articles for analysis, and retained those records for audit and deduplication.
+
+- Added authenticated `GET /feed/statistics` with user-specific selected-for-radar counts.
+- Added API-key-only `GET /public/feed/statistics` and pipeline statistics metadata to the public
+  feed preview response (`activeSources`, `articlesCollected`, `articlesAnalyzed`, and
+  `selectedForRadar`) for the rolling last 24 hours.
+- Added API-key-only public catalog reads for technologies/interests and enabled content streams.
 - Added explicit `dateFrom`/`dateTo` filters to the authenticated personal feed, with timezone-aware
   calendar bounds and cache-key isolation.
 - Changed info-page `fullText` storage from JSONB to text while retaining its editor-neutral JSON

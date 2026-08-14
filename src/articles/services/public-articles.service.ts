@@ -89,6 +89,7 @@ export class PublicArticlesService {
         author: article.author,
         publishedAt: article.publishedAt,
         summary: analysis.shortSummary ?? article.summaryFromFeed,
+        longSummary: analysis.longSummary ?? analysis.shortSummary ?? article.summaryFromFeed,
         technologies: mapTaxonomy(TechnologyInterestKind.TECHNOLOGY),
         interests: mapTaxonomy(TechnologyInterestKind.INTEREST),
         streams: articleStreams.map(mapStream),

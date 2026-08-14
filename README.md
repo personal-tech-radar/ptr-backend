@@ -41,6 +41,9 @@ Detailed operational designs:
 `APP_URL` is the externally reachable origin embedded in email, tracking, action, and digest-page
 links. Local development commonly uses `http://localhost:3300`; staging and production must set
 their reachable HTTPS origin. Localhost works only when the recipient can reach that environment.
+`FRONT_APP_URL` is the frontend origin used for email verification and password-reset links. Set it
+to the frontend's externally reachable origin (for example, `https://app.example.com`); it falls
+back to `APP_URL` when omitted.
 
 The unified scheduler runs every five minutes. Daily digests are due every calendar day at 09:00
 in each user's timezone; weekly digests are due Friday at 14:00. Both verified email and completed
@@ -81,8 +84,16 @@ Every publication is stored globally. Pre-analysis accepts an article only when 
 least one supported stream and at least one catalog technology or interest. A rejected pre-analysis
 is retained with `skipped` status. Full LLM analysis runs globally at most once and stores quality,
 taxonomy, streams, primary stream, normalized difficulty (`beginner`, `intermediate`, `advanced`),
-summaries, and release/security metadata. Historical `architect` difficulty values migrate to
-`advanced`.
+short and long summaries, and release/security metadata. `shortSummary` is used in feeds and
+digests; `longSummary` is a grounded three-paragraph article-page explanation. Existing analyses
+were backfilled from their short summaries by migration. Historical `architect` difficulty values
+migrate to `advanced`.
+
+For enrichment, the model receives the current taxonomy catalog and article content where available.
+Signals resolve to existing canonical technology/interest entries or aliases, with bounded similarity
+used only to match near spellings. No new taxonomy entry is silently created by article analysis.
+Valid publication dates are preserved; malformed or missing dates remain null and old or undated web
+articles are retained for audit but are not queued for analysis.
 
 Personal feed and digest ranking use one deterministic formula:
 
@@ -129,6 +140,15 @@ Information pages are managed through `/admin/info-pages` and exposed publicly t
 `GET /info-pages` routes. Their `fullText` is a text column containing an editor-neutral JSON
 document string; the migration seeds editable examples for Legal Notice, Privacy Policy, and
 Cookies Policy.
+
+`GET /public/feed/statistics` exposes API-key-only rolling pipeline statistics for the last 24
+hours: active sources, collected articles, and fully analyzed articles. `POST /public/feed/preview`
+returns the same `meta` statistics plus `selectedForRadar`, calculated for the submitted preview
+profile.
+
+Pre-registration clients can load the read-only API-key catalogs from `GET /public/technology-interests`
+and `GET /public/content-streams`. User selection and create-or-reuse behavior remains available
+only through authenticated onboarding/profile endpoints.
 
 Analyzed articles with a genuinely absent or malformed publication date remain public-eligible for
 backward compatibility, but dated articles always sort first. Undated rows use `createdAt DESC`,

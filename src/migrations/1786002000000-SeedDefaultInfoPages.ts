@@ -53,10 +53,10 @@ export class SeedDefaultInfoPages1786002000000 implements MigrationInterface {
     for (const page of PAGES) {
       await queryRunner.query(
         `INSERT INTO "info_pages" ("title", "fullText", "isActive")
-         SELECT $1, $2, true
+         SELECT $1::varchar, $2::text, true
          WHERE NOT EXISTS (
            SELECT 1 FROM "info_pages"
-           WHERE "title" = $1 AND "deletedAt" IS NULL
+           WHERE "title" = $1::varchar AND "deletedAt" IS NULL
          )`,
         [page.title, documentFor(page)],
       );

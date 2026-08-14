@@ -336,6 +336,7 @@ describe('WebSourceFetcherService', () => {
         title: 'A New Post',
         content: '<p>content</p>',
         textContent: 'content',
+        publishedAt: new Date().toISOString(),
       });
 
       await service.fetchSource(source);
@@ -414,7 +415,7 @@ describe('WebSourceFetcherService', () => {
       );
     });
 
-    it('falls back to ingestion time when no publish-date signal is present or parseable', async () => {
+    it('keeps the date null and does not queue an undated article for analysis', async () => {
       const source = setupSuccessfulDiscovery(['https://example.com/undated-post']);
       mockArticlesService.findByUrlHash.mockResolvedValue(null);
       mockArticlesService.findByTitleHashInLastDays.mockResolvedValue(null);
@@ -432,15 +433,12 @@ describe('WebSourceFetcherService', () => {
         publishedAt: null,
       });
 
-      const before = Date.now();
       await service.fetchSource(source);
-      const after = Date.now();
-
-      const [createdArticle] = mockArticlesService.create.mock.calls[0] as unknown as [
-        { publishedAt: Date },
-      ];
-      expect(createdArticle.publishedAt.getTime()).toBeGreaterThanOrEqual(before);
-      expect(createdArticle.publishedAt.getTime()).toBeLessThanOrEqual(after);
+      expect(mockArticlesService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ publishedAt: null }),
+      );
+      expect(mockArticlesService.updateStatus).not.toHaveBeenCalled();
+      expect(mockQueueService.addAnalyzeArticleJob).not.toHaveBeenCalled();
     });
 
     it('marks a title-duplicate article without queuing it for analysis', async () => {

@@ -11,6 +11,7 @@ export const AppDataSource = new DataSource({
   password: process.env.DB_PASSWORD || 'postgres',
   database: process.env.DB_NAME || 'ptr',
   entities: ['dist/**/*.entity.js'],
-  migrations: ['dist/migrations/*.js'],
+  // Keep compiled migration specs out of the TypeORM migration loader.
+  migrations: ['dist/migrations/!(*.spec).js'],
   synchronize: false,
 });

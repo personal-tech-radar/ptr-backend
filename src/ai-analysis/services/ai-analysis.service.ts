@@ -30,6 +30,7 @@ interface PreAnalysisResult {
 
 interface FullAnalysisResult {
   shortSummary: string;
+  longSummary: string;
   whyItMatters: string;
   practicalValue: string;
   tags: string[];
@@ -103,7 +104,7 @@ export class AiAnalysisService implements OnModuleInit {
     const article = await this.articlesService.findOne(articleId);
 
     const cutoff = new Date(Date.now() - ANALYSIS_WINDOW_HOURS * 60 * 60 * 1000);
-    if (article.publishedAt && article.publishedAt < cutoff) {
+    if (!article.publishedAt || article.publishedAt < cutoff) {
       this.logger.info('Article outside analysis window, skipping', {
         articleId,
         publishedAt: article.publishedAt,
@@ -227,6 +228,7 @@ export class AiAnalysisService implements OnModuleInit {
       url: string;
       author?: string | null;
       summaryFromFeed?: string | null;
+      rawContent?: string | null;
     },
     analysis: ArticleAnalysis,
   ): Promise<void> {
@@ -250,6 +252,7 @@ export class AiAnalysisService implements OnModuleInit {
         // partial — TypeORM's QueryDeepPartialEntity typing for update() doesn't accept the
         // jsonb Record<string, unknown> shape of releaseData/securityData cleanly.
         analysis.shortSummary = result.shortSummary;
+        analysis.longSummary = result.longSummary;
         analysis.whyItMatters = result.whyItMatters;
         analysis.practicalValue = result.practicalValue;
         analysis.tags = result.tags;
@@ -468,14 +471,24 @@ export class AiAnalysisService implements OnModuleInit {
     url: string;
     author?: string | null;
     summaryFromFeed?: string | null;
+    rawContent?: string | null;
   }): Promise<FullAnalysisResult> {
     const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
+    const taxonomy = await this.technologyInterestQueryService.findAllActive();
+    const taxonomyCatalog = taxonomy
+      .map(
+        (item) =>
+          `${item.kind}: ${item.name}${item.aliases.length ? ` (aliases: ${item.aliases.join(', ')})` : ''}`,
+      )
+      .join('\n');
 
     const userContent = [
       `Title: ${article.title}`,
       `URL: ${article.url}`,
       article.author ? `Author: ${article.author}` : null,
       article.summaryFromFeed ? `Summary: ${article.summaryFromFeed.slice(0, 1000)}` : null,
+      article.rawContent ? `Article content excerpt:\n${article.rawContent.slice(0, 12000)}` : null,
+      `Available taxonomy (signals must use these canonical names or aliases):\n${taxonomyCatalog}`,
     ]
       .filter(Boolean)
       .join('\n');
@@ -495,6 +508,7 @@ export class AiAnalysisService implements OnModuleInit {
 
     return {
       shortSummary: String(parsed.shortSummary ?? ''),
+      longSummary: String(parsed.longSummary ?? parsed.shortSummary ?? ''),
       whyItMatters: String(parsed.whyItMatters ?? ''),
       practicalValue: String(parsed.practicalValue ?? ''),
       tags: Array.isArray(parsed.tags) ? parsed.tags.map(String) : [],

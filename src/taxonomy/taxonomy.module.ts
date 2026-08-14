@@ -9,6 +9,7 @@ import { AdminUserContentStreamsController } from './controllers/admin-user-cont
 import { AdminUserTechnologyInterestsController } from './controllers/admin-user-technology-interests.controller';
 import { ContentStreamController } from './controllers/content-stream.controller';
 import { TechnologyInterestController } from './controllers/technology-interest.controller';
+import { PublicTaxonomyController } from './controllers/public-taxonomy.controller';
 import { ContentStream } from './entities/content-stream.entity';
 import { TaxonomySourceDiscoveryRequest } from './entities/taxonomy-source-discovery-request.entity';
 import { TechnologyInterest } from './entities/technology-interest.entity';
@@ -36,6 +37,7 @@ import { TaxonomySourceDiscoveryRetryService } from './services/taxonomy-source-
   ],
   controllers: [
     TechnologyInterestController,
+    PublicTaxonomyController,
     ContentStreamController,
     AdminTechnologyInterestsController,
     AdminContentStreamsController,

@@ -15,7 +15,9 @@ import { QueryFeedDto } from '../dto/query-feed.dto';
 import { OnboardingCompletedGuard } from '../guards/onboarding-completed.guard';
 import { FeedCacheService } from '../services/feed-cache.service';
 import { FeedQueryService } from '../services/feed-query.service';
+import { PersonalFeedStatisticsService } from '../services/personal-feed-statistics.service';
 import { ContentStreamQueryService } from '../../taxonomy/services/content-stream-query.service';
+import { PipelineStatisticsDto } from '../../public-feed/dto/pipeline-statistics.dto';
 
 @ApiTags('Feed')
 @ApiBearerAuth()
@@ -28,7 +30,24 @@ export class FeedController {
     private readonly feedQueryService: FeedQueryService,
     private readonly feedCacheService: FeedCacheService,
     private readonly contentStreamQueryService: ContentStreamQueryService,
+    private readonly personalFeedStatisticsService: PersonalFeedStatisticsService,
   ) {}
+
+  @Get('statistics')
+  @ApiOperation({
+    summary: "Get the current user's pipeline statistics",
+    description:
+      "Returns rolling last-24-hour pipeline statistics with selectedForRadar calculated from this authenticated user's personalized feed. Supports the same feed filters and requires verified email plus completed onboarding.",
+  })
+  @ApiResponse({ status: 200, type: PipelineStatisticsDto })
+  @ApiResponse({ status: 401, type: ErrorResponseDto })
+  @ApiResponse({ status: 403, type: ErrorResponseDto, description: 'Email unverified or onboarding incomplete' })
+  async getStatistics(
+    @CurrentUser() user: CurrentUserPayload,
+    @Query() query: QueryFeedDto,
+  ): Promise<PipelineStatisticsDto> {
+    return this.personalFeedStatisticsService.get(user.id, query);
+  }
 
   @Get()
   @ApiOperation({

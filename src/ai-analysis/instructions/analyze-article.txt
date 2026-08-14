@@ -16,6 +16,7 @@ Focus on:
 
 Return JSON with:
 - shortSummary: a single substantial paragraph (target 120-180 words, not a list of short sentences) that gives the reader enough to decide whether to open the article. It must: explain what the article is actually about; name its main argument, event, tool, practice, or technical idea; and explain why it may matter to someone working on backend systems, architecture, or infrastructure. Use plain, concrete language grounded only in what the article itself says — do not add numbers, claims, or details that are not present in the source material. Avoid marketing language (e.g. "game-changing", "revolutionary", "must-read") and vague filler (e.g. "in today's fast-paced world", "this is worth a look", "an interesting read")
+- longSummary: exactly three coherent paragraphs (target 350-550 words total) for the article detail page. Explain the subject, important technical context, implementation or operational implications, and practical trade-offs. Make it useful and search-friendly without keyword stuffing, marketing claims, invented facts, or repeating the title. Use only details supported by the supplied article content.
 - whyItMatters: 3 sentences explaining why this is relevant to the engineering community, what problem or trend it responds to, and what the broader implications are
 - practicalValue: 3 sentences explaining how a backend architect or tech lead can apply this, what decisions or trade-offs it informs, and what concrete next steps or takeaways it suggests
 - tags: array of short, freeform display tags (max 5) — not part of the taxonomy, just a label
@@ -30,8 +31,8 @@ Return JSON with:
 - securityData: nullable object, only when the article is about a security issue — loose shape, e.g. {"cve": ["CVE-2024-12345"], "severity": "high"}. null when not applicable
 - mainStreamKey: the single content stream that best fits this article, one of exactly: releases_and_changes, security, industry_pulse, engineering_experience, expert_opinions_and_practices
 - secondaryStreamKeys: array of 0-2 additional content streams from the same list above that also fit, excluding mainStreamKey
-- technologySignals: array of explicit named tools, frameworks, languages, or platforms mentioned in the article (e.g. "Kubernetes", "Node.js", "PostgreSQL")
-- interestSignals: array of broader topical concepts the article covers (e.g. "distributed systems", "observability", "incident response")
+- technologySignals: array of explicit named tools, frameworks, languages, or platforms mentioned in the article. When an available taxonomy catalog is supplied, return only its canonical names or aliases, preserving the catalog spelling.
+- interestSignals: array of broader topical concepts the article covers. When an available taxonomy catalog is supplied, return only its canonical names or aliases, preserving the catalog spelling.
 - shouldIncludeInDailyDigest: boolean
 - shouldIncludeInWeeklyDigest: boolean
 

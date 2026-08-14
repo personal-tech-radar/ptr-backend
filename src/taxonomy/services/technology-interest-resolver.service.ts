@@ -90,8 +90,8 @@ export class TechnologyInterestResolverService {
     return { entity: saved, created: true };
   }
 
-  // Read-only lookup for the analysis pipeline (AiAnalysisService): exact + alias tiers only, no
-  // similarity search, no create-on-miss. An article's analysis output must never grow the
+  // Read-only lookup for the analysis pipeline: exact, alias, then bounded similarity; never create.
+  // An article's analysis output must never grow the
   // taxonomy catalog — that stays exclusively resolve()'s job, called only from onboarding.
   async resolveExisting(
     kind: TechnologyInterestKind,
@@ -113,6 +113,17 @@ export class TechnologyInterestResolverService {
       .andWhere('ti.aliases @> :alias::jsonb', { alias: JSON.stringify([normalized]) })
       .getOne();
 
-    return aliasMatch ?? null;
+    if (aliasMatch) return aliasMatch;
+
+    return this.technologyInterestRepo
+      .createQueryBuilder('ti')
+      .where('ti.kind = :kind', { kind })
+      .andWhere('ti.deletedAt IS NULL')
+      .andWhere('similarity(ti.normalizedName, :normalized) > :threshold', {
+        normalized,
+        threshold: TAXONOMY_SIMILARITY_THRESHOLD,
+      })
+      .orderBy('similarity(ti.normalizedName, :normalized)', 'DESC')
+      .getOne();
   }
 }

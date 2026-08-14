@@ -64,6 +64,9 @@ export class ArticleAnalysis {
   shortSummary: string | null;
 
   @Column({ type: 'text', nullable: true })
+  longSummary: string | null;
+
+  @Column({ type: 'text', nullable: true })
   whyItMatters: string | null;
 
   @Column({ type: 'text', nullable: true })

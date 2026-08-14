@@ -18,3 +18,7 @@ unreachable entries after invalidation.
 No per-user LLM call or mandatory user/article relevance row is allowed. Results never cross user
 cache identities, and returned external links use permanent tracking redirects. Add filters in the
 query DTO, database candidate query, and cache-key normalization together.
+
+`GET /feed/statistics` returns the rolling last-24-hour pipeline counters plus
+`selectedForRadar` calculated from the authenticated user's personalized feed. It accepts the
+same feed filters and requires a verified email and completed onboarding.

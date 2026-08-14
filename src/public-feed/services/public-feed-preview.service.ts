@@ -15,10 +15,12 @@ import {
 import { RelevanceScoringService } from '../../scoring/services/relevance-scoring.service';
 import { ScorableArticle, ScoringProfile } from '../../scoring/scoring.types';
 import { ContentStreamQueryService } from '../../taxonomy/services/content-stream-query.service';
+import { TechnologyInterestKind } from '../../taxonomy/entities/technology-interest.entity';
 import { TechnologyInterestQueryService } from '../../taxonomy/services/technology-interest-query.service';
 import { PreviewFeedArticleItemDto } from '../dto/preview-feed-article-item.dto';
 import { PreviewFeedDto } from '../dto/preview-feed.dto';
 import { PreviewFeedResponseDto } from '../dto/preview-feed-response.dto';
+import { PublicFeedStatisticsService } from './public-feed-statistics.service';
 import { PublicFeedCacheService } from './public-feed-cache.service';
 
 const DEFAULT_MAX_DAYS = 30;
@@ -39,6 +41,7 @@ export class PublicFeedPreviewService {
     private readonly technologyInterestQueryService: TechnologyInterestQueryService,
     private readonly relevanceScoringService: RelevanceScoringService,
     private readonly publicFeedCacheService: PublicFeedCacheService,
+    private readonly publicFeedStatisticsService: PublicFeedStatisticsService,
   ) {}
 
   async preview(dto: PreviewFeedDto): Promise<PreviewFeedResponseDto> {
@@ -53,7 +56,10 @@ export class PublicFeedPreviewService {
     );
     const cached = await this.publicFeedCacheService.getPreview(cacheKey);
     if (cached) {
-      return cached;
+      return {
+        ...cached,
+        meta: await this.publicFeedStatisticsService.get(cached.data.length),
+      };
     }
 
     const candidates = await this.fetchCandidates(dto);
@@ -62,7 +68,10 @@ export class PublicFeedPreviewService {
       technologyInterestIds,
       dto.contentStreamIds,
     );
-    const result: PreviewFeedResponseDto = { data };
+    const result: PreviewFeedResponseDto = {
+      data,
+      meta: await this.publicFeedStatisticsService.get(data.length),
+    };
 
     await this.publicFeedCacheService.setPreview(cacheKey, result);
 
@@ -154,8 +163,12 @@ export class PublicFeedPreviewService {
     const selected = await this.technologyInterestQueryService.findByIds(technologyInterestIds);
     const profile: ScoringProfile = {
       technologyInterestIds,
-      technologyIds: selected.filter((item) => item.kind === 'technology').map((item) => item.id),
-      interestIds: selected.filter((item) => item.kind === 'interest').map((item) => item.id),
+      technologyIds: selected
+        .filter((item) => item.kind === TechnologyInterestKind.TECHNOLOGY)
+        .map((item) => item.id),
+      interestIds: selected
+        .filter((item) => item.kind === TechnologyInterestKind.INTEREST)
+        .map((item) => item.id),
       contentStreamIds,
       level: null,
     };
@@ -211,7 +224,9 @@ export class PublicFeedPreviewService {
       list.push(t.technologyInterestId);
       technologyInterestIdsByArticle.set(t.articleId, list);
       const target =
-        t.technologyInterest.kind === 'technology' ? technologyIdsByArticle : interestIdsByArticle;
+        t.technologyInterest.kind === TechnologyInterestKind.TECHNOLOGY
+          ? technologyIdsByArticle
+          : interestIdsByArticle;
       target.set(t.articleId, [...(target.get(t.articleId) ?? []), t.technologyInterestId]);
     }
 
