@@ -114,6 +114,16 @@ describe('FeedQueryService', () => {
   });
 
   describe('filter validation', () => {
+    it('rejects an inverted explicit date range', async () => {
+      await expect(
+        service.getFeed(userId, {
+          dateFrom: '2026-08-15',
+          dateTo: '2026-08-14',
+        } as QueryFeedDto),
+      ).rejects.toThrow(BadRequestException);
+      expect(mockUserQueryService.findById).not.toHaveBeenCalled();
+    });
+
     it('rejects saved=true combined with a topical filter without looking up the user', async () => {
       const query: QueryFeedDto = { saved: true, stream: ['security'] } as QueryFeedDto;
 
@@ -143,6 +153,27 @@ describe('FeedQueryService', () => {
       await expect(
         service.getFeed(userId, { source: ['unknown-id'] } as QueryFeedDto),
       ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('explicit date range', () => {
+    it('uses dateFrom/dateTo as timezone-aware inclusive calendar bounds', async () => {
+      const qb = buildQb([]);
+      mockAnalysisRepo.createQueryBuilder.mockReturnValue(qb);
+
+      await service.getFeed(userId, {
+        dateFrom: '2026-07-23',
+        dateTo: '2026-07-25',
+      } as QueryFeedDto);
+
+      const fromCall = qb.andWhere.mock.calls.find(
+        ([sql]: [string]) => sql === 'a.publishedAt >= :fromDate',
+      );
+      const toCall = qb.andWhere.mock.calls.find(
+        ([sql]: [string]) => sql === 'a.publishedAt < :toDate',
+      );
+      expect(fromCall[1].fromDate.toISOString()).toBe('2026-07-23T00:00:00.000Z');
+      expect(toCall[1].toDate.toISOString()).toBe('2026-07-26T00:00:00.000Z');
     });
   });
 

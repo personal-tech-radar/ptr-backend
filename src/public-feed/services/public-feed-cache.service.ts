@@ -33,10 +33,12 @@ export class PublicFeedCacheService {
   async buildVersionedPreviewKey(
     technologyInterestIds: string[],
     contentStreamIds: string[],
+    dateFrom?: string,
+    dateTo?: string,
   ): Promise<string> {
     const versions = await this.versionService.getStreamVersions(contentStreamIds);
     const versionHash = createHash('sha1').update(JSON.stringify(versions)).digest('hex');
-    return `${this.buildPreviewKey(technologyInterestIds, contentStreamIds)}:${versionHash}`;
+    return `${this.buildPreviewKey(technologyInterestIds, contentStreamIds, dateFrom, dateTo)}:${versionHash}`;
   }
 
   // Stable across param order — filters are sorted before hashing.
@@ -52,10 +54,17 @@ export class PublicFeedCacheService {
     return `${PUBLIC_FEED_LIST_CACHE_KEY_PREFIX}:${hash}`;
   }
 
-  buildPreviewKey(technologyInterestIds: string[], contentStreamIds: string[]): string {
+  buildPreviewKey(
+    technologyInterestIds: string[],
+    contentStreamIds: string[],
+    dateFrom?: string,
+    dateTo?: string,
+  ): string {
     const normalized = {
       technologyInterestIds: [...technologyInterestIds].sort(),
       contentStreamIds: [...contentStreamIds].sort(),
+      dateFrom: dateFrom ?? null,
+      dateTo: dateTo ?? null,
     };
     const hash = createHash('sha1').update(JSON.stringify(normalized)).digest('hex');
     return `${PUBLIC_FEED_PREVIEW_CACHE_KEY_PREFIX}:${hash}`;

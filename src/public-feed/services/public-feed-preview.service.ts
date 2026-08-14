@@ -9,6 +9,7 @@ import { LoggingService } from '../../common/logging/logging.service';
 import {
   addDaysToDateString,
   getLocalDateString,
+  zonedEndOfDayExclusiveUTC,
   zonedStartOfDayUTC,
 } from '../../common/util/timezone.util';
 import { RelevanceScoringService } from '../../scoring/services/relevance-scoring.service';
@@ -47,13 +48,15 @@ export class PublicFeedPreviewService {
     const cacheKey = await this.publicFeedCacheService.buildVersionedPreviewKey(
       technologyInterestIds,
       dto.contentStreamIds,
+      dto.dateFrom,
+      dto.dateTo,
     );
     const cached = await this.publicFeedCacheService.getPreview(cacheKey);
     if (cached) {
       return cached;
     }
 
-    const candidates = await this.fetchCandidates();
+    const candidates = await this.fetchCandidates(dto);
     const data = await this.scoreCandidates(
       candidates,
       technologyInterestIds,
@@ -106,7 +109,7 @@ export class PublicFeedPreviewService {
   // to FEED_MAX_DAYS (default 30) against a fixed 'UTC' zone — there's no per-request timezone for
   // an anonymous caller. Deliberately NO qualityScore gate here — quality is already a scoring
   // input inside RelevanceScoringService.computeScore's formula.
-  private async fetchCandidates(): Promise<ArticleAnalysis[]> {
+  private async fetchCandidates(dto: PreviewFeedDto): Promise<ArticleAnalysis[]> {
     const maxDays = Number(process.env.FEED_MAX_DAYS) || DEFAULT_MAX_DAYS;
     const todayStr = getLocalDateString(new Date(), 'UTC');
     const floorDateStr = addDaysToDateString(todayStr, -(maxDays - 1));
@@ -122,7 +125,12 @@ export class PublicFeedPreviewService {
       .andWhere('a.deletedAt IS NULL')
       .andWhere('s.deletedAt IS NULL')
       .andWhere('a.status = :status', { status: ArticleStatus.ANALYZED })
-      .andWhere('a.publishedAt >= :fromDate', { fromDate: fromDateInclusive })
+      .andWhere('a.publishedAt >= :fromDate', {
+        fromDate: dto.dateFrom ? zonedStartOfDayUTC(dto.dateFrom, 'UTC') : fromDateInclusive,
+      })
+      .andWhere(dto.dateTo ? 'a.publishedAt < :toDate' : '1=1', {
+        toDate: dto.dateTo ? zonedEndOfDayExclusiveUTC(dto.dateTo, 'UTC') : undefined,
+      })
       .getMany();
   }
 

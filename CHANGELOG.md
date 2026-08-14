@@ -8,6 +8,20 @@
 - Added the public `POST /auth/verification/resend` endpoint with generic responses,
   rate limiting, token supersession, and Swagger documentation.
 
+## 2026-08-14
+
+- Added explicit `dateFrom`/`dateTo` filters to the authenticated personal feed, with timezone-aware
+  calendar bounds and cache-key isolation.
+- Changed info-page `fullText` storage from JSONB to text while retaining its editor-neutral JSON
+  document payload.
+- Seeded editable example pages for Legal Notice, Privacy Policy, and Cookies Policy.
+- Added administrator-managed, soft-deletable info pages with text-based JSON document content and API-key public
+  list/detail endpoints.
+- Registration now returns user access and refresh tokens so onboarding can continue without a
+  second login; feed and digest eligibility still require verification and completed onboarding.
+- Added inclusive UTC date filters to the anonymous public-feed preview and included them in cache
+  keys.
+
 ## 2026-08-03
 
 - Validated saved-article and feedback IDs before database access and made first-open, save/unsave,

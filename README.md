@@ -35,6 +35,7 @@ Detailed operational designs:
 - [Digests](src/digest/README.md)
 - [Redirects and tracking](src/redirects/README.md)
 - [User article actions](src/user-actions/README.md)
+- [Info pages](src/info-pages/README.md)
 - [Production bootstrap migration](docs/production-bootstrap.md)
 
 `APP_URL` is the externally reachable origin embedded in email, tracking, action, and digest-page
@@ -60,8 +61,9 @@ and daily/weekly digest opt-ins through `PATCH /users/me`. Digest delivery times
 are not editable. Re-submitting onboarding synchronizes (replaces) the user's taxonomy and stream
 selections rather than accumulating deselected streams.
 An identical onboarding payload is a no-op for persistence and feed-cache versioning; effective
-taxonomy and stream selections are compared as sets. Personal feed `beforeDate` accepts only a
-real calendar date in exact `YYYY-MM-DD` form. Oversized JSON responses use HTTP 413 with
+taxonomy and stream selections are compared as sets. Personal feed `beforeDate`, `dateFrom`, and
+`dateTo` accept only real calendar dates in exact `YYYY-MM-DD` form; explicit ranges are inclusive,
+interpreted in the user's timezone, and limited by `FEED_MAX_DAYS`. Oversized JSON responses use HTTP 413 with
 `PAYLOAD_TOO_LARGE`, while an exhausted discovery quota uses HTTP 429 with
 `DISCOVERY_LIMIT_REACHED`.
 
@@ -122,6 +124,11 @@ operations; they never disable a source or reorder the public feed.
 interest, source, date, and saved filters. `GET /public/feed` requires the public-content API key
 and remains ordered strictly by publication date. `POST /public/feed/preview` is anonymous and
 scores a pre-registration selection without creating a user.
+
+Information pages are managed through `/admin/info-pages` and exposed publicly through API-key-only
+`GET /info-pages` routes. Their `fullText` is a text column containing an editor-neutral JSON
+document string; the migration seeds editable examples for Legal Notice, Privacy Policy, and
+Cookies Policy.
 
 Analyzed articles with a genuinely absent or malformed publication date remain public-eligible for
 backward compatibility, but dated articles always sort first. Undated rows use `createdAt DESC`,

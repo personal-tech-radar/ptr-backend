@@ -48,6 +48,23 @@ describe('FeedCacheService', () => {
       expect(keyA).not.toBe(keyB);
     });
 
+    it('produces different keys for different explicit date ranges', () => {
+      const keyA = service.buildKey(
+        userId,
+        { dateFrom: '2026-08-01', dateTo: '2026-08-07' } as QueryFeedDto,
+        '2026-08-07',
+        7,
+      );
+      const keyB = service.buildKey(
+        userId,
+        { dateFrom: '2026-08-02', dateTo: '2026-08-07' } as QueryFeedDto,
+        '2026-08-07',
+        6,
+      );
+
+      expect(keyA).not.toBe(keyB);
+    });
+
     it('includes the userId, resolved beforeDate, and days in the key', () => {
       const key = service.buildKey(userId, {} as QueryFeedDto, '2026-07-25', 7);
 

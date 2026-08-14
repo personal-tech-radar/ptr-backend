@@ -106,8 +106,10 @@ describe('AuthService', () => {
         mockUser.displayName,
         expect.any(String),
       );
-      expect(result.email).toBe(mockUser.email);
-      expect((result as any).passwordHash).toBeUndefined();
+      expect(result.user.email).toBe(mockUser.email);
+      expect(result.user).not.toHaveProperty('passwordHash');
+      expect(result.accessToken).toBe('signed-access-token');
+      expect(result.refreshToken).toEqual(expect.any(String));
       expect(mockUserCommandService.create).toHaveBeenCalledWith(
         expect.objectContaining({ timezone: null }),
       );
@@ -123,7 +125,7 @@ describe('AuthService', () => {
           password: 'correct-password',
           displayName: mockUser.displayName,
         }),
-      ).resolves.toMatchObject({ email: mockUser.email });
+      ).resolves.toMatchObject({ user: { email: mockUser.email } });
     });
   });
 

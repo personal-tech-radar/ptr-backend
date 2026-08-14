@@ -60,7 +60,7 @@ export class PublicFeedController {
   @ApiOperation({
     summary: 'Preview a personalized feed before registration',
     description:
-      'Anonymous rate-limited preview using selected existing technologies, interests, streams, and experience level without creating a user. Returns a cached flat top-30 result rather than day groups and does not persist personal interaction state.',
+      'Anonymous rate-limited preview using selected existing technologies, interests, streams, and experience level without creating a user. Optional dateFrom/dateTo filters constrain publication dates in UTC. Returns a cached flat top-30 result rather than day groups and does not persist personal interaction state.',
   })
   @ApiResponse({ status: 200, type: PreviewFeedResponseDto })
   @ApiResponse({ status: 400, type: ErrorResponseDto })

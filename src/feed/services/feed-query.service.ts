@@ -16,6 +16,7 @@ import { RelevanceScoringService } from '../../scoring/services/relevance-scorin
 import { UserScoringProfileService } from '../../scoring/services/user-scoring-profile.service';
 import { Source } from '../../sources/entities/source.entity';
 import { ContentStream } from '../../taxonomy/entities/content-stream.entity';
+import { TechnologyInterestKind } from '../../taxonomy/entities/technology-interest.entity';
 import { ContentStreamQueryService } from '../../taxonomy/services/content-stream-query.service';
 import { TechnologyInterestQueryService } from '../../taxonomy/services/technology-interest-query.service';
 import { PersonalArticleLinkContext } from '../../user-actions/entities/personal-article-link.entity';
@@ -78,8 +79,17 @@ export class FeedQueryService {
     const maxDays = Number(process.env.FEED_MAX_DAYS) || DEFAULT_MAX_DAYS;
     const days = Math.min(query.days ?? DEFAULT_DAYS, maxDays);
     const timezone = user.timezone!;
-    const beforeDateStr = query.beforeDate ?? getLocalDateString(new Date(), timezone);
-    const rangeStartStr = addDaysToDateString(beforeDateStr, -(days - 1));
+    const todayStr = getLocalDateString(new Date(), timezone);
+    const beforeDateStr = query.dateTo ?? query.beforeDate ?? todayStr;
+    const rangeStartStr = query.dateFrom ?? addDaysToDateString(beforeDateStr, -(days - 1));
+    const requestedDays = this.calendarDaysBetween(rangeStartStr, beforeDateStr);
+    if (requestedDays < 1) {
+      throw new BadRequestException('dateFrom must be on or before dateTo');
+    }
+    if (requestedDays > maxDays) {
+      throw new BadRequestException(`Date range cannot exceed ${maxDays} days`);
+    }
+    const effectiveDays = query.dateFrom || query.dateTo ? requestedDays : days;
 
     const toDateExclusive = zonedEndOfDayExclusiveUTC(beforeDateStr, timezone);
     let fromDateInclusive = zonedStartOfDayUTC(rangeStartStr, timezone);
@@ -88,7 +98,6 @@ export class FeedQueryService {
     // saved=true, which must always be able to surface a user's own saved articles regardless of
     // age (see coder.md decision #2).
     if (!isSaved) {
-      const todayStr = getLocalDateString(new Date(), timezone);
       const floorDateStr = addDaysToDateString(todayStr, -(maxDays - 1));
       const floorDate = zonedStartOfDayUTC(floorDateStr, timezone);
       if (floorDate.getTime() > fromDateInclusive.getTime()) {
@@ -107,7 +116,7 @@ export class FeedQueryService {
       selectedStreams = await this.contentStreamQueryService.findSelectedByUser(userId);
     }
 
-    const dayStrings = this.buildDayRange(beforeDateStr, days);
+    const dayStrings = this.buildDayRange(beforeDateStr, effectiveDays);
     const byDay = this.groupByLocalDay(scored, timezone);
 
     const rawDayGroups = dayStrings.map((date) => ({
@@ -144,6 +153,18 @@ export class FeedQueryService {
         'saved=true cannot be combined with stream/technology/interest/source filters',
       );
     }
+
+    if (query.dateFrom && query.dateTo && query.dateFrom > query.dateTo) {
+      throw new BadRequestException('dateFrom must be on or before dateTo');
+    }
+  }
+
+  private calendarDaysBetween(fromDate: string, toDate: string): number {
+    const [fromYear, fromMonth, fromDay] = fromDate.split('-').map(Number);
+    const [toYear, toMonth, toDay] = toDate.split('-').map(Number);
+    const from = Date.UTC(fromYear, fromMonth - 1, fromDay);
+    const to = Date.UTC(toYear, toMonth - 1, toDay);
+    return Math.floor((to - from) / (24 * 60 * 60 * 1000)) + 1;
   }
 
   private async resolveStreamFilter(streamKeys?: string[]): Promise<string[]> {
@@ -327,7 +348,9 @@ export class FeedQueryService {
       list.push(t.technologyInterestId);
       technologyInterestIdsByArticle.set(t.articleId, list);
       const target =
-        t.technologyInterest.kind === 'technology' ? technologyIdsByArticle : interestIdsByArticle;
+        t.technologyInterest.kind === TechnologyInterestKind.TECHNOLOGY
+          ? technologyIdsByArticle
+          : interestIdsByArticle;
       target.set(t.articleId, [...(target.get(t.articleId) ?? []), t.technologyInterestId]);
     }
 

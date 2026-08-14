@@ -60,6 +60,8 @@ export class FeedCacheService {
       interest: [...(query.interest ?? [])].sort(),
       source: [...(query.source ?? [])].sort(),
       saved: query.saved ?? false,
+      dateFrom: query.dateFrom ?? null,
+      dateTo: query.dateTo ?? null,
     };
     return createHash('sha1').update(JSON.stringify(normalized)).digest('hex');
   }

@@ -18,7 +18,6 @@ import {
 } from '@nestjs/swagger';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { User } from '../../users/entities/user.entity';
-import { UserResponseDto } from '../../users/dto/user-response.dto';
 import { ErrorResponseDto } from '../../common/error/error-response.dto';
 import { CurrentUser } from '../decorators/current-user.decorator';
 import type { CurrentUserPayload } from '../decorators/current-user.decorator';
@@ -48,9 +47,9 @@ export class AuthController {
     description:
       'Creates a normal user from email, password, and display name, then sends an email-verification link. The user may log in and complete onboarding before verification, but feeds and scheduled digests remain unavailable until both verification and onboarding are complete.',
   })
-  @ApiResponse({ status: 201, type: UserResponseDto })
+  @ApiResponse({ status: 201, type: AuthTokensResponseDto })
   @ApiResponse({ status: 409, type: ErrorResponseDto, description: 'Email already registered' })
-  async register(@Body() dto: RegisterDto): Promise<UserResponseDto> {
+  async register(@Body() dto: RegisterDto): Promise<AuthTokensResponseDto> {
     return this.authService.register(dto);
   }
 
