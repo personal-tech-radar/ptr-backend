@@ -84,6 +84,7 @@ describe('ContentExtractionService', () => {
         <html><head>
         <meta property="og:title" content="OG Fallback Title" />
         <meta property="og:description" content="OG description text" />
+        <meta property="og:type" content="article" />
         </head><body><p>short</p></body></html>`;
 
       const result = service.extract(html, 'https://example.com/post');
@@ -106,6 +107,23 @@ describe('ContentExtractionService', () => {
 
       expect(result.success).toBe(true);
       expect(result.publishedAt).toBe('2026-06-21T08:30:00Z');
+    });
+
+    it('does not classify a product landing page with only OpenGraph marketing metadata as an article', () => {
+      MockedReadability.mockImplementation(() => ({ parse: () => null }));
+
+      const html = `
+        <html><head>
+        <meta property="og:title" content="The Self-Hosted PaaS Built for Developers" />
+        <meta property="og:description" content="Deploy apps on your own infrastructure." />
+        <meta property="og:type" content="website" />
+        </head><body><h1>The Self-Hosted PaaS Built for Developers</h1></body></html>`;
+
+      const result = service.extract(html, 'https://dokploy.com/self-hosted-paas');
+
+      expect(result.success).toBe(false);
+      expect(result.isArticle).toBe(false);
+      expect(result.method).toBeNull();
     });
 
     it('falls back to Readability+JSDOM when there is no JSON-LD or OpenGraph', () => {

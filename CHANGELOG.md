@@ -10,6 +10,10 @@
 
 ## 2026-08-14
 
+- Rejected generic product and marketing landing pages during source validation. OpenGraph
+  extraction now requires article metadata, readability requires publication signals, and web
+  ingestion/candidate sampling accepts only article or information-page content.
+
 - Added English-language gating to article pre-analysis and improved HTTP retrieval behavior: 403
   responses fail without pointless retries, 429 responses honor `Retry-After` when available, and
   source requests send an explicit crawler user agent.

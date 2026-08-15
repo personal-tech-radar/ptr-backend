@@ -29,6 +29,8 @@ export function toContentExtractionMethod(method: ExtractionMethod): ContentExtr
 
 export interface ExtractionResult {
   success: boolean;
+  /** True only when the page exposes a publication/information-page signal. */
+  isArticle: boolean;
   method: ExtractionMethod | null;
   title: string | null;
   content: string | null;
@@ -69,6 +71,7 @@ export class ContentExtractionService {
 
     return {
       success: false,
+      isArticle: false,
       method: null,
       title: null,
       content: null,
@@ -103,6 +106,7 @@ export class ContentExtractionService {
           if (title) {
             return {
               success: true,
+              isArticle: true,
               method: 'json_ld',
               title,
               content,
@@ -151,11 +155,15 @@ export class ContentExtractionService {
       const $ = cheerio.load(html);
       const title = $('meta[property="og:title"]').attr('content')?.trim();
       const description = $('meta[property="og:description"]').attr('content')?.trim();
+      const type = $('meta[property="og:type"]').attr('content')?.trim().toLowerCase();
       const publishedAt = $('meta[property="article:published_time"]').attr('content')?.trim();
 
-      if (title) {
+      // A title/description pair also exists on product and marketing landing pages. Require
+      // explicit article metadata before accepting OpenGraph as publication extraction.
+      if (title && (type === 'article' || Boolean(publishedAt))) {
         return {
           success: true,
+          isArticle: true,
           method: 'opengraph',
           title,
           content: description ?? null,
@@ -172,12 +180,15 @@ export class ContentExtractionService {
 
   private extractViaReadability(html: string, url: string): ExtractionResult {
     try {
+      if (!this.hasArticleSignals(html, url)) return this.empty('readability');
+
       const dom = new JSDOM(html, { url });
       const parsed = new Readability(dom.window.document).parse();
 
       if (parsed?.title && (parsed.textContent?.trim().length ?? 0) > 0) {
         return {
           success: true,
+          isArticle: true,
           method: 'readability',
           title: parsed.title,
           content: parsed.content ?? null,
@@ -201,6 +212,7 @@ export class ContentExtractionService {
       if (title && textContent) {
         return {
           success: true,
+          isArticle: true,
           method: 'cheerio_selector',
           title,
           content: node.html(),
@@ -219,6 +231,34 @@ export class ContentExtractionService {
   }
 
   private empty(method: ExtractionMethod): ExtractionResult {
-    return { success: false, method, title: null, content: null, textContent: null };
+    return {
+      success: false,
+      isArticle: false,
+      method,
+      title: null,
+      content: null,
+      textContent: null,
+    };
+  }
+
+  private hasArticleSignals(html: string, url: string): boolean {
+    const $ = cheerio.load(html);
+    if ($('article').length > 0) return true;
+    if (
+      $(
+        'time[datetime], meta[property="article:published_time"], meta[name="date"], meta[name="pubdate"], meta[itemprop="datePublished"]',
+      ).length > 0
+    ) {
+      return true;
+    }
+
+    try {
+      const path = new URL(url).pathname.toLowerCase();
+      return /\/(blog|blogs|news|article|articles|post|posts|insight|insights|journal|story|stories|learn|guide|guides|docs|documentation|release|releases|changelog)(\/|$)/.test(
+        path,
+      );
+    } catch {
+      return false;
+    }
   }
 }

@@ -25,6 +25,11 @@ an accessible supported source, successful publication fetch/extraction, at leas
 matches the originating taxonomy and stream, and no distinct equivalent source. Existing equivalent
 sources are reused and receive only the missing provenance relationship.
 
+Web-page extraction also requires publication signals. JSON-LD Article types, explicit OpenGraph
+article metadata, article dates, semantic `<article>` markup, or a recognized blog/news/docs path
+are accepted. A generic product, pricing, signup, or marketing landing page with only `og:title`
+and `og:description` is rejected and cannot promote a source.
+
 Identity precedence is repository coordinates, canonical/feed/redirect URLs, normalized URL, then
 domain plus meaningful exact path. Domain alone never merges unrelated platform sections.
 Relationships record source, originating taxonomy row, stream, origin, and timestamps; article

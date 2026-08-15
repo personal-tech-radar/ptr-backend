@@ -398,7 +398,9 @@ export class SourceCandidatesService {
       });
 
       const extraction = this.contentExtractionService.extract(response.data, normalized, null);
-      if (!extraction.success || !extraction.title || !extraction.method) return null;
+      if (!extraction.success || !extraction.isArticle || !extraction.title || !extraction.method) {
+        return null;
+      }
 
       const title = extraction.title.trim();
       const titleHash = createHash('sha256').update(title).digest('hex');
