@@ -21,6 +21,7 @@ describe('PublicFeedController', () => {
       mockPublicFeedPreviewService as any,
       mockPublicFeedCacheService as any,
       { findAll: jest.fn().mockResolvedValue([]) } as any,
+      { get: jest.fn() } as any,
     );
   });
 

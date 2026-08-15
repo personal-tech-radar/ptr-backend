@@ -25,6 +25,7 @@ type SourceWithWebConfig = Source & { webConfig?: WebSourceConfig };
 
 const TITLE_DUPLICATE_WINDOW_DAYS = 7;
 const SUMMARY_PREVIEW_LENGTH = 500;
+const ANALYSIS_CUTOFF_HOURS = 78;
 
 /**
  * Fetches and ingests articles for a `Source` of type `web`. Tries the stored
@@ -211,6 +212,7 @@ export class WebSourceFetcherService {
       TITLE_DUPLICATE_WINDOW_DAYS,
     );
     const status = titleDuplicate ? ArticleStatus.DUPLICATE : ArticleStatus.NEW;
+    const publishedAt = this.resolvePublishedAt(sitemapLastmod, extraction.publishedAt);
 
     const article = await this.articlesService.create({
       sourceId: source.id,
@@ -220,7 +222,7 @@ export class WebSourceFetcherService {
       titleHash,
       rawContent: extraction.content,
       summaryFromFeed: extraction.textContent?.slice(0, SUMMARY_PREVIEW_LENGTH) ?? null,
-      publishedAt: this.resolvePublishedAt(sitemapLastmod, extraction.publishedAt),
+      publishedAt,
       status,
       contentExtractionMethod: toContentExtractionMethod(extraction.method),
       contentExtractionConfig: { method: extraction.method },
@@ -229,7 +231,8 @@ export class WebSourceFetcherService {
 
     await this.persistExtractionMethodIfChanged(source.id, config, extraction.method);
 
-    if (status === ArticleStatus.NEW) {
+    const cutoff = new Date(Date.now() - ANALYSIS_CUTOFF_HOURS * 60 * 60 * 1000);
+    if (status === ArticleStatus.NEW && publishedAt && publishedAt >= cutoff) {
       await this.articlesService.updateStatus(article.id, ArticleStatus.PENDING_ANALYSIS);
       await this.queueService.addAnalyzeArticleJob(article.id);
     }
@@ -237,11 +240,9 @@ export class WebSourceFetcherService {
     return true;
   }
 
-  // Priority: sitemap <lastmod> -> JSON-LD/OpenGraph date surfaced by the content-extraction
-  // ladder -> ingestion time. The last option should be the rare case, not the default, for
-  // sources with reasonable sitemap/structured-data hygiene.
-  private resolvePublishedAt(sitemapLastmod?: string, extractedDate?: string | null): Date {
-    return this.parseDate(sitemapLastmod) ?? this.parseDate(extractedDate) ?? new Date();
+  // Prefer sitemap dates, then structured-data dates; unknown dates remain null and are not queued.
+  private resolvePublishedAt(sitemapLastmod?: string, extractedDate?: string | null): Date | null {
+    return this.parseDate(sitemapLastmod) ?? this.parseDate(extractedDate);
   }
 
   private parseDate(value?: string | null): Date | null {

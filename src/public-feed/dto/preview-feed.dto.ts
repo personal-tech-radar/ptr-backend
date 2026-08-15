@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { ArrayMinSize, IsArray, IsOptional, IsUUID } from 'class-validator';
+import { ArrayMinSize, IsArray, IsDateString, IsOptional, IsUUID, Matches } from 'class-validator';
 
 export class PreviewFeedDto {
   @ApiPropertyOptional({
@@ -23,4 +23,22 @@ export class PreviewFeedDto {
   @ArrayMinSize(1)
   @IsUUID('4', { each: true })
   contentStreamIds: string[];
+
+  @ApiPropertyOptional({
+    description: 'Earliest publication date (inclusive), YYYY-MM-DD, interpreted in UTC.',
+    example: '2026-08-01',
+  })
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  @IsDateString({ strict: true, strictSeparator: true })
+  dateFrom?: string;
+
+  @ApiPropertyOptional({
+    description: 'Latest publication date (inclusive), YYYY-MM-DD, interpreted in UTC.',
+    example: '2026-08-14',
+  })
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  @IsDateString({ strict: true, strictSeparator: true })
+  dateTo?: string;
 }

@@ -36,6 +36,32 @@ const toBoolean = ({ obj, key }: TransformFnParams): boolean | undefined => {
 export class QueryFeedDto {
   @ApiPropertyOptional({
     description:
+      "Earliest publication date (inclusive), exactly YYYY-MM-DD, interpreted in the user's timezone.",
+    example: '2026-08-01',
+  })
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'dateFrom must be in YYYY-MM-DD format' })
+  @IsDateString(
+    { strict: true, strictSeparator: true },
+    { message: 'dateFrom must be a valid calendar date' },
+  )
+  dateFrom?: string;
+
+  @ApiPropertyOptional({
+    description:
+      "Latest publication date (inclusive), exactly YYYY-MM-DD, interpreted in the user's timezone.",
+    example: '2026-08-14',
+  })
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'dateTo must be in YYYY-MM-DD format' })
+  @IsDateString(
+    { strict: true, strictSeparator: true },
+    { message: 'dateTo must be a valid calendar date' },
+  )
+  dateTo?: string;
+
+  @ApiPropertyOptional({
+    description:
       'Most recent real calendar day (inclusive) to include, exactly YYYY-MM-DD, interpreted ' +
       "in the user's own timezone. Defaults to today in the user's timezone.",
     example: '2026-07-25',

@@ -10,11 +10,13 @@ import { ApiKeyGuard } from '../../common/guards/api-key.guard';
 import { ErrorResponseDto } from '../../common/error/error-response.dto';
 import { PreviewFeedDto } from '../dto/preview-feed.dto';
 import { PreviewFeedResponseDto } from '../dto/preview-feed-response.dto';
+import { PipelineStatisticsDto } from '../dto/pipeline-statistics.dto';
 import { PublicFeedResponseDto } from '../dto/public-feed-response.dto';
 import { QueryPublicFeedDto } from '../dto/query-public-feed.dto';
 import { PublicFeedCacheService } from '../services/public-feed-cache.service';
 import { PublicFeedPreviewService } from '../services/public-feed-preview.service';
 import { PublicFeedQueryService } from '../services/public-feed-query.service';
+import { PublicFeedStatisticsService } from '../services/public-feed-statistics.service';
 import { ContentStreamQueryService } from '../../taxonomy/services/content-stream-query.service';
 
 // Fully public — no guards anywhere in this controller (no rate limiting either, deliberately
@@ -28,6 +30,7 @@ export class PublicFeedController {
     private readonly publicFeedPreviewService: PublicFeedPreviewService,
     private readonly publicFeedCacheService: PublicFeedCacheService,
     private readonly contentStreamQueryService: ContentStreamQueryService,
+    private readonly publicFeedStatisticsService: PublicFeedStatisticsService,
   ) {}
 
   @Get()
@@ -56,11 +59,25 @@ export class PublicFeedController {
     return result;
   }
 
+  @Get('statistics')
+  @UseGuards(ApiKeyGuard)
+  @ApiSecurity('api-key')
+  @ApiOperation({
+    summary: 'Get public pipeline statistics',
+    description:
+      'API-key-only aggregate statistics for the rolling last 24 hours. The standalone endpoint does not apply a personal preview profile, so selectedForRadar is null; the same statistics are included with the selected count in POST /public/feed/preview.',
+  })
+  @ApiResponse({ status: 200, type: PipelineStatisticsDto })
+  @ApiResponse({ status: 401, type: ErrorResponseDto })
+  async getStatistics(): Promise<PipelineStatisticsDto> {
+    return this.publicFeedStatisticsService.get();
+  }
+
   @Post('preview')
   @ApiOperation({
     summary: 'Preview a personalized feed before registration',
     description:
-      'Anonymous rate-limited preview using selected existing technologies, interests, streams, and experience level without creating a user. Returns a cached flat top-30 result rather than day groups and does not persist personal interaction state.',
+      'Anonymous rate-limited preview using selected existing technologies, interests, streams, and experience level without creating a user. Optional dateFrom/dateTo filters constrain publication dates in UTC. Returns a cached flat top-30 result rather than day groups and does not persist personal interaction state.',
   })
   @ApiResponse({ status: 200, type: PreviewFeedResponseDto })
   @ApiResponse({ status: 400, type: ErrorResponseDto })

@@ -33,6 +33,8 @@ export class PublicArticleResponseDto {
   publishedAt: Date | null;
   @ApiPropertyOptional()
   summary: string | null;
+  @ApiPropertyOptional({ description: 'Detailed three-paragraph article-page summary.' })
+  longSummary: string | null;
   @ApiProperty({ type: [PublicTaxonomyItemDto] })
   technologies: PublicTaxonomyItemDto[];
   @ApiProperty({ type: [PublicTaxonomyItemDto] })

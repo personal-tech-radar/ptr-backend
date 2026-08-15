@@ -30,6 +30,7 @@ describe('FeedController', () => {
       {
         findSelectedByUser: jest.fn().mockResolvedValue([]),
       } as any,
+      { get: jest.fn() } as any,
     );
   });
 

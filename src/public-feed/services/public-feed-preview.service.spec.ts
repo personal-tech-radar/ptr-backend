@@ -56,6 +56,7 @@ describe('PublicFeedPreviewService', () => {
     getPreview: jest.fn(),
     setPreview: jest.fn(),
   };
+  const mockPublicFeedStatisticsService = { get: jest.fn() };
 
   // The real, unmocked scorer — proves the service integrates with it correctly end to end.
   const relevanceScoringService = new RelevanceScoringService();
@@ -75,6 +76,15 @@ describe('PublicFeedPreviewService', () => {
     mockPublicFeedCacheService.buildPreviewKey.mockReturnValue('cache-key');
     mockPublicFeedCacheService.buildVersionedPreviewKey.mockResolvedValue('cache-key');
     mockPublicFeedCacheService.getPreview.mockResolvedValue(null);
+    mockPublicFeedStatisticsService.get.mockImplementation((selectedForRadar = null) =>
+      Promise.resolve({
+        period: 'Last 24h',
+        activeSources: 1,
+        articlesCollected: 2,
+        articlesAnalyzed: 3,
+        selectedForRadar,
+      }),
+    );
 
     service = new PublicFeedPreviewService(
       mockAnalysisRepo as any,
@@ -84,6 +94,7 @@ describe('PublicFeedPreviewService', () => {
       mockTechnologyInterestQueryService as any,
       relevanceScoringService,
       mockPublicFeedCacheService as any,
+      mockPublicFeedStatisticsService as any,
     );
   });
 
@@ -113,8 +124,9 @@ describe('PublicFeedPreviewService', () => {
       const qb = buildQb([]);
       mockAnalysisRepo.createQueryBuilder.mockReturnValue(qb);
 
-      await expect(service.preview({ contentStreamIds: [streamId] })).resolves.toEqual({
+      await expect(service.preview({ contentStreamIds: [streamId] })).resolves.toMatchObject({
         data: [],
+        meta: { period: 'Last 24h', selectedForRadar: 0 },
       });
     });
 
@@ -224,12 +236,18 @@ describe('PublicFeedPreviewService', () => {
 
   describe('caching', () => {
     it('returns the cached response on a hit without querying candidates or repos', async () => {
-      const cached = { data: [{ articleId: 'cached-1' }] };
+      const cached = {
+        data: [{ articleId: 'cached-1' }],
+        meta: { period: 'old', selectedForRadar: 0 },
+      };
       mockPublicFeedCacheService.getPreview.mockResolvedValue(cached);
 
       const result = await service.preview(dto);
 
-      expect(result).toBe(cached);
+      expect(result).toMatchObject({
+        data: cached.data,
+        meta: { period: 'Last 24h', selectedForRadar: 1 },
+      });
       expect(mockAnalysisRepo.createQueryBuilder).not.toHaveBeenCalled();
       expect(mockArticleStreamRepo.find).not.toHaveBeenCalled();
       expect(mockArticleTechnologyInterestRepo.find).not.toHaveBeenCalled();
@@ -241,9 +259,13 @@ describe('PublicFeedPreviewService', () => {
 
       await service.preview(dto);
 
-      expect(mockPublicFeedCacheService.setPreview).toHaveBeenCalledWith('cache-key', {
-        data: [],
-      });
+      expect(mockPublicFeedCacheService.setPreview).toHaveBeenCalledWith(
+        'cache-key',
+        expect.objectContaining({
+          data: [],
+          meta: expect.objectContaining({ period: 'Last 24h', selectedForRadar: 0 }),
+        }),
+      );
     });
   });
 });

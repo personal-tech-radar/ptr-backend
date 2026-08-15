@@ -53,7 +53,7 @@ export class AuthService {
     return user;
   }
 
-  async register(dto: RegisterDto) {
+  async register(dto: RegisterDto): Promise<AuthTokensResponseDto> {
     const passwordHash = await bcrypt.hash(dto.password, BCRYPT_SALT_ROUNDS);
     const user = await this.userCommandService.create({
       email: dto.email,
@@ -81,7 +81,7 @@ export class AuthService {
     }
 
     this.logger.info('User registered', { userId: user.id });
-    return toUserResponseDto(user);
+    return this.issueTokens(user);
   }
 
   async verifyEmail(token: string): Promise<void> {

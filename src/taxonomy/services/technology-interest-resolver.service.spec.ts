@@ -155,7 +155,7 @@ describe('TechnologyInterestResolverService', () => {
       expect(result).toEqual(aliasMatch);
     });
 
-    it('returns null on a total miss, without a similarity search or create', async () => {
+    it('returns null on a total miss without creating a taxonomy row', async () => {
       mockRepository.findOne.mockResolvedValue(null);
       mockQueryBuilder.getOne.mockResolvedValue(null);
 
@@ -167,8 +167,24 @@ describe('TechnologyInterestResolverService', () => {
       expect(result).toBeNull();
       expect(mockRepository.create).not.toHaveBeenCalled();
       expect(mockRepository.save).not.toHaveBeenCalled();
-      // Only the alias-tier query builder call is issued — no similarity() ordering call.
-      expect(mockQueryBuilder.orderBy).not.toHaveBeenCalled();
+      expect(mockQueryBuilder.orderBy).toHaveBeenCalled();
+    });
+
+    it('maps a close spelling variant through read-only similarity', async () => {
+      mockRepository.findOne.mockResolvedValue(null);
+      const similarityMatch = {
+        id: 'ti-5',
+        normalizedName: 'expressjs',
+        aliases: [],
+      } as unknown as TechnologyInterest;
+      mockQueryBuilder.getOne
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(similarityMatch);
+
+      await expect(
+        service.resolveExisting(TechnologyInterestKind.TECHNOLOGY, 'ExpressJS'),
+      ).resolves.toBe(similarityMatch);
+      expect(mockRepository.save).not.toHaveBeenCalled();
     });
   });
 });

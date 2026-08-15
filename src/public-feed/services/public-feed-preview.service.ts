@@ -9,15 +9,18 @@ import { LoggingService } from '../../common/logging/logging.service';
 import {
   addDaysToDateString,
   getLocalDateString,
+  zonedEndOfDayExclusiveUTC,
   zonedStartOfDayUTC,
 } from '../../common/util/timezone.util';
 import { RelevanceScoringService } from '../../scoring/services/relevance-scoring.service';
 import { ScorableArticle, ScoringProfile } from '../../scoring/scoring.types';
 import { ContentStreamQueryService } from '../../taxonomy/services/content-stream-query.service';
+import { TechnologyInterestKind } from '../../taxonomy/entities/technology-interest.entity';
 import { TechnologyInterestQueryService } from '../../taxonomy/services/technology-interest-query.service';
 import { PreviewFeedArticleItemDto } from '../dto/preview-feed-article-item.dto';
 import { PreviewFeedDto } from '../dto/preview-feed.dto';
 import { PreviewFeedResponseDto } from '../dto/preview-feed-response.dto';
+import { PublicFeedStatisticsService } from './public-feed-statistics.service';
 import { PublicFeedCacheService } from './public-feed-cache.service';
 
 const DEFAULT_MAX_DAYS = 30;
@@ -38,6 +41,7 @@ export class PublicFeedPreviewService {
     private readonly technologyInterestQueryService: TechnologyInterestQueryService,
     private readonly relevanceScoringService: RelevanceScoringService,
     private readonly publicFeedCacheService: PublicFeedCacheService,
+    private readonly publicFeedStatisticsService: PublicFeedStatisticsService,
   ) {}
 
   async preview(dto: PreviewFeedDto): Promise<PreviewFeedResponseDto> {
@@ -47,19 +51,27 @@ export class PublicFeedPreviewService {
     const cacheKey = await this.publicFeedCacheService.buildVersionedPreviewKey(
       technologyInterestIds,
       dto.contentStreamIds,
+      dto.dateFrom,
+      dto.dateTo,
     );
     const cached = await this.publicFeedCacheService.getPreview(cacheKey);
     if (cached) {
-      return cached;
+      return {
+        ...cached,
+        meta: await this.publicFeedStatisticsService.get(cached.data.length),
+      };
     }
 
-    const candidates = await this.fetchCandidates();
+    const candidates = await this.fetchCandidates(dto);
     const data = await this.scoreCandidates(
       candidates,
       technologyInterestIds,
       dto.contentStreamIds,
     );
-    const result: PreviewFeedResponseDto = { data };
+    const result: PreviewFeedResponseDto = {
+      data,
+      meta: await this.publicFeedStatisticsService.get(data.length),
+    };
 
     await this.publicFeedCacheService.setPreview(cacheKey, result);
 
@@ -106,7 +118,7 @@ export class PublicFeedPreviewService {
   // to FEED_MAX_DAYS (default 30) against a fixed 'UTC' zone — there's no per-request timezone for
   // an anonymous caller. Deliberately NO qualityScore gate here — quality is already a scoring
   // input inside RelevanceScoringService.computeScore's formula.
-  private async fetchCandidates(): Promise<ArticleAnalysis[]> {
+  private async fetchCandidates(dto: PreviewFeedDto): Promise<ArticleAnalysis[]> {
     const maxDays = Number(process.env.FEED_MAX_DAYS) || DEFAULT_MAX_DAYS;
     const todayStr = getLocalDateString(new Date(), 'UTC');
     const floorDateStr = addDaysToDateString(todayStr, -(maxDays - 1));
@@ -122,7 +134,12 @@ export class PublicFeedPreviewService {
       .andWhere('a.deletedAt IS NULL')
       .andWhere('s.deletedAt IS NULL')
       .andWhere('a.status = :status', { status: ArticleStatus.ANALYZED })
-      .andWhere('a.publishedAt >= :fromDate', { fromDate: fromDateInclusive })
+      .andWhere('a.publishedAt >= :fromDate', {
+        fromDate: dto.dateFrom ? zonedStartOfDayUTC(dto.dateFrom, 'UTC') : fromDateInclusive,
+      })
+      .andWhere(dto.dateTo ? 'a.publishedAt < :toDate' : '1=1', {
+        toDate: dto.dateTo ? zonedEndOfDayExclusiveUTC(dto.dateTo, 'UTC') : undefined,
+      })
       .getMany();
   }
 
@@ -146,8 +163,12 @@ export class PublicFeedPreviewService {
     const selected = await this.technologyInterestQueryService.findByIds(technologyInterestIds);
     const profile: ScoringProfile = {
       technologyInterestIds,
-      technologyIds: selected.filter((item) => item.kind === 'technology').map((item) => item.id),
-      interestIds: selected.filter((item) => item.kind === 'interest').map((item) => item.id),
+      technologyIds: selected
+        .filter((item) => item.kind === TechnologyInterestKind.TECHNOLOGY)
+        .map((item) => item.id),
+      interestIds: selected
+        .filter((item) => item.kind === TechnologyInterestKind.INTEREST)
+        .map((item) => item.id),
       contentStreamIds,
       level: null,
     };
@@ -203,7 +224,9 @@ export class PublicFeedPreviewService {
       list.push(t.technologyInterestId);
       technologyInterestIdsByArticle.set(t.articleId, list);
       const target =
-        t.technologyInterest.kind === 'technology' ? technologyIdsByArticle : interestIdsByArticle;
+        t.technologyInterest.kind === TechnologyInterestKind.TECHNOLOGY
+          ? technologyIdsByArticle
+          : interestIdsByArticle;
       target.set(t.articleId, [...(target.get(t.articleId) ?? []), t.technologyInterestId]);
     }
 

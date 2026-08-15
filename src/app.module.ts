@@ -24,6 +24,7 @@ import { UserActionsModule } from './user-actions/user-actions.module';
 import { UsersModule } from './users/users.module';
 import { AdministratorsModule } from './administrators/administrators.module';
 import { RedirectsModule } from './redirects/redirects.module';
+import { InfoPagesModule } from './info-pages/info-pages.module';
 
 @Module({
   imports: [
@@ -52,6 +53,7 @@ import { RedirectsModule } from './redirects/redirects.module';
     UserActionsModule,
     FeedModule,
     PublicFeedModule,
+    InfoPagesModule,
   ],
 })
 export class AppModule {}

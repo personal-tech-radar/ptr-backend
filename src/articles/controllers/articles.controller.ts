@@ -60,7 +60,7 @@ export class ArticlesController {
   @ApiOperation({
     summary: 'Get one public article by ID',
     description:
-      'Returns renderable public metadata for an eligible globally analyzed article. Internal queue, validation, raw analysis, saved, feedback, and user-specific scoring fields are excluded.',
+      'Returns renderable public metadata for an eligible globally analyzed article. The summary is concise list/digest text; longSummary is the detailed article-page explanation when available. Internal queue, validation, raw analysis, saved, feedback, and user-specific scoring fields are excluded.',
   })
   @ApiResponse({ status: 200, type: PublicArticleResponseDto })
   findOne(@Param('id') id: string): Promise<PublicArticleResponseDto> {

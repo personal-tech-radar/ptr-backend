@@ -178,6 +178,7 @@ describe('AiAnalysisService', () => {
         ArticleAnalysis,
         expect.objectContaining({
           shortSummary: 'summary',
+          longSummary: 'summary',
           relevanceScore: 80,
           qualityScore: 70,
           finalScore: 80 * 0.6 + 70 * 0.4,

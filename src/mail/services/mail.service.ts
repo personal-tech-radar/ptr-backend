@@ -40,7 +40,7 @@ export class MailService {
   // general-purpose "from" address env var yet, and adding one is out of scope for this phase.
   async sendVerificationEmail(to: string, displayName: string, token: string): Promise<void> {
     const from = process.env.DIGEST_FROM_EMAIL ?? 'digest@example.com';
-    const verifyUrl = `${process.env.APP_URL ?? ''}/auth/verify-email?token=${encodeURIComponent(token)}`;
+    const verifyUrl = `${this.frontendUrl()}/auth/verify-email?token=${encodeURIComponent(token)}`;
 
     const { error } = await this.resend.emails.send({
       from,
@@ -75,7 +75,7 @@ export class MailService {
 
   async sendPasswordResetEmail(to: string, displayName: string, token: string): Promise<void> {
     const from = process.env.DIGEST_FROM_EMAIL ?? 'digest@example.com';
-    const resetUrl = `${process.env.APP_URL ?? ''}/auth/password/reset?token=${encodeURIComponent(token)}`;
+    const resetUrl = `${this.frontendUrl()}/auth/password/reset?token=${encodeURIComponent(token)}`;
 
     const { error } = await this.resend.emails.send({
       from,
@@ -158,6 +158,10 @@ export class MailService {
   </div>
 </body>
 </html>`;
+  }
+
+  private frontendUrl(): string {
+    return (process.env.FRONT_APP_URL ?? process.env.APP_URL ?? '').replace(/\/$/, '');
   }
 }
 
