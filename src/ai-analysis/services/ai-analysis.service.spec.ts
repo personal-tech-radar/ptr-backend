@@ -81,7 +81,7 @@ describe('AiAnalysisService', () => {
 
   function mockPreScreen(isPotentiallyRelevant: boolean, shortReason = 'reason') {
     mockOpenAi.chat.completions.create.mockResolvedValueOnce(
-      openAiResponse({ isPotentiallyRelevant, shortReason }),
+      openAiResponse({ isEnglish: true, isPotentiallyRelevant, shortReason }),
     );
   }
 
@@ -113,6 +113,21 @@ describe('AiAnalysisService', () => {
   }
 
   describe('analyzeArticle — Stage 1 (pre-screen)', () => {
+    it('skips a non-English article before full analysis', async () => {
+      mockAnalysisRepo.findOne.mockResolvedValue(null);
+      mockOpenAi.chat.completions.create.mockResolvedValueOnce(
+        openAiResponse({ isEnglish: false, isPotentiallyRelevant: true, shortReason: 'other language' }),
+      );
+
+      await service.analyzeArticle(articleId);
+
+      expect(mockAnalysisRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ preScreenIsRelevant: false, preScreenReason: 'non_english' }),
+      );
+      expect(mockArticlesService.updateStatus).toHaveBeenCalledWith(articleId, ArticleStatus.SKIPPED);
+      expect(mockOpenAi.chat.completions.create).toHaveBeenCalledTimes(1);
+    });
+
     it('logs safe provider context without credential fragments on authentication failure', async () => {
       mockAnalysisRepo.findOne.mockResolvedValue(null);
       mockOpenAi.chat.completions.create.mockRejectedValueOnce(

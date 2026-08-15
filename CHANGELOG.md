@@ -10,6 +10,13 @@
 
 ## 2026-08-14
 
+- Added English-language gating to article pre-analysis and improved HTTP retrieval behavior: 403
+  responses fail without pointless retries, 429 responses honor `Retry-After` when available, and
+  source requests send an explicit crawler user agent.
+- Tightened AI source-discovery guidance to prefer durable official engineering publications and avoid
+  individual marketing, sales, form, gated, or unrelated vendor URLs. Authenticated taxonomy reads are
+  marked `private, no-store` to prevent production proxy/SSR caches from hiding newly created entries.
+
 - Improved article enrichment with taxonomy-aware prompts, bounded canonical signal matching, and
   grounded three-paragraph `longSummary` fields for article pages; existing summaries are backfilled
   by migration while lists and digests continue using `shortSummary`.

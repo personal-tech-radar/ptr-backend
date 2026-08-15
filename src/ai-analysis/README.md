@@ -27,3 +27,7 @@ The migration that introduced `longSummary` backfilled existing short summaries.
 
 Articles without a trustworthy publication date, or older than the analysis window, remain stored for
 deduplication and audit but are not sent to full analysis.
+
+Pre-analysis also requires the source article to be primarily English. Non-English articles are
+retained with a `non_english` pre-screen reason and `skipped` status; they never consume full-analysis
+work or appear in feeds and digests.

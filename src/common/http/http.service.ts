@@ -38,6 +38,8 @@ export class HttpService {
           method,
           headers: {
             'Content-Type': 'application/json',
+            Accept: 'application/json, text/html, application/xhtml+xml, application/xml;q=0.9, */*;q=0.8',
+            'User-Agent': `PersonalTechRadar/${process.env.APP_NAME || 'backend'} (+${process.env.APP_URL || 'http://localhost'})`,
             ...headers,
           },
           signal: controller.signal,
@@ -50,17 +52,30 @@ export class HttpService {
         const response = await fetch(url, fetchOptions);
         clearTimeout(timeoutId);
 
-        const responseData =
-          responseType === 'text' ? await response.text() : await response.json();
+        const responseText = await response.text();
+        let responseData: unknown = responseText;
+        if (responseType !== 'text' && responseText.length > 0) {
+          try {
+            responseData = JSON.parse(responseText);
+          } catch {
+            responseData = responseText;
+          }
+        }
 
         const result: HttpResponse<T> = {
           status: response.status,
-          data: responseData,
+          data: responseData as T,
           headers: Object.fromEntries(response.headers.entries()),
         };
 
         if (!response.ok) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+          const error = new Error(`HTTP ${response.status}: ${response.statusText}`) as Error & {
+            status?: number;
+            retryAfter?: string;
+          };
+          error.status = response.status;
+          error.retryAfter = response.headers.get('retry-after') ?? undefined;
+          throw error;
         }
 
         if (attempt > 0) {
@@ -72,19 +87,25 @@ export class HttpService {
         lastError = error as Error;
         const isLastAttempt = attempt === retries;
 
-        if (isLastAttempt) {
+        const status = this.errorStatus(lastError);
+        const retryable = status === 429 || status === null || status >= 500;
+
+        if (isLastAttempt || !retryable) {
           this.logger.error('HTTP request failed after all retries', {
             url,
             method,
-            attempts: retries + 1,
+            attempts: attempt + 1,
+            status,
             error: lastError.message,
           });
+          break;
         } else {
           this.logger.info(`HTTP request failed, retrying (${attempt + 1}/${retries})`, {
             url,
+            status,
             error: lastError.message,
           });
-          await this.delay(retryDelay * (attempt + 1));
+          await this.delay(this.retryDelay(lastError, retryDelay, attempt));
         }
       }
     }
@@ -130,5 +151,21 @@ export class HttpService {
 
   private delay(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  private errorStatus(error: Error): number | null {
+    const status = (error as Error & { status?: unknown }).status;
+    return typeof status === 'number' ? status : null;
+  }
+
+  private retryDelay(error: Error, fallback: number, attempt: number): number {
+    const retryAfter = (error as Error & { retryAfter?: string }).retryAfter;
+    if (retryAfter) {
+      const seconds = Number(retryAfter);
+      if (Number.isFinite(seconds)) return Math.min(Math.max(seconds * 1000, fallback), 30_000);
+      const date = Date.parse(retryAfter);
+      if (!Number.isNaN(date)) return Math.min(Math.max(date - Date.now(), fallback), 30_000);
+    }
+    return Math.min(fallback * (attempt + 1), 30_000);
   }
 }
