@@ -198,7 +198,12 @@ export class WebSourceFetcherService {
       config.articleContentSelector,
     );
 
-    if (!extraction.success || !extraction.title || !extraction.method) {
+    if (
+      !extraction.success ||
+      extraction.isArticle === false ||
+      !extraction.title ||
+      !extraction.method
+    ) {
       this.logger.error('Web article extraction failed across the full ladder, skipping', null, {
         url: normalizedUrl,
       });
