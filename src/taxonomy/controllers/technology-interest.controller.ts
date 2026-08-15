@@ -1,4 +1,4 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Header, Query, UseGuards } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
   ApiBearerAuth,
@@ -23,6 +23,7 @@ export class TechnologyInterestController {
   constructor(private readonly technologyInterestQueryService: TechnologyInterestQueryService) {}
 
   @Get()
+  @Header('Cache-Control', 'private, no-store')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({

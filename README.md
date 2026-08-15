@@ -95,6 +95,10 @@ used only to match near spellings. No new taxonomy entry is silently created by 
 Valid publication dates are preserved; malformed or missing dates remain null and old or undated web
 articles are retained for audit but are not queued for analysis.
 
+The enrichment pipeline accepts only primarily English source articles. Non-English articles remain
+stored for audit and deduplication but are marked skipped during pre-analysis and are excluded from
+feeds and digests.
+
 Personal feed and digest ranking use one deterministic formula:
 
 ```text

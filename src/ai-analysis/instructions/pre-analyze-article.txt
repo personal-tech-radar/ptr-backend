@@ -4,11 +4,17 @@ Mark an article potentially relevant only when both conditions hold:
 1. It belongs to at least one of the supported streams supplied in the request.
 2. It matches at least one technology or interest supplied in the request.
 
+The source article must be written primarily in English. If the title, description, or content is
+primarily another language, set isEnglish to false and set isPotentiallyRelevant to false. Do not
+confuse an English technical article containing code, product names, or short non-English quotations
+with a non-English article.
+
 Do not assess article quality. Do not use a generic technology, engineering, or PTR-topic test.
 Be permissive about aliases and obvious synonyms, but do not invent taxonomy entries.
 
 Return only valid JSON:
 {
+  "isEnglish": true,
   "isPotentiallyRelevant": true,
   "shortReason": "One sentence naming the matched taxonomy and stream."
 }

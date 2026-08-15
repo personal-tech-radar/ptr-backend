@@ -24,6 +24,7 @@ const ANALYSIS_WINDOW_HOURS = 78;
 const MAX_SECONDARY_STREAMS = 2;
 
 interface PreAnalysisResult {
+  isEnglish: boolean;
   isPotentiallyRelevant: boolean;
   shortReason: string;
 }
@@ -130,24 +131,30 @@ export class AiAnalysisService implements OnModuleInit {
     }
 
     try {
-      const preResult = await this.callOpenAIPreAnalysis(article.title, article.summaryFromFeed);
+      const preResult = await this.callOpenAIPreAnalysis(
+        article.title,
+        article.summaryFromFeed,
+        undefined,
+        undefined,
+        article.rawContent,
+      );
 
       const analysis = await this.analysisRepo.save(
         this.analysisRepo.create({
           articleId,
-          preScreenIsRelevant: preResult.isPotentiallyRelevant,
-          preScreenReason: preResult.shortReason,
+          preScreenIsRelevant: preResult.isEnglish && preResult.isPotentiallyRelevant,
+          preScreenReason: preResult.isEnglish ? preResult.shortReason : 'non_english',
           preScreenAt: new Date(),
         }),
       );
 
       this.logger.info('Pre-screen complete', {
         articleId,
-        relevant: preResult.isPotentiallyRelevant,
+        relevant: preResult.isEnglish && preResult.isPotentiallyRelevant,
         reason: preResult.shortReason,
       });
 
-      if (!preResult.isPotentiallyRelevant) {
+      if (!preResult.isEnglish || !preResult.isPotentiallyRelevant) {
         await this.articlesService.updateStatus(articleId, ArticleStatus.SKIPPED);
         await this.metricsService.increment('pre_analysis_total', { outcome: 'skipped' });
         return;
@@ -196,20 +203,21 @@ export class AiAnalysisService implements OnModuleInit {
       article.summaryFromFeed,
       requiredTaxonomyName,
       requiredStreamKey,
+      article.rawContent,
     );
 
     try {
       const saved = await this.analysisRepo.save(
         this.analysisRepo.create({
           articleId,
-          preScreenIsRelevant: preResult.isPotentiallyRelevant,
-          preScreenReason: preResult.shortReason,
+          preScreenIsRelevant: preResult.isEnglish && preResult.isPotentiallyRelevant,
+          preScreenReason: preResult.isEnglish ? preResult.shortReason : 'non_english',
           preScreenAt: new Date(),
         }),
       );
       this.logger.info('Pre-screen-only complete (candidate sampling)', {
         articleId,
-        relevant: preResult.isPotentiallyRelevant,
+        relevant: preResult.isEnglish && preResult.isPotentiallyRelevant,
       });
       return saved;
     } catch (err) {
@@ -417,6 +425,7 @@ export class AiAnalysisService implements OnModuleInit {
     summaryFromFeed: string | null,
     requiredTaxonomyName?: string,
     requiredStreamKey?: string,
+    rawContent?: string | null,
   ): Promise<PreAnalysisResult> {
     const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
 
@@ -428,6 +437,7 @@ export class AiAnalysisService implements OnModuleInit {
     const userContent = [
       `Title: ${title}`,
       summaryFromFeed ? `Description: ${summaryFromFeed.slice(0, 500)}` : null,
+      rawContent ? `Article content excerpt:\n${rawContent.replace(/<[^>]+>/g, ' ').slice(0, 6000)}` : null,
       `Supported streams: ${requiredStreamKey ?? streams.map((stream) => stream.key).join(', ')}`,
       `Technologies: ${
         requiredTaxonomyName ??
@@ -461,6 +471,7 @@ export class AiAnalysisService implements OnModuleInit {
     const parsed = JSON.parse(raw);
 
     return {
+      isEnglish: parsed.isEnglish === true,
       isPotentiallyRelevant: Boolean(parsed.isPotentiallyRelevant),
       shortReason: String(parsed.shortReason ?? ''),
     };

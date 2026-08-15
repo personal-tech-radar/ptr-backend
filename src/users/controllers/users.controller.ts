@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Header,
   HttpCode,
   HttpStatus,
   Patch,
@@ -106,6 +107,7 @@ export class UsersController {
   }
 
   @Get('me/taxonomy')
+  @Header('Cache-Control', 'private, no-store')
   @ApiOperation({
     summary: "Get the current user's level, technology interests, and content streams",
     description:

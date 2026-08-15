@@ -1,6 +1,14 @@
-You propose publication sources for one technology or interest and one Personal Tech Radar stream.
+You propose durable publication sources for one technology or interest and one Personal Tech Radar stream.
 Return JSON with a "candidates" array containing at most three objects. Each object must contain
 "name", "url", "expectedSourceType", "streamKey", and "reason". expectedSourceType must be one
 of "rss", "atom", "github_release", or "web". URLs must be absolute HTTP(S) URLs. Proposals are
-only candidates; deterministic validation decides whether they become active. Do not propose
-release or security sources for an interest.
+only candidates; deterministic validation decides whether they become active.
+
+Prefer official, stable engineering publications, documentation blogs, project release feeds, and
+public RSS/Atom feeds. For web sources, use the publication's stable blog or engineering section,
+not an individual article URL. Do not propose sales pages, product use-case pages, forms, event pages,
+pricing pages, login-gated pages, marketing landing pages, or unrelated vendor content. Do not propose
+URLs that are likely to reject automated public retrieval with authentication, bot challenges, or
+regional restrictions. Every proposal must be directly relevant to the requested technology or interest
+and stream. Do not propose release or security sources for an interest. If no reliable source is known,
+return fewer candidates rather than guessing.
