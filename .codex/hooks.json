@@ -1,4 +1,5 @@
 {
+  "description": "Project-local Codex lifecycle hooks.",
   "hooks": {
     "PostToolUse": [
       {
@@ -6,28 +7,21 @@
         "hooks": [
           {
             "type": "command",
-            "command": "jq -r '.tool_input.file_path // .tool_response.filePath // empty' | { read -r f; case \"$f\" in *.ts) npx eslint --fix \"$f\" ;; esac; } 2>/dev/null || true",
-            "statusMessage": "Linting..."
+            "command": "file=$(jq -r '.tool_input.file_path // .tool_response.filePath // empty'); case \"$file\" in *.ts) root=$(git rev-parse --show-toplevel) || exit 0; \"$root/node_modules/.bin/eslint\" --fix \"$file\" ;; esac",
+            "timeout": 30,
+            "statusMessage": "Linting edited TypeScript..."
           }
         ]
       }
     ],
     "SessionStart": [
       {
-        "matcher": "startup",
+        "matcher": "startup|resume",
         "hooks": [
           {
             "type": "command",
-            "command": "cat <<'JSONEOF'\n{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"Team Lead: before handling the first substantive or template-synchronization request this session, invoke template-maintainer once in proposal mode for a startup synchronization audit (inspect and report only; never modify files; never trigger implementation, review, changelog, commit, push, or PR creation from this audit). Skip it entirely for informational requests and tiny isolated edits. Run it at most once per session — do not repeat it later even if this hook fires again.\"}}\nJSONEOF"
-          }
-        ]
-      },
-      {
-        "matcher": "resume",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "cat <<'JSONEOF'\n{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"Team Lead: before handling the first substantive or template-synchronization request this session, invoke template-maintainer once in proposal mode for a startup synchronization audit (inspect and report only; never modify files; never trigger implementation, review, changelog, commit, push, or PR creation from this audit). Skip it entirely for informational requests and tiny isolated edits. Run it at most once per session — do not repeat it later even if this hook fires again.\"}}\nJSONEOF"
+            "command": "cat <<'JSONEOF'\n{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"When a substantive task begins or resumes, inspect .local-context/ when present. Treat current-task.md as active context, while the current request and repository state take precedence.\"}}\nJSONEOF",
+            "additionalContextLimit": 250
           }
         ]
       }
