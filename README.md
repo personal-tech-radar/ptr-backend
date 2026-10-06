@@ -151,8 +151,10 @@ returns the same `meta` statistics plus `selectedForRadar`, calculated for the s
 profile.
 
 Pre-registration clients can load the read-only API-key catalogs from `GET /public/technology-interests`
-and `GET /public/content-streams`. User selection and create-or-reuse behavior remains available
-only through authenticated onboarding/profile endpoints.
+and `GET /public/content-streams`. Users select or create taxonomy through authenticated onboarding.
+Administrators can also use `POST /admin/technology-interests` to create-or-reuse a technology or
+interest: a new entry queues source discovery, while an existing match returns its catalog entry
+without queuing duplicate work.
 
 Analyzed articles with a genuinely absent or malformed publication date remain public-eligible for
 backward compatibility, but dated articles always sort first. Undated rows use `createdAt DESC`,

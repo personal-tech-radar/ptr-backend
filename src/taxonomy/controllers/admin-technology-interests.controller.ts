@@ -1,4 +1,15 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  Patch,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import {
   ApiBadRequestResponse,
   ApiBearerAuth,
@@ -10,6 +21,8 @@ import { AdministratorAuthGuard } from '../../administrators/guards/administrato
 import { PaginatedResponseDto } from '../../common/dto/paginated-response.dto';
 import { ErrorResponseDto } from '../../common/error/error-response.dto';
 import { AdminQueryTechnologyInterestDto } from '../dto/admin-query-technology-interest.dto';
+import { CreateTechnologyInterestDto } from '../dto/create-technology-interest.dto';
+import { CreateTechnologyInterestResponseDto } from '../dto/create-technology-interest-response.dto';
 import {
   TechnologyInterestResponseDto,
   toTechnologyInterestResponseDto,
@@ -31,6 +44,32 @@ export class AdminTechnologyInterestsController {
     private readonly technologyInterestCommandService: TechnologyInterestCommandService,
     private readonly discoveryRetryService: TaxonomySourceDiscoveryRetryService,
   ) {}
+
+  @Post()
+  @ApiOperation({
+    summary: 'Create or reuse a technology or interest',
+    description:
+      'Creates a new taxonomy entry and queues source discovery. An exact, alias, or similarity match returns the existing entry without creating or queuing duplicate discovery work.',
+  })
+  @HttpCode(HttpStatus.OK)
+  @ApiResponse({ status: 200, type: CreateTechnologyInterestResponseDto })
+  @ApiResponse({ status: 401, type: ErrorResponseDto })
+  @ApiResponse({ status: 403, type: ErrorResponseDto })
+  async create(
+    @Body() dto: CreateTechnologyInterestDto,
+  ): Promise<CreateTechnologyInterestResponseDto> {
+    const { entity, created } = await this.technologyInterestCommandService.createForAdmin(
+      dto.kind,
+      dto.name,
+    );
+    return {
+      created,
+      message: created
+        ? 'Technology/interest created and source discovery queued'
+        : 'Technology/interest already exists; source discovery was not queued',
+      taxonomy: toTechnologyInterestResponseDto(entity),
+    };
+  }
 
   @Get()
   @ApiOperation({
