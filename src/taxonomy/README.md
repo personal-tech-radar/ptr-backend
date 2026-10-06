@@ -10,7 +10,9 @@ selection tables. Technologies and interests share one table and are distinguish
 1. `TechnologyInterestCommandService.createOrReuse` passes the name to the resolver.
 2. Resolution checks normalized same-kind names, aliases, and similarity matches before creating a
    row.
-3. Only a new row reserves quota and enqueues one deterministic `taxonomy-{id}` BullMQ job.
+3. A new user-created row reserves quota and enqueues one deterministic `taxonomy-{id}` BullMQ job.
+   `POST /admin/technology-interests` uses the same resolver and queue without a user quota;
+   existing matches return the catalog entry without enqueuing duplicate discovery.
 4. `TaxonomySourceDiscoveryProcessor` asks the configured LLM for structured source proposals.
 5. Technologies use all five streams; interests use industry pulse, engineering experience, and
    expert opinions and practices only.

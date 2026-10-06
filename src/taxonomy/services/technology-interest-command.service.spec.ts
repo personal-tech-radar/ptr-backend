@@ -101,6 +101,34 @@ describe('TechnologyInterestCommandService', () => {
     });
   });
 
+  describe('createForAdmin', () => {
+    it('queues source discovery for a genuinely new taxonomy entry', async () => {
+      const entity = { id: 'ti-new' } as TechnologyInterest;
+      mockResolverService.resolve.mockResolvedValue({ entity, created: true });
+
+      await expect(
+        service.createForAdmin(TechnologyInterestKind.TECHNOLOGY, 'OpenTelemetry'),
+      ).resolves.toEqual({ entity, created: true });
+
+      expect(mockResolverService.resolve).toHaveBeenCalledWith(
+        TechnologyInterestKind.TECHNOLOGY,
+        'OpenTelemetry',
+      );
+      expect(mockQueueService.addTaxonomySourceDiscoveryJob).toHaveBeenCalledWith('ti-new');
+    });
+
+    it('returns an existing taxonomy entry without queueing duplicate discovery', async () => {
+      const entity = { id: 'ti-existing' } as TechnologyInterest;
+      mockResolverService.resolve.mockResolvedValue({ entity, created: false });
+
+      await expect(
+        service.createForAdmin(TechnologyInterestKind.INTEREST, 'Platform engineering'),
+      ).resolves.toEqual({ entity, created: false });
+
+      expect(mockQueueService.addTaxonomySourceDiscoveryJob).not.toHaveBeenCalled();
+    });
+  });
+
   describe('merge', () => {
     it('throws BadRequestException for a malformed winnerId/loserId', async () => {
       await expect(service.merge('not-a-uuid', validLoserId)).rejects.toThrow(BadRequestException);

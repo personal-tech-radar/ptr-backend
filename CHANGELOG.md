@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-06
+
+- Added administrator-authenticated `POST /admin/technology-interests` to create-or-reuse a
+  technology or interest. New entries queue source discovery; existing exact, alias, or similarity
+  matches return an idempotent already-exists response without duplicate queue work.
+
 ## 2026-08-13
 
 - Updated digest and account-notification emails with the dark Personal Tech Radar design,

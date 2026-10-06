@@ -75,6 +75,22 @@ export class TechnologyInterestCommandService {
     return entity;
   }
 
+  // Admin creation has no user selection or quota, but shares taxonomy resolution and discovery.
+  async createForAdmin(
+    kind: TechnologyInterestKind,
+    name: string,
+  ): Promise<{ entity: TechnologyInterest; created: boolean }> {
+    const result = await this.resolverService.resolve(kind, name);
+    if (result.created) {
+      await this.queueService.addTaxonomySourceDiscoveryJob(result.entity.id);
+    }
+    this.logger.info('Administrator taxonomy creation resolved', {
+      technologyInterestId: result.entity.id,
+      created: result.created,
+    });
+    return result;
+  }
+
   async removeUnselected(userId: string, selectedIds: string[]): Promise<void> {
     const qb = this.userTechnologyInterestRepo
       .createQueryBuilder()
