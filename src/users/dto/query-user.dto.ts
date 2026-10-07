@@ -1,6 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type, TransformFnParams } from 'class-transformer';
-import { IsBoolean, IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { IsBoolean, IsDateString, IsInt, IsOptional, IsString, IsIn, Min } from 'class-validator';
 
 // Reads the raw value from `obj[key]` rather than the pipeline-provided `value`. The global
 // ValidationPipe's `enableImplicitConversion` runs class-transformer's own Boolean(value) coercion
@@ -8,7 +8,7 @@ import { IsBoolean, IsInt, IsOptional, IsString, Min } from 'class-validator';
 // and Boolean('false') is `true` — any non-empty string is truthy. Reading obj[key] bypasses that
 // already-corrupted `value` and parses the original query string directly.
 const toBoolean = ({ obj, key }: TransformFnParams): boolean | undefined => {
-  const raw = obj[key];
+  const raw = (obj as Record<string, unknown>)[key];
   if (raw === undefined) return undefined;
   if (typeof raw === 'boolean') return raw;
   return raw === 'true';
@@ -17,6 +17,24 @@ const toBoolean = ({ obj, key }: TransformFnParams): boolean | undefined => {
 // Used by UserQueryService.findAll, backing the admin users listing endpoint
 // (AdminUsersController, GET /admin/users).
 export class QueryUserDto {
+  @ApiPropertyOptional() @IsOptional() @IsDateString() verifiedFrom?: string;
+  @ApiPropertyOptional() @IsOptional() @IsDateString() verifiedTo?: string;
+  @ApiPropertyOptional() @IsOptional() @IsDateString() onboardingFrom?: string;
+  @ApiPropertyOptional() @IsOptional() @IsDateString() onboardingTo?: string;
+  @ApiPropertyOptional({
+    description: 'Exact activity window, inclusive lower bound; overrides activityPeriod start.',
+  })
+  @IsOptional()
+  @IsDateString()
+  activityFrom?: string;
+  @ApiPropertyOptional({ description: 'Exact activity window, exclusive upper bound.' })
+  @IsOptional()
+  @IsDateString()
+  activityTo?: string;
+  @ApiPropertyOptional({ enum: ['open', 'save', 'useful', 'not_useful'] })
+  @IsOptional()
+  @IsIn(['open', 'save', 'useful', 'not_useful'])
+  eventType?: string;
   @ApiPropertyOptional({ description: 'Page number', example: 1, minimum: 1, default: 1 })
   @IsOptional()
   @Type(() => Number)
@@ -49,4 +67,31 @@ export class QueryUserDto {
   @Transform(toBoolean)
   @IsBoolean()
   includeDeleted?: boolean = false;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  registeredFrom?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  registeredTo?: string;
+
+  @ApiPropertyOptional({ description: 'Filter email verification state' })
+  @IsOptional()
+  @Transform(toBoolean)
+  @IsBoolean()
+  verified?: boolean;
+
+  @ApiPropertyOptional({ description: 'Filter whether onboarding has completed' })
+  @IsOptional()
+  @Transform(toBoolean)
+  @IsBoolean()
+  onboardingCompleted?: boolean;
+
+  @ApiPropertyOptional({ enum: ['24h', '7d', '30d'] })
+  @IsOptional()
+  @IsIn(['24h', '7d', '30d'])
+  activityPeriod?: '24h' | '7d' | '30d';
 }

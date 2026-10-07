@@ -15,6 +15,7 @@ import { ErrorResponseDto } from '../../common/error/error-response.dto';
 import { SourceCandidateListQueryDto } from '../dto/source-candidate-list-query.dto';
 import {
   SourceCandidateResponseDto,
+  PaginatedSourceCandidateResponseDto,
   toSourceCandidateResponseDto,
 } from '../dto/source-candidate-response.dto';
 import { SourceCandidatesQueryService } from '../services/source-candidates-query.service';
@@ -36,7 +37,7 @@ export class SourceCandidatesController {
     description:
       'Returns candidate proposals from user submission or taxonomy discovery, including origin, requested stream, terminal status, linked source when activated, and specific rejection code and reason.',
   })
-  @ApiResponse({ status: 200, type: PaginatedResponseDto })
+  @ApiResponse({ status: 200, type: PaginatedSourceCandidateResponseDto })
   @ApiResponse({ status: 401, type: ErrorResponseDto })
   @ApiResponse({ status: 403, type: ErrorResponseDto })
   async findAll(

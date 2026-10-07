@@ -1,9 +1,10 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import { IsInt, IsOptional, IsString, IsUUID, Min } from 'class-validator';
+import { AdminEventFilterDto } from '../../common/dto/admin-event-filter.dto';
 
 // Backs AdminSavedArticleController's GET /admin/saved-articles listing.
-export class AdminQuerySavedArticleDto {
+export class AdminQuerySavedArticleDto extends AdminEventFilterDto {
   @ApiPropertyOptional({ description: 'Page number', example: 1, minimum: 1, default: 1 })
   @IsOptional()
   @Type(() => Number)

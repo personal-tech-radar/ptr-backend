@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-10-07
+
+- Added the administrator dashboard and backend API support for source, article, taxonomy, queue,
+  digest, and user management, including analytics, filtering, detail views, and documented metric
+  semantics.
+- Updated normal-user access JWTs to expire after 24 hours by default; refresh tokens and
+  administrator JWT lifetimes remain independently configured.
+
 ## 2026-10-06
 
 - Added administrator-authenticated `POST /admin/technology-interests` to create-or-reuse a

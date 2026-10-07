@@ -1,3 +1,4 @@
+import { PaginatedResponseDto } from '../../common/dto/paginated-response.dto';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class UserContentStreamResponseDto {
@@ -18,4 +19,9 @@ export class UserContentStreamResponseDto {
 
   @ApiProperty()
   createdAt: Date;
+}
+
+export class PaginatedUserContentStreamResponseDto extends PaginatedResponseDto<UserContentStreamResponseDto> {
+  @ApiProperty({ type: [UserContentStreamResponseDto] })
+  declare data: UserContentStreamResponseDto[];
 }

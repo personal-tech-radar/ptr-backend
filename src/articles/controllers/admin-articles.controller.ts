@@ -5,6 +5,7 @@ import {
   HttpCode,
   HttpStatus,
   Param,
+  ParseUUIDPipe,
   Query,
   UseGuards,
 } from '@nestjs/common';
@@ -19,10 +20,14 @@ import { AdministratorAuthGuard } from '../../administrators/guards/administrato
 import { PaginatedResponseDto } from '../../common/dto/paginated-response.dto';
 import { ErrorResponseDto } from '../../common/error/error-response.dto';
 import { ArticleListQueryDto } from '../dto/article-list-query.dto';
-import { ArticleResponseDto } from '../dto/article-response.dto';
 import { ArticlesService } from '../services/articles.service';
 import { Post } from '@nestjs/common';
 import { ArticleAnalysisRetryService } from '../services/article-analysis-retry.service';
+import {
+  AdminArticleDetailResponseDto,
+  AdminArticleListItemDto,
+  PaginatedAdminArticleResponseDto,
+} from '../dto/admin-article-detail-response.dto';
 
 @ApiTags('Admin - Articles')
 @ApiBearerAuth('administrator-bearer')
@@ -41,11 +46,13 @@ export class AdminArticlesController {
     description:
       'Returns administrative article records including processing and analysis state needed for operations, with pagination and practical filters.',
   })
-  @ApiResponse({ status: 200, type: PaginatedResponseDto })
+  @ApiResponse({ status: 200, type: PaginatedAdminArticleResponseDto })
   @ApiResponse({ status: 401, type: ErrorResponseDto })
   @ApiResponse({ status: 403, type: ErrorResponseDto })
-  findAll(@Query() query: ArticleListQueryDto): Promise<PaginatedResponseDto<ArticleResponseDto>> {
-    return this.articlesService.findAll(query);
+  async findAll(
+    @Query() query: ArticleListQueryDto,
+  ): Promise<PaginatedResponseDto<AdminArticleListItemDto>> {
+    return this.articlesService.findAdminList(query);
   }
 
   @Get(':id')
@@ -54,12 +61,12 @@ export class AdminArticlesController {
     description:
       'Returns complete administrative article details, including operational analysis fields that are intentionally omitted from public content DTOs.',
   })
-  @ApiResponse({ status: 200, type: ArticleResponseDto })
+  @ApiResponse({ status: 200, type: AdminArticleDetailResponseDto })
   @ApiResponse({ status: 401, type: ErrorResponseDto })
   @ApiResponse({ status: 403, type: ErrorResponseDto })
   @ApiResponse({ status: 404, type: ErrorResponseDto })
-  findOne(@Param('id') id: string): Promise<ArticleResponseDto> {
-    return this.articlesService.findOne(id);
+  findOne(@Param('id', ParseUUIDPipe) id: string): Promise<AdminArticleDetailResponseDto> {
+    return this.articlesService.findAdminDetail(id);
   }
 
   @Delete(':id')
@@ -73,7 +80,7 @@ export class AdminArticlesController {
   @ApiResponse({ status: 401, type: ErrorResponseDto })
   @ApiResponse({ status: 403, type: ErrorResponseDto })
   @ApiResponse({ status: 404, type: ErrorResponseDto })
-  remove(@Param('id') id: string): Promise<void> {
+  remove(@Param('id', ParseUUIDPipe) id: string): Promise<void> {
     return this.articlesService.remove(id);
   }
 
@@ -87,7 +94,7 @@ export class AdminArticlesController {
   @ApiResponse({ status: 401, type: ErrorResponseDto })
   @ApiResponse({ status: 403, type: ErrorResponseDto })
   @ApiResponse({ status: 404, type: ErrorResponseDto, description: 'Article not found' })
-  async retryAnalysis(@Param('id') id: string): Promise<{ accepted: true }> {
+  async retryAnalysis(@Param('id', ParseUUIDPipe) id: string): Promise<{ accepted: true }> {
     await this.articleAnalysisRetryService.retry(id);
     return { accepted: true };
   }

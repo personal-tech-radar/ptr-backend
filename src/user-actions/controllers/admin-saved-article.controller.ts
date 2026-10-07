@@ -1,4 +1,5 @@
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { PaginatedAdminSavedArticleResponseDto } from '../dto/admin-saved-article-response.dto';
 import {
   ApiBadRequestResponse,
   ApiBearerAuth,
@@ -27,7 +28,7 @@ export class AdminSavedArticleController {
     description:
       'Read-only paginated view of user/article saved relationships for support and audit. This endpoint does not create, remove, or alter saved state.',
   })
-  @ApiResponse({ status: 200, type: PaginatedResponseDto })
+  @ApiResponse({ status: 200, type: PaginatedAdminSavedArticleResponseDto })
   @ApiResponse({ status: 401, type: ErrorResponseDto })
   @ApiResponse({ status: 403, type: ErrorResponseDto })
   findAll(

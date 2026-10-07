@@ -2,8 +2,11 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   SourceCandidate,
   SourceCandidateDetectedType,
+  SourceDiscoveryOrigin,
   SourceCandidateStatus,
 } from '../entities/source-candidate.entity';
+import { SourceType } from '../entities/source.entity';
+import { PaginatedResponseDto } from '../../common/dto/paginated-response.dto';
 
 export class SourceCandidateResponseDto {
   @ApiProperty()
@@ -15,28 +18,50 @@ export class SourceCandidateResponseDto {
   @ApiProperty()
   domain: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ type: String, nullable: true })
   seedKey: string | null;
+
+  @ApiProperty({ enum: SourceDiscoveryOrigin })
+  origin: SourceDiscoveryOrigin;
+
+  @ApiPropertyOptional({ type: String, format: 'uuid', nullable: true })
+  technologyInterestId: string | null;
+  @ApiPropertyOptional({ type: String, nullable: true })
+  technologyInterestName: string | null;
+
+  @ApiPropertyOptional({ type: String, format: 'uuid', nullable: true })
+  contentStreamId: string | null;
+  @ApiPropertyOptional({ type: String, nullable: true })
+  contentStreamName: string | null;
+
+  @ApiPropertyOptional({ enum: SourceType, nullable: true })
+  expectedSourceType: SourceType | null;
+
+  @ApiPropertyOptional({ type: String, nullable: true })
+  proposedName: string | null;
+
+  @ApiPropertyOptional({ type: String, nullable: true })
+  relevanceReason: string | null;
 
   @ApiProperty({ enum: SourceCandidateStatus })
   status: SourceCandidateStatus;
 
-  @ApiPropertyOptional({ enum: SourceCandidateDetectedType })
+  @ApiPropertyOptional({ enum: SourceCandidateDetectedType, nullable: true })
   detectedType: SourceCandidateDetectedType | null;
 
   @ApiPropertyOptional()
   proposedConfig: Record<string, unknown> | null;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ type: String, nullable: true })
   validationError: string | null;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ type: String, nullable: true })
   rejectionCode: string | null;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ type: String, nullable: true })
   activatedSourceId: string | null;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ type: Date, nullable: true })
   lastValidatedAt: Date | null;
 
   @ApiProperty()
@@ -46,10 +71,11 @@ export class SourceCandidateResponseDto {
   updatedAt: Date;
 }
 
-// The controller's return types are DTOs, but the query/command services return raw TypeORM
-// entities (no ClassSerializerInterceptor is registered globally — see ArticlesService for the
-// same pattern). This mapper is the explicit entity -> DTO boundary so the wire shape actually
-// matches what Swagger documents, without dragging in a repo-wide interceptor change.
+export class PaginatedSourceCandidateResponseDto extends PaginatedResponseDto<SourceCandidateResponseDto> {
+  @ApiProperty({ type: [SourceCandidateResponseDto] }) declare data: SourceCandidateResponseDto[];
+}
+
+// Explicit mapping keeps the wire shape aligned with Swagger without a global interceptor.
 export function toSourceCandidateResponseDto(
   candidate: SourceCandidate,
 ): SourceCandidateResponseDto {
@@ -58,6 +84,14 @@ export function toSourceCandidateResponseDto(
   dto.normalizedUrl = candidate.normalizedUrl;
   dto.domain = candidate.domain;
   dto.seedKey = candidate.seedKey;
+  dto.origin = candidate.origin;
+  dto.technologyInterestId = candidate.technologyInterestId;
+  dto.technologyInterestName = candidate.technologyInterest?.name ?? null;
+  dto.contentStreamId = candidate.contentStreamId;
+  dto.contentStreamName = candidate.contentStream?.name ?? null;
+  dto.expectedSourceType = candidate.expectedSourceType;
+  dto.proposedName = candidate.proposedName;
+  dto.relevanceReason = candidate.relevanceReason;
   dto.status = candidate.status;
   dto.detectedType = candidate.detectedType;
   dto.proposedConfig = candidate.proposedConfig;

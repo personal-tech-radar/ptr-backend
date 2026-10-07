@@ -1,4 +1,5 @@
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { PaginatedUserTechnologyInterestResponseDto } from '../dto/user-technology-interest-response.dto';
 import {
   ApiBadRequestResponse,
   ApiBearerAuth,
@@ -30,7 +31,7 @@ export class AdminUserTechnologyInterestsController {
     description:
       'Returns paginated user-to-taxonomy relationships for support and auditing, with filters such as user email, taxonomy entry, and taxonomy kind. This endpoint is read-only.',
   })
-  @ApiResponse({ status: 200, type: PaginatedResponseDto })
+  @ApiResponse({ status: 200, type: PaginatedUserTechnologyInterestResponseDto })
   @ApiResponse({ status: 401, type: ErrorResponseDto })
   @ApiResponse({ status: 403, type: ErrorResponseDto })
   async findAll(

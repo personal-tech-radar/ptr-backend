@@ -1,5 +1,7 @@
+import { PaginatedResponseDto } from '../../common/dto/paginated-response.dto';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { User, UserLevel } from '../entities/user.entity';
+import { TechnologyInterestKind } from '../../taxonomy/entities/technology-interest.entity';
 
 export class UserResponseDto {
   @ApiProperty({ example: '123e4567-e89b-12d3-a456-426614174000' })
@@ -59,4 +61,43 @@ export function toUserResponseDto(user: User): UserResponseDto {
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
   };
+}
+
+export class UserActivityWindowDto {
+  @ApiProperty() from: Date;
+  @ApiProperty() to: Date;
+  @ApiProperty() semantics: string;
+}
+
+export class UserPeriodActivityDto {
+  @ApiProperty() active: boolean;
+  @ApiProperty() total: number;
+  @ApiProperty() opens: number;
+  @ApiProperty() saves: number;
+  @ApiProperty() usefulFeedback: number;
+  @ApiProperty() notUsefulFeedback: number;
+}
+
+export class UserSelectedTaxonomyDto {
+  @ApiProperty() id: string;
+  @ApiProperty() name: string;
+  @ApiProperty({ enum: TechnologyInterestKind }) kind: TechnologyInterestKind;
+}
+
+export class UserSelectedStreamDto {
+  @ApiProperty() id: string;
+  @ApiProperty() key: string;
+  @ApiProperty() name: string;
+}
+
+export class AdminUserListItemDto extends UserResponseDto {
+  @ApiProperty({ type: UserPeriodActivityDto }) periodActivity: UserPeriodActivityDto;
+  @ApiProperty({ type: [UserSelectedTaxonomyDto] }) selectedTechnologies: UserSelectedTaxonomyDto[];
+  @ApiProperty({ type: [UserSelectedTaxonomyDto] }) selectedInterests: UserSelectedTaxonomyDto[];
+  @ApiProperty({ type: [UserSelectedStreamDto] }) selectedStreams: UserSelectedStreamDto[];
+}
+
+export class PaginatedUserResponseDto extends PaginatedResponseDto<AdminUserListItemDto> {
+  @ApiProperty({ type: [AdminUserListItemDto] }) declare data: AdminUserListItemDto[];
+  @ApiProperty({ type: UserActivityWindowDto }) activityWindow: UserActivityWindowDto;
 }

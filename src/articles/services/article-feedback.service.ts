@@ -1,3 +1,4 @@
+import { applyAdminEventFilters } from '../../common/util/admin-event-query.util';
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository, UpdateResult } from 'typeorm';
@@ -63,6 +64,7 @@ export class ArticleFeedbackService {
       .innerJoinAndSelect('feedback.article', 'article')
       .innerJoinAndSelect('feedback.user', 'user');
 
+    applyAdminEventFilters(qb, query, 'feedback', 'feedback.updatedAt');
     if (query.email) {
       qb.andWhere('user.email ILIKE :email', { email: `%${query.email}%` });
     }

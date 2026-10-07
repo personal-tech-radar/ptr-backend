@@ -135,6 +135,7 @@ export class UserSourcePreferenceService {
       .createQueryBuilder('pref')
       .innerJoinAndSelect('pref.source', 'source')
       .innerJoinAndSelect('pref.user', 'user');
+    if (query.userId) qb.andWhere('pref.userId = :userId', { userId: query.userId });
 
     if (query.email) {
       qb.andWhere('user.email ILIKE :email', { email: `%${query.email}%` });

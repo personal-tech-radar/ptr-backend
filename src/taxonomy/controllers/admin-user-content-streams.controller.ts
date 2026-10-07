@@ -1,4 +1,5 @@
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { PaginatedUserContentStreamResponseDto } from '../dto/user-content-stream-response.dto';
 import {
   ApiBadRequestResponse,
   ApiBearerAuth,
@@ -30,7 +31,7 @@ export class AdminUserContentStreamsController {
     description:
       'Returns paginated user-to-stream selections used by personal feeds and digests, with administrative filtering. This endpoint is read-only.',
   })
-  @ApiResponse({ status: 200, type: PaginatedResponseDto })
+  @ApiResponse({ status: 200, type: PaginatedUserContentStreamResponseDto })
   @ApiResponse({ status: 401, type: ErrorResponseDto })
   @ApiResponse({ status: 403, type: ErrorResponseDto })
   async findAll(

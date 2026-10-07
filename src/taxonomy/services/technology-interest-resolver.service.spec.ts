@@ -177,9 +177,7 @@ describe('TechnologyInterestResolverService', () => {
         normalizedName: 'expressjs',
         aliases: [],
       } as unknown as TechnologyInterest;
-      mockQueryBuilder.getOne
-        .mockResolvedValueOnce(null)
-        .mockResolvedValueOnce(similarityMatch);
+      mockQueryBuilder.getOne.mockResolvedValueOnce(null).mockResolvedValueOnce(similarityMatch);
 
       await expect(
         service.resolveExisting(TechnologyInterestKind.TECHNOLOGY, 'ExpressJS'),

@@ -116,7 +116,11 @@ describe('AiAnalysisService', () => {
     it('skips a non-English article before full analysis', async () => {
       mockAnalysisRepo.findOne.mockResolvedValue(null);
       mockOpenAi.chat.completions.create.mockResolvedValueOnce(
-        openAiResponse({ isEnglish: false, isPotentiallyRelevant: true, shortReason: 'other language' }),
+        openAiResponse({
+          isEnglish: false,
+          isPotentiallyRelevant: true,
+          shortReason: 'other language',
+        }),
       );
 
       await service.analyzeArticle(articleId);
@@ -124,7 +128,10 @@ describe('AiAnalysisService', () => {
       expect(mockAnalysisRepo.save).toHaveBeenCalledWith(
         expect.objectContaining({ preScreenIsRelevant: false, preScreenReason: 'non_english' }),
       );
-      expect(mockArticlesService.updateStatus).toHaveBeenCalledWith(articleId, ArticleStatus.SKIPPED);
+      expect(mockArticlesService.updateStatus).toHaveBeenCalledWith(
+        articleId,
+        ArticleStatus.SKIPPED,
+      );
       expect(mockOpenAi.chat.completions.create).toHaveBeenCalledTimes(1);
     });
 

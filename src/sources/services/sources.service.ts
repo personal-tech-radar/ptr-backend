@@ -23,6 +23,7 @@ import { WebSourceConfig } from '../entities/web-source-config.entity';
 import { SourceDiscoveryService } from './source-discovery.service';
 import { SourceStructureAiService } from './source-structure-ai.service';
 import { SourceIdentityService } from './source-identity.service';
+import { TechnologyInterestKind } from '../../taxonomy/entities/technology-interest.entity';
 
 type SourceWithWebConfig = Source & {
   webConfig?: WebSourceConfig;
@@ -224,6 +225,10 @@ export class SourcesService {
     const limit = query.limit ?? 20;
 
     const qb = this.sourceRepo.createQueryBuilder('source');
+    if (query.sourceGroup)
+      qb.andWhere('source.type IN (:...groupTypes)', {
+        groupTypes: query.sourceGroup === 'feeds' ? ['rss', 'atom'] : [query.sourceGroup],
+      });
     if (query.includeDeleted) {
       qb.withDeleted();
     }
@@ -238,6 +243,26 @@ export class SourcesService {
     }
     if (query.status) {
       qb.andWhere('source.status = :status', { status: query.status });
+    }
+    if (query.q) {
+      qb.andWhere('(source.name ILIKE :q OR source.url ILIKE :q OR source.url ILIKE :domain)', {
+        q: `%${query.q}%`,
+        domain: `%://${query.q}%`,
+      });
+    }
+    if (query.createdFrom)
+      qb.andWhere('source.createdAt >= :createdFrom', { createdFrom: query.createdFrom });
+    if (query.createdTo)
+      qb.andWhere('source.createdAt < :createdTo', { createdTo: query.createdTo });
+    if (query.technologyInterestId || query.streamId) {
+      qb.innerJoin('source_coverages', 'coverage_filter', 'coverage_filter."sourceId" = source.id');
+      if (query.technologyInterestId) {
+        qb.andWhere('coverage_filter."technologyInterestId" = :technologyInterestId', {
+          technologyInterestId: query.technologyInterestId,
+        });
+      }
+      if (query.streamId)
+        qb.andWhere('coverage_filter."contentStreamId" = :streamId', { streamId: query.streamId });
     }
 
     const [sources, total] = await qb
@@ -303,13 +328,15 @@ export class SourcesService {
     return sources.map((source) => {
       const sourceCoverages = coverages.filter((coverage) => coverage.sourceId === source.id);
       const technologies = sourceCoverages
-        .filter((coverage) => coverage.technologyInterest.kind === 'technology')
+        .filter(
+          (coverage) => coverage.technologyInterest?.kind === TechnologyInterestKind.TECHNOLOGY,
+        )
         .map((coverage) => ({
           id: coverage.technologyInterestId,
           name: coverage.technologyInterest.name,
         }));
       const interests = sourceCoverages
-        .filter((coverage) => coverage.technologyInterest.kind === 'interest')
+        .filter((coverage) => coverage.technologyInterest?.kind === TechnologyInterestKind.INTEREST)
         .map((coverage) => ({
           id: coverage.technologyInterestId,
           name: coverage.technologyInterest.name,

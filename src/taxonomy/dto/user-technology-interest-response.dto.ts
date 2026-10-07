@@ -1,3 +1,4 @@
+import { PaginatedResponseDto } from '../../common/dto/paginated-response.dto';
 import { ApiProperty } from '@nestjs/swagger';
 import { TechnologyInterestKind } from '../entities/technology-interest.entity';
 
@@ -19,4 +20,9 @@ export class UserTechnologyInterestResponseDto {
 
   @ApiProperty()
   createdAt: Date;
+}
+
+export class PaginatedUserTechnologyInterestResponseDto extends PaginatedResponseDto<UserTechnologyInterestResponseDto> {
+  @ApiProperty({ type: [UserTechnologyInterestResponseDto] })
+  declare data: UserTechnologyInterestResponseDto[];
 }

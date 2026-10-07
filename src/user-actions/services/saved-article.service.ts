@@ -1,3 +1,4 @@
+import { applyAdminEventFilters } from '../../common/util/admin-event-query.util';
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
@@ -121,6 +122,7 @@ export class SavedArticleService {
       .innerJoinAndSelect('savedArticle.user', 'user')
       .innerJoinAndSelect('savedArticle.article', 'article');
 
+    applyAdminEventFilters(qb, query, 'savedArticle', 'savedArticle.createdAt');
     if (query.email) {
       qb.andWhere('user.email ILIKE :email', { email: `%${query.email}%` });
     }

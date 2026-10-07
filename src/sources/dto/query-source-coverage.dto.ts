@@ -46,7 +46,9 @@ export class QuerySourceCoverageDto {
   minActiveSources?: number;
   @ApiPropertyOptional({ description: 'Return only taxonomy/stream rows with no active sources' })
   @IsOptional()
-  @Transform(({ value }) => value === true || value === 'true')
+  @Transform(({ obj, key }: { obj: Record<string, unknown>; key: string }) =>
+    obj[key] === 'true' ? true : obj[key] === 'false' ? false : obj[key],
+  )
   @IsBoolean()
   zeroActiveCoverage?: boolean;
 }

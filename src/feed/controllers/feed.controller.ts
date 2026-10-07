@@ -41,7 +41,11 @@ export class FeedController {
   })
   @ApiResponse({ status: 200, type: PipelineStatisticsDto })
   @ApiResponse({ status: 401, type: ErrorResponseDto })
-  @ApiResponse({ status: 403, type: ErrorResponseDto, description: 'Email unverified or onboarding incomplete' })
+  @ApiResponse({
+    status: 403,
+    type: ErrorResponseDto,
+    description: 'Email unverified or onboarding incomplete',
+  })
   async getStatistics(
     @CurrentUser() user: CurrentUserPayload,
     @Query() query: QueryFeedDto,

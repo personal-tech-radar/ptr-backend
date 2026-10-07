@@ -17,13 +17,13 @@ export class ArticleResponseDto {
   @ApiProperty()
   urlHash: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ type: String, nullable: true })
   author: string | null;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ type: Date, nullable: true })
   publishedAt: Date | null;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ type: String, nullable: true })
   summaryFromFeed: string | null;
 
   @ApiProperty({ enum: ArticleStatus })

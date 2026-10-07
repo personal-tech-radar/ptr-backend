@@ -2,6 +2,15 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { SourceCategory, SourceStatus, SourceType } from '../entities/source.entity';
 import { WebConfigResponseDto } from './web-config.dto';
 
+export class SourceTaxonomyReferenceDto {
+  @ApiProperty() id: string;
+  @ApiProperty() name: string;
+}
+export class SourceStreamReferenceDto {
+  @ApiProperty() id: string;
+  @ApiProperty() key: string;
+}
+
 export class SourceResponseDto {
   @ApiProperty()
   id: string;
@@ -27,13 +36,13 @@ export class SourceResponseDto {
   @ApiProperty()
   consecutiveFailures: number;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ type: Date, nullable: true })
   lastSuccessfulFetchAt: Date | null;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ type: Date, nullable: true })
   lastAttemptAt: Date | null;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ type: String, nullable: true })
   lastError: string | null;
 
   @ApiProperty()
@@ -42,19 +51,19 @@ export class SourceResponseDto {
   @ApiPropertyOptional()
   nextScheduledFetchAt?: Date | null;
 
-  @ApiPropertyOptional({ type: [Object] })
+  @ApiPropertyOptional({ type: [SourceTaxonomyReferenceDto] })
   associatedTechnologies?: Array<{ id: string; name: string }>;
 
-  @ApiPropertyOptional({ type: [Object] })
+  @ApiPropertyOptional({ type: [SourceTaxonomyReferenceDto] })
   associatedInterests?: Array<{ id: string; name: string }>;
 
-  @ApiPropertyOptional({ type: [Object] })
+  @ApiPropertyOptional({ type: [SourceStreamReferenceDto] })
   associatedStreams?: Array<{ id: string; key: string }>;
 
   @ApiProperty()
   trustScore: number;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ type: Date, nullable: true })
   lastCheckedAt: Date | null;
 
   @ApiProperty()

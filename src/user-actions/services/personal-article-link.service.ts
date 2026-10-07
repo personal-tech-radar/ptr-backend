@@ -1,3 +1,4 @@
+import { applyAdminEventFilters } from '../../common/util/admin-event-query.util';
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, Repository } from 'typeorm';
@@ -165,6 +166,15 @@ export class PersonalArticleLinkService {
       .innerJoinAndSelect('link.user', 'user')
       .innerJoinAndSelect('link.article', 'article');
 
+    if (query.occurredFrom || query.occurredTo) {
+      qb.innerJoin(
+        'user_article_openings',
+        'opening',
+        'opening."userId"=link."userId" AND opening."articleId"=link."articleId"',
+      ).andWhere('link.firstOpenedAt IS NOT NULL');
+    }
+    applyAdminEventFilters(qb, query, 'link', 'opening."openedAt"');
+    if (query.articleId) qb.andWhere('link.articleId = :articleId', { articleId: query.articleId });
     if (query.email) {
       qb.andWhere('user.email ILIKE :email', { email: `%${query.email}%` });
     }

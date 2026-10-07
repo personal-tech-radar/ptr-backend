@@ -6,6 +6,7 @@ import {
   HttpCode,
   HttpStatus,
   Param,
+  ParseUUIDPipe,
   Patch,
   Post,
   Query,
@@ -13,20 +14,28 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { AdministratorAuthGuard } from '../../administrators/guards/administrator-auth.guard';
-import { PaginatedResponseDto } from '../../common/dto/paginated-response.dto';
 import { ErrorResponseDto } from '../../common/error/error-response.dto';
 import { CreateSourceDto } from '../dto/create-source.dto';
 import { QuerySourceDto } from '../dto/query-source.dto';
 import { SourceResponseDto } from '../dto/source-response.dto';
 import { UpdateSourceDto } from '../dto/update-source.dto';
 import { SourcesService } from '../services/sources.service';
+import { AdminSourceQueryService } from '../services/admin-source-query.service';
+import {
+  AdminSourceDetailResponseDto,
+  PaginatedAdminSourceResponseDto,
+} from '../dto/admin-source-response.dto';
+import { DashboardOverviewQueryDto } from '../../admin-dashboard/dto/dashboard-overview-query.dto';
 
 @ApiTags('Admin - Sources')
 @ApiBearerAuth('administrator-bearer')
 @UseGuards(AdministratorAuthGuard)
 @Controller('admin/sources')
 export class SourcesController {
-  constructor(private readonly sourcesService: SourcesService) {}
+  constructor(
+    private readonly sourcesService: SourcesService,
+    private readonly adminQuery: AdminSourceQueryService,
+  ) {}
 
   @Get()
   @ApiOperation({
@@ -34,11 +43,22 @@ export class SourcesController {
     description:
       'Returns global sources with lifecycle, health, ingestion, web configuration, associated taxonomy, and stream details. Supports operational filters and optional inclusion of soft-deleted records.',
   })
-  @ApiResponse({ status: 200, type: PaginatedResponseDto })
+  @ApiResponse({ status: 200, type: PaginatedAdminSourceResponseDto })
   @ApiResponse({ status: 401, type: ErrorResponseDto })
   @ApiResponse({ status: 403, type: ErrorResponseDto })
-  findAll(@Query() query: QuerySourceDto): Promise<PaginatedResponseDto<SourceResponseDto>> {
-    return this.sourcesService.findAll(query);
+  findAll(@Query() query: QuerySourceDto): Promise<PaginatedAdminSourceResponseDto> {
+    return this.adminQuery.findAll(query);
+  }
+
+  @Get(':id')
+  @ApiOperation({ summary: 'Read source recipe, persisted signals and retained ingestion history' })
+  @ApiResponse({ status: 200, type: AdminSourceDetailResponseDto })
+  @ApiResponse({ status: 404, type: ErrorResponseDto })
+  detail(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query() query: DashboardOverviewQueryDto,
+  ): Promise<AdminSourceDetailResponseDto> {
+    return this.adminQuery.detail(id, query.period);
   }
 
   @Post()
@@ -59,7 +79,7 @@ export class SourcesController {
   @ApiOperation({
     summary: 'Update a source',
     description:
-      'Updates editable source metadata and web extraction configuration. It does not ingest the source or re-run candidate onboarding automatically.',
+      'Updates editable source metadata. Source type and stored web recipe are read-only.',
   })
   @ApiResponse({ status: 200, type: SourceResponseDto })
   @ApiResponse({ status: 401, type: ErrorResponseDto })

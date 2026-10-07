@@ -1,6 +1,7 @@
 import { NotFoundException } from '@nestjs/common';
 import { DigestQueryService } from './digest-query.service';
 import { Digest, DigestStatus, DigestType } from '../entities/digest.entity';
+import { Repository } from 'typeorm';
 
 describe('DigestQueryService', () => {
   let service: DigestQueryService;
@@ -8,6 +9,7 @@ describe('DigestQueryService', () => {
   const validId = '123e4567-e89b-12d3-a456-426614174000';
 
   const mockQueryBuilder = {
+    loadRelationCountAndMap: jest.fn().mockReturnThis(),
     leftJoinAndSelect: jest.fn().mockReturnThis(),
     andWhere: jest.fn().mockReturnThis(),
     orderBy: jest.fn().mockReturnThis(),
@@ -24,7 +26,7 @@ describe('DigestQueryService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    service = new DigestQueryService(mockDigestRepo as any);
+    service = new DigestQueryService(mockDigestRepo as unknown as Repository<Digest>);
   });
 
   describe('findById', () => {
@@ -89,9 +91,12 @@ describe('DigestQueryService', () => {
 
       await service.findAll({ page: 1, limit: 20, email: 'jane' });
 
-      expect(mockQueryBuilder.andWhere).toHaveBeenCalledWith('user.email ILIKE :email', {
-        email: '%jane%',
-      });
+      expect(mockQueryBuilder.andWhere).toHaveBeenCalledWith(
+        '(user.email ILIKE :email OR digest.actualRecipientEmail ILIKE :email)',
+        {
+          email: '%jane%',
+        },
+      );
     });
 
     it('maps entities to the response shape, including the joined userId/userEmail, and computes pagination math', async () => {
@@ -124,6 +129,7 @@ describe('DigestQueryService', () => {
       expect(mockQueryBuilder.skip).toHaveBeenCalledWith(20);
       expect(result.data).toEqual([
         {
+          articleCount: 0,
           id: validId,
           userId: 'user-1',
           userEmail: 'jane@example.com',

@@ -10,6 +10,7 @@ import { RefreshToken } from '../entities/refresh-token.entity';
 import { UserCommandService } from '../../users/services/user-command.service';
 import { UserQueryService } from '../../users/services/user-query.service';
 import { MailService } from '../../mail/services/mail.service';
+import type { User } from '../../users/entities/user.entity';
 
 describe('AuthService', () => {
   let service: AuthService;
@@ -214,6 +215,21 @@ describe('AuthService', () => {
   });
 
   describe('login', () => {
+    it('defaults the user access JWT lifetime to 24 hours', async () => {
+      const previous = process.env.JWT_EXPIRES_IN;
+      delete process.env.JWT_EXPIRES_IN;
+      try {
+        await service.login(mockUser as unknown as User);
+        expect(mockJwtService.sign).toHaveBeenCalledWith(
+          expect.objectContaining({ sub: mockUser.id, subjectType: 'user' }),
+          expect.objectContaining({ expiresIn: '24h', audience: 'ptr-user' }),
+        );
+      } finally {
+        if (previous === undefined) delete process.env.JWT_EXPIRES_IN;
+        else process.env.JWT_EXPIRES_IN = previous;
+      }
+    });
+
     it('issues an access token and persists a hashed refresh token', async () => {
       const result = await service.login(mockUser as any);
 

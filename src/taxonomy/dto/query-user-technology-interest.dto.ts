@@ -1,9 +1,11 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
-import { IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { IsInt, IsOptional, IsString, IsUUID, Min } from 'class-validator';
 
 // Backs AdminUserTechnologyInterestsController's GET /admin/user-technology-interests listing.
 export class QueryUserTechnologyInterestDto {
+  @ApiPropertyOptional() @IsOptional() @IsUUID() userId?: string;
+  @ApiPropertyOptional() @IsOptional() @IsUUID() technologyInterestId?: string;
   @ApiPropertyOptional({ description: 'Page number', example: 1, minimum: 1, default: 1 })
   @IsOptional()
   @Type(() => Number)

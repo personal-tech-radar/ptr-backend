@@ -25,6 +25,7 @@ import { UsersModule } from './users/users.module';
 import { AdministratorsModule } from './administrators/administrators.module';
 import { RedirectsModule } from './redirects/redirects.module';
 import { InfoPagesModule } from './info-pages/info-pages.module';
+import { AdminDashboardModule } from './admin-dashboard/admin-dashboard.module';
 
 @Module({
   imports: [
@@ -54,6 +55,7 @@ import { InfoPagesModule } from './info-pages/info-pages.module';
     FeedModule,
     PublicFeedModule,
     InfoPagesModule,
+    AdminDashboardModule,
   ],
 })
 export class AppModule {}

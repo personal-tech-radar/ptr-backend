@@ -36,6 +36,32 @@ describe('QueueService', () => {
     mockTaxonomySourceDiscoveryQueue.add.mockResolvedValue({ id: 'taxonomy-tech-1' });
   });
 
+  it.each(['active', 'completed', 'failed', 'waiting-children', 'unknown'])(
+    'refuses cancellation of %s work without removing the job',
+    async (state) => {
+      const remove = jest.fn();
+      mockArticleAnalysisQueue.getJob.mockResolvedValue({
+        getState: jest.fn().mockResolvedValue(state),
+        remove,
+      });
+      expect(await service.cancelPendingJob(QUEUE_ARTICLE_ANALYSIS, 'fixture')).toBe(false);
+      expect(remove).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['waiting', 'delayed', 'paused', 'prioritized'])(
+    'allows cancellation of %s work',
+    async (state) => {
+      const remove = jest.fn();
+      mockArticleAnalysisQueue.getJob.mockResolvedValue({
+        getState: jest.fn().mockResolvedValue(state),
+        remove,
+      });
+      expect(await service.cancelPendingJob(QUEUE_ARTICLE_ANALYSIS, 'fixture')).toBe(true);
+      expect(remove).toHaveBeenCalledTimes(1);
+    },
+  );
+
   it.each(['completed', 'failed'])(
     'removes a retained %s analysis job before retrying',
     async (state) => {

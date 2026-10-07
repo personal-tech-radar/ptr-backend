@@ -1,7 +1,12 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsEnum, IsInt, IsOptional, Max, Min } from 'class-validator';
-import { SourceCandidateStatus } from '../entities/source-candidate.entity';
+import { IsDateString, IsEnum, IsInt, IsOptional, IsUUID, Max, Min } from 'class-validator';
+import {
+  SourceCandidateDetectedType,
+  SourceCandidateStatus,
+  SourceDiscoveryOrigin,
+} from '../entities/source-candidate.entity';
+import { SourceType } from '../entities/source.entity';
 
 export class SourceCandidateListQueryDto {
   @ApiPropertyOptional({ default: 1 })
@@ -23,4 +28,39 @@ export class SourceCandidateListQueryDto {
   @IsEnum(SourceCandidateStatus)
   @IsOptional()
   status?: SourceCandidateStatus;
+
+  @ApiPropertyOptional({ enum: SourceDiscoveryOrigin })
+  @IsEnum(SourceDiscoveryOrigin)
+  @IsOptional()
+  origin?: SourceDiscoveryOrigin;
+
+  @ApiPropertyOptional({ enum: SourceType })
+  @IsEnum(SourceType)
+  @IsOptional()
+  expectedSourceType?: SourceType;
+
+  @ApiPropertyOptional({ enum: SourceCandidateDetectedType })
+  @IsEnum(SourceCandidateDetectedType)
+  @IsOptional()
+  detectedType?: SourceCandidateDetectedType;
+
+  @ApiPropertyOptional()
+  @IsUUID()
+  @IsOptional()
+  technologyInterestId?: string;
+
+  @ApiPropertyOptional()
+  @IsUUID()
+  @IsOptional()
+  streamId?: string;
+
+  @ApiPropertyOptional()
+  @IsDateString()
+  @IsOptional()
+  createdFrom?: string;
+
+  @ApiPropertyOptional()
+  @IsDateString()
+  @IsOptional()
+  createdTo?: string;
 }
