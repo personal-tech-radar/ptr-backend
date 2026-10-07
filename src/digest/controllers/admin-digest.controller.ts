@@ -1,4 +1,13 @@
-import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseUUIDPipe,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import {
   ApiBadRequestResponse,
   ApiBearerAuth,
@@ -15,7 +24,7 @@ import { AdminQueryDigestDto } from '../dto/admin-query-digest.dto';
 import {
   DigestDetailResponseDto,
   DigestResponseDto,
-  toDigestDetailResponseDto,
+  PaginatedDigestResponseDto,
 } from '../dto/digest-response.dto';
 import { DigestQueryService } from '../services/digest-query.service';
 import { QueueService } from '../../queue/services/queue.service';
@@ -40,7 +49,7 @@ export class AdminDigestController {
     description:
       'Returns scheduled and administrator-preview digest records, statuses, periods, recipients, delivery mode, and temporary per-stream page links with pagination and operational filters.',
   })
-  @ApiResponse({ status: 200, type: PaginatedResponseDto })
+  @ApiResponse({ status: 200, type: PaginatedDigestResponseDto })
   @ApiResponse({ status: 401, type: ErrorResponseDto })
   @ApiResponse({ status: 403, type: ErrorResponseDto })
   findAll(@Query() query: AdminQueryDigestDto): Promise<PaginatedResponseDto<DigestResponseDto>> {
@@ -78,9 +87,8 @@ export class AdminDigestController {
   @ApiResponse({ status: 401, type: ErrorResponseDto })
   @ApiResponse({ status: 403, type: ErrorResponseDto })
   @ApiResponse({ status: 404, type: ErrorResponseDto })
-  async findOne(@Param('id') id: string): Promise<DigestDetailResponseDto> {
-    const digest = await this.digestQueryService.findByIdWithItems(id);
-    return toDigestDetailResponseDto(digest);
+  async findOne(@Param('id', ParseUUIDPipe) id: string): Promise<DigestDetailResponseDto> {
+    return this.digestQueryService.findAdminDetail(id);
   }
 
   @Post(':id/resend')

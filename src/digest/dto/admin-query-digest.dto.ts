@@ -1,10 +1,28 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
-import { IsEnum, IsInt, IsOptional, IsString, Min } from 'class-validator';
-import { DigestStatus, DigestType } from '../entities/digest.entity';
+import { IsDateString, IsEnum, IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { DigestDeliveryMode, DigestStatus, DigestType } from '../entities/digest.entity';
 
 // Backs AdminDigestController's GET /admin/digests listing.
 export class AdminQueryDigestDto {
+  @ApiPropertyOptional({
+    description: 'Latest update inclusive lower bound; dashboard failed-digest drill-down.',
+  })
+  @IsOptional()
+  @IsDateString()
+  updatedFrom?: string;
+  @ApiPropertyOptional({ description: 'Latest update exclusive upper bound.' })
+  @IsOptional()
+  @IsDateString()
+  updatedTo?: string;
+  @ApiPropertyOptional({ description: 'Sent timestamp inclusive lower bound' })
+  @IsOptional()
+  @IsDateString()
+  sentFrom?: string;
+  @ApiPropertyOptional({ description: 'Sent timestamp exclusive upper bound' })
+  @IsOptional()
+  @IsDateString()
+  sentTo?: string;
   @ApiPropertyOptional({ description: 'Page number', example: 1, minimum: 1, default: 1 })
   @IsOptional()
   @Type(() => Number)
@@ -45,4 +63,19 @@ export class AdminQueryDigestDto {
   @IsString()
   @Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value))
   email?: string;
+
+  @ApiPropertyOptional({ enum: DigestDeliveryMode })
+  @IsOptional()
+  @IsEnum(DigestDeliveryMode)
+  deliveryMode?: DigestDeliveryMode;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  createdFrom?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  createdTo?: string;
 }

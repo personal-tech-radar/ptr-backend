@@ -1,4 +1,5 @@
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { PaginatedAdminOpensResponseDto } from '../dto/admin-opens-response.dto';
 import {
   ApiBadRequestResponse,
   ApiBearerAuth,
@@ -27,7 +28,7 @@ export class AdminOpensController {
     description:
       'Read-only paginated opening history produced by permanent personal tracking links. Each user/article pair contributes only its first opening signal.',
   })
-  @ApiResponse({ status: 200, type: PaginatedResponseDto })
+  @ApiResponse({ status: 200, type: PaginatedAdminOpensResponseDto })
   @ApiResponse({ status: 401, type: ErrorResponseDto })
   @ApiResponse({ status: 403, type: ErrorResponseDto })
   findAll(

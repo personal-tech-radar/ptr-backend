@@ -4,6 +4,7 @@ import { IsInt, IsOptional, IsString, IsUUID, Min } from 'class-validator';
 
 // Backs AdminUserSourcePreferenceController's GET /admin/user-source-preferences listing.
 export class AdminQueryUserSourcePreferenceDto {
+  @ApiPropertyOptional() @IsOptional() @IsUUID() userId?: string;
   @ApiPropertyOptional({ description: 'Page number', example: 1, minimum: 1, default: 1 })
   @IsOptional()
   @Type(() => Number)

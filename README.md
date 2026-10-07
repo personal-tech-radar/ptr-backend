@@ -25,6 +25,7 @@ versioned feed caches, and exporter-neutral internal counters.
 
 Detailed operational designs:
 
+- [Administrator API, analytics semantics, and backend verification](docs/admin-api.md)
 - [Source discovery and onboarding](src/sources/README.md)
 - [Scheduler and processing pipeline](src/scheduler/README.md)
 - [Users and profiles](src/users/README.md)
@@ -250,6 +251,9 @@ Copy `.env.example` to `.env`. Important values include PostgreSQL/Redis connect
 ```dotenv
 TECHNICAL_HISTORY_RETENTION_DAYS=30
 ```
+
+Normal-user access JWTs use `JWT_EXPIRES_IN=24h` by default. User refresh tokens remain
+separate and expire after 30 days by default; administrator JWTs retain their own setting.
 
 The admin bootstrap and legacy-user migration are idempotent. Runtime user configuration comes
 only from the database; the legacy manifest is a one-time migration input.

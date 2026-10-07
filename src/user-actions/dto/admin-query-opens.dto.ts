@@ -1,7 +1,8 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type, TransformFnParams } from 'class-transformer';
-import { IsBoolean, IsEnum, IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { IsBoolean, IsEnum, IsInt, IsOptional, IsString, IsUUID, Min } from 'class-validator';
 import { PersonalArticleLinkContext } from '../entities/personal-article-link.entity';
+import { AdminEventFilterDto } from '../../common/dto/admin-event-filter.dto';
 
 // Read the raw query string so "false" is not coerced to true before validation.
 const toBoolean = ({ obj, key }: TransformFnParams): boolean | undefined => {
@@ -12,7 +13,8 @@ const toBoolean = ({ obj, key }: TransformFnParams): boolean | undefined => {
 };
 
 // Backs AdminOpensController's GET /admin/opens listing.
-export class AdminQueryOpensDto {
+export class AdminQueryOpensDto extends AdminEventFilterDto {
+  @ApiPropertyOptional() @IsOptional() @IsUUID() articleId?: string;
   @ApiPropertyOptional({ description: 'Page number', example: 1, minimum: 1, default: 1 })
   @IsOptional()
   @Type(() => Number)

@@ -249,7 +249,7 @@ export class AuthService {
       { sub: user.id, email: user.email, subjectType: 'user' },
       {
         secret: getJwtSecret(),
-        expiresIn: toExpiresIn(process.env.JWT_EXPIRES_IN || '15m'),
+        expiresIn: toExpiresIn(process.env.JWT_EXPIRES_IN || '24h'),
         audience: 'ptr-user',
       },
     );

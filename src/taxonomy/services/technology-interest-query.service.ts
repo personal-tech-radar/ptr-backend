@@ -10,6 +10,12 @@ import { UserTechnologyInterestResponseDto } from '../dto/user-technology-intere
 import { TechnologyInterest } from '../entities/technology-interest.entity';
 import { UserTechnologyInterest } from '../entities/user-technology-interest.entity';
 import { normalizeTechnologyInterestName } from '../util/normalize-technology-interest-name.util';
+import {
+  AdminTechnologyInterestListItemDto,
+  TechnologyCoverageCountsDto,
+  TechnologyRelatedStreamDto,
+  toTechnologyInterestResponseDto,
+} from '../dto/technology-interest-response.dto';
 
 @Injectable()
 export class TechnologyInterestQueryService {
@@ -95,6 +101,14 @@ export class TechnologyInterestQueryService {
       qb.where('ti.deletedAt IS NULL');
     }
 
+    if (query.q) {
+      const normalized = normalizeTechnologyInterestName(query.q);
+      qb.andWhere(
+        '(ti.normalizedName ILIKE :search OR EXISTS (SELECT 1 FROM jsonb_array_elements_text(ti.aliases) alias WHERE alias ILIKE :search))',
+        { search: `%${normalized}%` },
+      );
+    }
+
     if (query.kind) {
       qb.andWhere('ti.kind = :kind', { kind: query.kind });
     }
@@ -111,6 +125,68 @@ export class TechnologyInterestQueryService {
     };
   }
 
+  async findAdminList(
+    query: AdminQueryTechnologyInterestDto,
+  ): Promise<PaginatedResponseDto<AdminTechnologyInterestListItemDto>> {
+    const result = await this.findAllForAdmin(query);
+    if (!result.data.length) return { ...result, data: [] };
+    const ids = result.data.map((entry) => entry.id);
+    type CountRow = { taxonomyId: string; active: number; degraded: number; disabled: number };
+    type StreamRow = CountRow & { streamId: string; streamKey: string; streamName: string };
+    const [totals, streams] = await Promise.all([
+      this.technologyInterestRepo.query<CountRow[]>(
+        `SELECT coverage."technologyInterestId" AS "taxonomyId",
+                count(DISTINCT source.id) FILTER (WHERE source.status='active')::int AS active,
+                count(DISTINCT source.id) FILTER (WHERE source.status='degraded')::int AS degraded,
+                count(DISTINCT source.id) FILTER (WHERE source.status='disabled')::int AS disabled
+         FROM source_coverages coverage
+         JOIN sources source ON source.id=coverage."sourceId" AND source."deletedAt" IS NULL
+         WHERE coverage."technologyInterestId"=ANY($1::uuid[])
+         GROUP BY coverage."technologyInterestId"`,
+        [ids],
+      ),
+      this.technologyInterestRepo.query<StreamRow[]>(
+        `SELECT coverage."technologyInterestId" AS "taxonomyId",
+                stream.id AS "streamId", stream.key AS "streamKey", stream.name AS "streamName",
+                count(source.id) FILTER (WHERE source.status='active')::int AS active,
+                count(source.id) FILTER (WHERE source.status='degraded')::int AS degraded,
+                count(source.id) FILTER (WHERE source.status='disabled')::int AS disabled
+         FROM source_coverages coverage
+         JOIN sources source ON source.id=coverage."sourceId" AND source."deletedAt" IS NULL
+         JOIN content_streams stream ON stream.id=coverage."contentStreamId"
+         WHERE coverage."technologyInterestId"=ANY($1::uuid[])
+         GROUP BY coverage."technologyInterestId",stream.id
+         ORDER BY stream."sortOrder",stream.id`,
+        [ids],
+      ),
+    ]);
+    const counts = (row: CountRow): TechnologyCoverageCountsDto => ({
+      active: Number(row.active),
+      degraded: Number(row.degraded),
+      disabled: Number(row.disabled),
+    });
+    const byTaxonomy = new Map(totals.map((row) => [row.taxonomyId, counts(row)]));
+    const streamByTaxonomy = new Map<string, TechnologyRelatedStreamDto[]>();
+    for (const row of streams) {
+      const group = streamByTaxonomy.get(row.taxonomyId) ?? [];
+      group.push({
+        id: row.streamId,
+        key: row.streamKey,
+        name: row.streamName,
+        coverage: counts(row),
+      });
+      streamByTaxonomy.set(row.taxonomyId, group);
+    }
+    return {
+      ...result,
+      data: result.data.map((entry) => ({
+        ...toTechnologyInterestResponseDto(entry),
+        coverage: byTaxonomy.get(entry.id) ?? { active: 0, degraded: 0, disabled: 0 },
+        relatedStreams: streamByTaxonomy.get(entry.id) ?? [],
+      })),
+    };
+  }
+
   // Flattened, joined listing of every user's technology/interest selections (admin only) — joins
   // via the entity relations already defined on UserTechnologyInterest (`user`,
   // `technologyInterest`), so no separate User repository injection is needed in this module.
@@ -124,6 +200,11 @@ export class TechnologyInterestQueryService {
       .createQueryBuilder('uti')
       .innerJoinAndSelect('uti.user', 'user')
       .innerJoinAndSelect('uti.technologyInterest', 'ti');
+    if (query.userId) qb.andWhere('uti.userId = :userId', { userId: query.userId });
+    if (query.technologyInterestId)
+      qb.andWhere('uti.technologyInterestId = :technologyInterestId', {
+        technologyInterestId: query.technologyInterestId,
+      });
 
     if (query.email) {
       qb.andWhere('user.email ILIKE :email', { email: `%${query.email}%` });

@@ -3,6 +3,9 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { ArticlesService } from './articles.service';
 import { Article } from '../entities/article.entity';
+import { ArticleAnalysis } from '../../ai-analysis/entities/article-analysis.entity';
+import { ArticleStream } from '../../ai-analysis/entities/article-stream.entity';
+import { ArticleTechnologyInterest } from '../../ai-analysis/entities/article-technology-interest.entity';
 
 describe('ArticlesService', () => {
   let service: ArticlesService;
@@ -21,6 +24,9 @@ describe('ArticlesService', () => {
       providers: [
         ArticlesService,
         { provide: getRepositoryToken(Article), useValue: mockArticleRepo },
+        { provide: getRepositoryToken(ArticleAnalysis), useValue: {} },
+        { provide: getRepositoryToken(ArticleStream), useValue: {} },
+        { provide: getRepositoryToken(ArticleTechnologyInterest), useValue: {} },
       ],
     }).compile();
 

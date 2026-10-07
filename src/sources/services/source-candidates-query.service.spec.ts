@@ -1,6 +1,8 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { SourceCandidatesQueryService } from './source-candidates-query.service';
 import { SourceCandidateStatus } from '../entities/source-candidate.entity';
+import { Repository } from 'typeorm';
+import { SourceCandidate } from '../entities/source-candidate.entity';
 
 describe('SourceCandidatesQueryService', () => {
   let service: SourceCandidatesQueryService;
@@ -8,6 +10,7 @@ describe('SourceCandidatesQueryService', () => {
   const validId = '123e4567-e89b-12d3-a456-426614174000';
 
   const mockQueryBuilder = {
+    leftJoinAndSelect: jest.fn().mockReturnThis(),
     andWhere: jest.fn().mockReturnThis(),
     orderBy: jest.fn().mockReturnThis(),
     skip: jest.fn().mockReturnThis(),
@@ -23,7 +26,9 @@ describe('SourceCandidatesQueryService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockCandidateRepo.createQueryBuilder.mockReturnValue(mockQueryBuilder);
-    service = new SourceCandidatesQueryService(mockCandidateRepo as any);
+    service = new SourceCandidatesQueryService(
+      mockCandidateRepo as unknown as Repository<SourceCandidate>,
+    );
   });
 
   describe('findAll', () => {
@@ -35,6 +40,14 @@ describe('SourceCandidatesQueryService', () => {
 
       expect(mockQueryBuilder.skip).toHaveBeenCalledWith(0);
       expect(mockQueryBuilder.take).toHaveBeenCalledWith(20);
+      expect(mockQueryBuilder.leftJoinAndSelect).toHaveBeenCalledWith(
+        'candidate.technologyInterest',
+        'technologyInterest',
+      );
+      expect(mockQueryBuilder.leftJoinAndSelect).toHaveBeenCalledWith(
+        'candidate.contentStream',
+        'contentStream',
+      );
       expect(mockQueryBuilder.andWhere).not.toHaveBeenCalled();
       expect(result).toEqual({
         data: items,

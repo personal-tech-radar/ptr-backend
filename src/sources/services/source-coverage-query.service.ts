@@ -28,23 +28,14 @@ export class SourceCoverageQueryService {
     const limit = query.limit ?? 20;
     const qb = this.taxonomyRepo
       .createQueryBuilder('taxonomy')
+      .innerJoin('source_coverages', 'coverage', 'coverage."technologyInterestId" = taxonomy.id')
+      .innerJoin('content_streams', 'stream', 'stream.id = coverage."contentStreamId"')
       .innerJoin(
-        'content_streams',
-        'stream',
-        `(taxonomy.kind = 'technology' OR stream.key NOT IN ('releases_and_changes', 'security'))`,
-      )
-      .leftJoin(
-        'source_coverages',
-        'coverage',
-        'coverage."technologyInterestId" = taxonomy.id AND coverage."contentStreamId" = stream.id',
-      )
-      .leftJoin(
         'sources',
         'source',
         'source.id = coverage."sourceId" AND source."deletedAt" IS NULL',
       )
       .where('taxonomy."deletedAt" IS NULL')
-      .andWhere('stream.enabled = true')
       .select('taxonomy.id', 'technologyInterestId')
       .addSelect('taxonomy.name', 'name')
       .addSelect('taxonomy.kind', 'kind')
@@ -73,17 +64,26 @@ export class SourceCoverageQueryService {
       });
     }
 
+    const [sql, parameters] = qb.getQueryAndParameters();
+    const [count] = await this.taxonomyRepo.query<Array<{ total: number }>>(
+      `SELECT COUNT(*)::int AS total FROM (${sql}) grouped_coverage`,
+      parameters,
+    );
     const all = await qb
       .orderBy('taxonomy.name', 'ASC')
       .addOrderBy('stream.sortOrder', 'ASC')
-      .getRawMany();
-    const total = all.length;
-    const data = all.slice((page - 1) * limit, page * limit).map((row) => ({
+      .addOrderBy('taxonomy.id', 'ASC')
+      .addOrderBy('stream.id', 'ASC')
+      .offset((page - 1) * limit)
+      .limit(limit)
+      .getRawMany<SourceCoverageRow>();
+    const total = count.total;
+    const data = all.map((row) => ({
       ...row,
       activeSources: Number(row.activeSources),
       degradedSources: Number(row.degradedSources),
       disabledSources: Number(row.disabledSources),
-    })) as SourceCoverageRow[];
+    }));
     return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
   }
 }

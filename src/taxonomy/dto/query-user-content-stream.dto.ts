@@ -1,9 +1,11 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
-import { IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { IsInt, IsOptional, IsString, IsUUID, Min } from 'class-validator';
 
 // Backs AdminUserContentStreamsController's GET /admin/user-content-streams listing.
 export class QueryUserContentStreamDto {
+  @ApiPropertyOptional() @IsOptional() @IsUUID() userId?: string;
+  @ApiPropertyOptional() @IsOptional() @IsUUID() streamId?: string;
   @ApiPropertyOptional({ description: 'Page number', example: 1, minimum: 1, default: 1 })
   @IsOptional()
   @Type(() => Number)

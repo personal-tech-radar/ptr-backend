@@ -16,12 +16,18 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { AdministratorAuthGuard } from '../../administrators/guards/administrator-auth.guard';
-import { PaginatedResponseDto } from '../../common/dto/paginated-response.dto';
 import { ErrorResponseDto } from '../../common/error/error-response.dto';
 import { QueryUserDto } from '../dto/query-user.dto';
-import { toUserResponseDto, UserResponseDto } from '../dto/user-response.dto';
+import {
+  PaginatedUserResponseDto,
+  toUserResponseDto,
+  UserResponseDto,
+} from '../dto/user-response.dto';
 import { UserCommandService } from '../services/user-command.service';
 import { UserQueryService } from '../services/user-query.service';
+import { UserAnalyticsService } from '../services/user-analytics.service';
+import { UserAnalyticsQueryDto } from '../dto/user-analytics-query.dto';
+import { UserAnalyticsResponseDto } from '../dto/user-analytics-response.dto';
 
 @ApiTags('Admin - Users')
 @ApiBearerAuth('administrator-bearer')
@@ -32,7 +38,15 @@ export class AdminUsersController {
   constructor(
     private readonly userQueryService: UserQueryService,
     private readonly userCommandService: UserCommandService,
+    private readonly userAnalyticsService: UserAnalyticsService,
   ) {}
+
+  @Get('analytics')
+  @ApiResponse({ status: 200, type: UserAnalyticsResponseDto })
+  @ApiOperation({ summary: 'Return read-only product user activity aggregates' })
+  analytics(@Query() query: UserAnalyticsQueryDto) {
+    return this.userAnalyticsService.get(query.period);
+  }
 
   @Get()
   @ApiOperation({
@@ -40,15 +54,11 @@ export class AdminUsersController {
     description:
       'Returns normal-user accounts with profile, verification, onboarding, and lifecycle data. Administrator accounts are stored separately and never appear here.',
   })
-  @ApiResponse({ status: 200, type: PaginatedResponseDto })
+  @ApiResponse({ status: 200, type: PaginatedUserResponseDto })
   @ApiResponse({ status: 401, type: ErrorResponseDto })
   @ApiResponse({ status: 403, type: ErrorResponseDto })
-  async findAll(@Query() query: QueryUserDto): Promise<PaginatedResponseDto<UserResponseDto>> {
-    const result = await this.userQueryService.findAll(query);
-    return {
-      data: result.data.map(toUserResponseDto),
-      meta: result.meta,
-    };
+  findAll(@Query() query: QueryUserDto): Promise<PaginatedUserResponseDto> {
+    return this.userQueryService.findAdminList(query);
   }
 
   @Get(':id')

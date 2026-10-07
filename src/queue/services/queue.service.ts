@@ -1,6 +1,7 @@
 import { InjectQueue } from '@nestjs/bullmq';
-import { Injectable } from '@nestjs/common';
-import { Queue } from 'bullmq';
+import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Queue, Job, JobType } from 'bullmq';
+import { AdminJobResponseDto, AdminJobState, AdminQueueSummaryDto } from '../dto/admin-jobs.dto';
 import { DigestType } from '../../digest/entities/digest.entity';
 
 export const QUEUE_FEED_FETCH = 'feed-fetch';
@@ -215,24 +216,130 @@ export class QueueService {
   }
 
   async listFailedJobs(queueName?: string, page = 1, limit = 20) {
-    const queues = this.queueEntries().filter(([name]) => !queueName || name === queueName);
-    const start = (Math.max(1, page) - 1) * Math.min(100, Math.max(1, limit));
-    const end = start + Math.min(100, Math.max(1, limit)) - 1;
-    const data = (
-      await Promise.all(
-        queues.map(async ([name, queue]) =>
-          (await queue.getFailed(start, end)).map((job) => ({
-            queue: name,
-            id: job.id,
-            name: job.name,
-            failedReason: job.failedReason,
-            attemptsMade: job.attemptsMade,
-            timestamp: job.timestamp,
-          })),
-        ),
+    return this.listAdminJobs(queueName, 'failed', page, limit);
+  }
+
+  async getAdminQueueSummary(): Promise<AdminQueueSummaryDto[]> {
+    return Promise.all(
+      this.queueEntries().map(
+        async ([queue, instance]) =>
+          ({
+            queue,
+            ...(await instance.getJobCounts(
+              'waiting',
+              'active',
+              'delayed',
+              'paused',
+              'prioritized',
+              'failed',
+            )),
+          }) as AdminQueueSummaryDto,
+      ),
+    );
+  }
+
+  async listAdminJobs(queueName?: string, state?: AdminJobState, page = 1, limit = 20) {
+    if (queueName && !this.queueEntries().some(([name]) => name === queueName))
+      throw new BadRequestException('Unknown queue');
+    const states: AdminJobState[] = state
+      ? [state]
+      : ['waiting', 'active', 'delayed', 'paused', 'prioritized', 'failed'];
+    const partitions = await Promise.all(
+      this.queueEntries()
+        .filter(([name]) => !queueName || name === queueName)
+        .map(async ([name, queue]) => {
+          const counts = await queue.getJobCounts(
+            ...states.map((s) => (s === 'waiting' ? 'wait' : s)),
+          );
+          return { name, queue, counts };
+        }),
+    );
+    const total = partitions.reduce(
+      (n, p) => n + Object.values(p.counts).reduce((sum, count) => sum + count, 0),
+      0,
+    );
+    let offset = (page - 1) * limit;
+    const data: AdminJobResponseDto[] = [];
+    // Stable queue/state order, with BullMQ's native order inside each state.
+    for (const { name, queue, counts } of partitions) {
+      for (const current of states) {
+        const native: JobType = current === 'waiting' ? 'wait' : current;
+        const count = counts[native] ?? 0;
+        if (offset >= count) {
+          offset -= count;
+          continue;
+        }
+        const jobs = await queue.getJobs([native], offset, offset + limit - data.length - 1, false);
+        const paused = await queue.isPaused();
+        data.push(
+          ...(await Promise.all(
+            jobs.filter(Boolean).map((job) => this.toAdminJob(name, job, paused)),
+          )),
+        );
+        offset = 0;
+        if (data.length >= limit) break;
+      }
+      if (data.length >= limit) break;
+    }
+    return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
+  }
+
+  async getAdminJob(queueName: string, jobId: string): Promise<AdminJobResponseDto> {
+    const queue = this.queueEntries().find(([name]) => name === queueName)?.[1];
+    if (!queue) throw new NotFoundException('Queue not found');
+    const job = await queue.getJob(jobId);
+    if (!job) throw new NotFoundException('Queue job not found');
+    return this.toAdminJob(queueName, job, await queue.isPaused());
+  }
+
+  private async toAdminJob(queue: string, job: Job, paused: boolean): Promise<AdminJobResponseDto> {
+    const state = await job.getState();
+    return {
+      queue,
+      id: String(job.id),
+      type: job.name,
+      name: job.name,
+      state: state === 'waiting' && paused ? 'paused' : state,
+      timestamp: job.timestamp,
+      processedOn: job.processedOn ?? null,
+      finishedOn: job.finishedOn ?? null,
+      attemptsMade: job.attemptsMade,
+      attempts: job.opts.attempts ?? 1,
+      failedReason: this.safeFailure(job.failedReason),
+      reference: this.referenceForJob(job.data as Record<string, unknown>),
+    };
+  }
+
+  private safeFailure(reason: string | undefined): string | null {
+    if (!reason) return null;
+    let safe = reason;
+    for (const [key, value] of Object.entries(process.env)) {
+      if (/(SECRET|PASSWORD|TOKEN|API_KEY)/i.test(key) && value && value.length >= 6)
+        safe = safe.split(value).join('[redacted]');
+    }
+    return safe
+      .replace(/(?:sk-|re_)[A-Za-z0-9_-]{8,}/g, '[redacted]')
+      .replace(/Bearer\s+\S+/gi, 'Bearer [redacted]')
+      .replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/g, '$1[redacted]@');
+  }
+
+  private referenceForJob(data: Record<string, unknown>): { type: string; id: string } | null {
+    for (const [key, type] of Object.entries({
+      sourceId: 'source',
+      articleId: 'article',
+      candidateId: 'candidate',
+      technologyInterestId: 'taxonomy',
+      digestId: 'digest',
+      userId: 'user',
+    })) {
+      const id = data[key];
+      if (
+        typeof id === 'string' &&
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
       )
-    ).flat();
-    return { data, meta: { page, limit, total: data.length, totalPages: data.length ? page : 0 } };
+        return { type, id };
+    }
+    return null;
   }
 
   async cancelPendingJob(queueName: string, jobId: string): Promise<boolean> {

@@ -1,3 +1,4 @@
+import { PaginatedResponseDto } from '../../common/dto/paginated-response.dto';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { ArticleResponseDto } from '../../articles/dto/article-response.dto';
 import { PersonalArticleLinkContext } from '../entities/personal-article-link.entity';
@@ -29,4 +30,8 @@ export class AdminOpensResponseDto {
 
   @ApiProperty()
   createdAt: Date;
+}
+
+export class PaginatedAdminOpensResponseDto extends PaginatedResponseDto<AdminOpensResponseDto> {
+  @ApiProperty({ type: [AdminOpensResponseDto] }) declare data: AdminOpensResponseDto[];
 }

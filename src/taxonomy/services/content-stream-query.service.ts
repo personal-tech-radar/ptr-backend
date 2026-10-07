@@ -69,6 +69,9 @@ export class ContentStreamQueryService {
       .createQueryBuilder('ucs')
       .innerJoinAndSelect('ucs.user', 'user')
       .innerJoinAndSelect('ucs.contentStream', 'cs');
+    if (query.userId) qb.andWhere('ucs.userId = :userId', { userId: query.userId });
+    if (query.streamId)
+      qb.andWhere('ucs.contentStreamId = :streamId', { streamId: query.streamId });
 
     if (query.email) {
       qb.andWhere('user.email ILIKE :email', { email: `%${query.email}%` });

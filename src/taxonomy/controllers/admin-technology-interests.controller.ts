@@ -1,3 +1,4 @@
+import { PaginatedTechnologyInterestResponseDto } from '../dto/technology-interest-response.dto';
 import {
   Body,
   Controller,
@@ -24,6 +25,7 @@ import { AdminQueryTechnologyInterestDto } from '../dto/admin-query-technology-i
 import { CreateTechnologyInterestDto } from '../dto/create-technology-interest.dto';
 import { CreateTechnologyInterestResponseDto } from '../dto/create-technology-interest-response.dto';
 import {
+  AdminTechnologyInterestListItemDto,
   TechnologyInterestResponseDto,
   toTechnologyInterestResponseDto,
 } from '../dto/technology-interest-response.dto';
@@ -77,17 +79,13 @@ export class AdminTechnologyInterestsController {
     description:
       'Returns the unified taxonomy catalog with its technology/interest kind discriminator, aliases, merge state, and administrative filters.',
   })
-  @ApiResponse({ status: 200, type: PaginatedResponseDto })
+  @ApiResponse({ status: 200, type: PaginatedTechnologyInterestResponseDto })
   @ApiResponse({ status: 401, type: ErrorResponseDto })
   @ApiResponse({ status: 403, type: ErrorResponseDto })
   async findAll(
     @Query() query: AdminQueryTechnologyInterestDto,
-  ): Promise<PaginatedResponseDto<TechnologyInterestResponseDto>> {
-    const result = await this.technologyInterestQueryService.findAllForAdmin(query);
-    return {
-      data: result.data.map(toTechnologyInterestResponseDto),
-      meta: result.meta,
-    };
+  ): Promise<PaginatedResponseDto<AdminTechnologyInterestListItemDto>> {
+    return this.technologyInterestQueryService.findAdminList(query);
   }
 
   @Patch(':id')

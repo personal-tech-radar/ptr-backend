@@ -1,3 +1,4 @@
+import { PaginatedResponseDto } from '../../common/dto/paginated-response.dto';
 import { ApiProperty } from '@nestjs/swagger';
 import { TechnologyInterest, TechnologyInterestKind } from '../entities/technology-interest.entity';
 
@@ -36,4 +37,29 @@ export function toTechnologyInterestResponseDto(
     createdAt: entity.createdAt,
     updatedAt: entity.updatedAt,
   };
+}
+
+export class TechnologyCoverageCountsDto {
+  @ApiProperty() active: number;
+  @ApiProperty() degraded: number;
+  @ApiProperty() disabled: number;
+}
+
+export class TechnologyRelatedStreamDto {
+  @ApiProperty() id: string;
+  @ApiProperty() key: string;
+  @ApiProperty() name: string;
+  @ApiProperty({ type: TechnologyCoverageCountsDto }) coverage: TechnologyCoverageCountsDto;
+}
+
+export class AdminTechnologyInterestListItemDto extends TechnologyInterestResponseDto {
+  @ApiProperty({ type: [TechnologyRelatedStreamDto] })
+  relatedStreams: TechnologyRelatedStreamDto[];
+  @ApiProperty({ type: TechnologyCoverageCountsDto })
+  coverage: TechnologyCoverageCountsDto;
+}
+
+export class PaginatedTechnologyInterestResponseDto extends PaginatedResponseDto<AdminTechnologyInterestListItemDto> {
+  @ApiProperty({ type: [AdminTechnologyInterestListItemDto] })
+  declare data: AdminTechnologyInterestListItemDto[];
 }

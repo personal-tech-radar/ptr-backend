@@ -437,7 +437,9 @@ export class AiAnalysisService implements OnModuleInit {
     const userContent = [
       `Title: ${title}`,
       summaryFromFeed ? `Description: ${summaryFromFeed.slice(0, 500)}` : null,
-      rawContent ? `Article content excerpt:\n${rawContent.replace(/<[^>]+>/g, ' ').slice(0, 6000)}` : null,
+      rawContent
+        ? `Article content excerpt:\n${rawContent.replace(/<[^>]+>/g, ' ').slice(0, 6000)}`
+        : null,
       `Supported streams: ${requiredStreamKey ?? streams.map((stream) => stream.key).join(', ')}`,
       `Technologies: ${
         requiredTaxonomyName ??

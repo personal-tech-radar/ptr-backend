@@ -30,6 +30,7 @@ import { SourceIdentityService } from './services/source-identity.service';
 import { SourceSubmissionService } from './services/source-submission.service';
 import { TaxonomySourceProposalService } from './services/taxonomy-source-proposal.service';
 import { SourceCoverageQueryService } from './services/source-coverage-query.service';
+import { AdminSourceQueryService } from './services/admin-source-query.service';
 import { TechnologyInterest } from '../taxonomy/entities/technology-interest.entity';
 import { ContentStream } from '../taxonomy/entities/content-stream.entity';
 import { TaxonomySourceDiscoveryRequest } from '../taxonomy/entities/taxonomy-source-discovery-request.entity';
@@ -70,6 +71,7 @@ import { TaxonomySourceDiscoveryProcessor } from '../taxonomy/processors/taxonom
     AdminSourceCoverageController,
   ],
   providers: [
+    AdminSourceQueryService,
     SourcesService,
     UserSourcePreferenceService,
     SourceDiscoveryService,

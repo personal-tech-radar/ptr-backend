@@ -1,4 +1,5 @@
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { PaginatedAdminArticleFeedbackResponseDto } from '../dto/admin-article-feedback-response.dto';
 import {
   ApiBadRequestResponse,
   ApiBearerAuth,
@@ -27,7 +28,7 @@ export class AdminArticleFeedbackController {
     description:
       'Read-only paginated view of each user/article current explicit useful or not_useful value for auditing and support. Administrators cannot edit or delete feedback here.',
   })
-  @ApiResponse({ status: 200, type: PaginatedResponseDto })
+  @ApiResponse({ status: 200, type: PaginatedAdminArticleFeedbackResponseDto })
   @ApiResponse({ status: 401, type: ErrorResponseDto })
   @ApiResponse({ status: 403, type: ErrorResponseDto })
   findAll(

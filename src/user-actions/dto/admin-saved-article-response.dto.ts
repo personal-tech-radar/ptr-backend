@@ -1,3 +1,4 @@
+import { PaginatedResponseDto } from '../../common/dto/paginated-response.dto';
 import { ApiProperty } from '@nestjs/swagger';
 import { ArticleResponseDto } from '../../articles/dto/article-response.dto';
 
@@ -19,4 +20,9 @@ export class AdminSavedArticleResponseDto {
 
   @ApiProperty({ description: 'When the article was saved' })
   savedAt: Date;
+}
+
+export class PaginatedAdminSavedArticleResponseDto extends PaginatedResponseDto<AdminSavedArticleResponseDto> {
+  @ApiProperty({ type: [AdminSavedArticleResponseDto] })
+  declare data: AdminSavedArticleResponseDto[];
 }

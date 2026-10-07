@@ -21,7 +21,7 @@ import { getJwtSecret } from './utils/jwt-secret.util';
     JwtModule.registerAsync({
       useFactory: () => ({
         secret: getJwtSecret(),
-        signOptions: { expiresIn: toExpiresIn(process.env.JWT_EXPIRES_IN || '15m') },
+        signOptions: { expiresIn: toExpiresIn(process.env.JWT_EXPIRES_IN || '24h') },
       }),
     }),
     UsersModule,

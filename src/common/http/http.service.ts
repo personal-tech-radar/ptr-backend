@@ -38,7 +38,8 @@ export class HttpService {
           method,
           headers: {
             'Content-Type': 'application/json',
-            Accept: 'application/json, text/html, application/xhtml+xml, application/xml;q=0.9, */*;q=0.8',
+            Accept:
+              'application/json, text/html, application/xhtml+xml, application/xml;q=0.9, */*;q=0.8',
             'User-Agent': `PersonalTechRadar/${process.env.APP_NAME || 'backend'} (+${process.env.APP_URL || 'http://localhost'})`,
             ...headers,
           },

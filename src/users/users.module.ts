@@ -11,6 +11,7 @@ import { LegacyUserSyncService } from './services/legacy-user-sync.service';
 import { OnboardingService } from './services/onboarding.service';
 import { UserCommandService } from './services/user-command.service';
 import { UserQueryService } from './services/user-query.service';
+import { UserAnalyticsService } from './services/user-analytics.service';
 
 @Module({
   // Only TaxonomyModule's exported services are consumed here (OnboardingService,
@@ -30,7 +31,13 @@ import { UserQueryService } from './services/user-query.service';
     SourcesModule,
   ],
   controllers: [UsersController, AdminUsersController],
-  providers: [UserCommandService, UserQueryService, OnboardingService, LegacyUserSyncService],
+  providers: [
+    UserCommandService,
+    UserQueryService,
+    UserAnalyticsService,
+    OnboardingService,
+    LegacyUserSyncService,
+  ],
   exports: [UserCommandService, UserQueryService, LegacyUserSyncService],
 })
 export class UsersModule {}

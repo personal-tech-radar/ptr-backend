@@ -2,9 +2,10 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import { IsEnum, IsInt, IsOptional, IsString, IsUUID, Min } from 'class-validator';
 import { ArticleFeedbackType } from '../entities/article-feedback.entity';
+import { AdminEventFilterDto } from '../../common/dto/admin-event-filter.dto';
 
 // Backs AdminArticleFeedbackController's GET /admin/article-feedback listing.
-export class AdminQueryArticleFeedbackDto {
+export class AdminQueryArticleFeedbackDto extends AdminEventFilterDto {
   @ApiPropertyOptional({ description: 'Page number', example: 1, minimum: 1, default: 1 })
   @IsOptional()
   @Type(() => Number)

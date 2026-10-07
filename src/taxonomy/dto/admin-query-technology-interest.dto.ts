@@ -1,6 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, TransformFnParams, Type } from 'class-transformer';
-import { IsBoolean, IsEnum, IsInt, IsOptional, Min } from 'class-validator';
+import { IsBoolean, IsEnum, IsInt, IsOptional, IsString, Min } from 'class-validator';
 import { TechnologyInterestKind } from '../entities/technology-interest.entity';
 
 // Read the raw query string so "false" is not coerced to true before validation.
@@ -13,6 +13,11 @@ const toBoolean = ({ obj, key }: TransformFnParams): boolean | undefined => {
 
 // Backs AdminTechnologyInterestsController's GET /admin/technology-interests listing.
 export class AdminQueryTechnologyInterestDto {
+  @ApiPropertyOptional({ description: 'Search canonical names and aliases' })
+  @IsOptional()
+  @IsString()
+  @Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value))
+  q?: string;
   @ApiPropertyOptional({ description: 'Page number', example: 1, minimum: 1, default: 1 })
   @IsOptional()
   @Type(() => Number)
