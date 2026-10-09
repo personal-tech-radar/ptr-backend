@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { InfoPageDocumentDto } from './info-page-document.dto';
 
 export class InfoPageResponseDto {
   @ApiProperty()
@@ -7,8 +8,8 @@ export class InfoPageResponseDto {
   @ApiProperty()
   title: string;
 
-  @ApiProperty({ description: 'Rich page content as a JSON document string.' })
-  fullText: string;
+  @ApiProperty({ description: 'Editor.js OutputData JSON.', type: InfoPageDocumentDto })
+  fullText: InfoPageDocumentDto;
 
   @ApiProperty()
   isActive: boolean;

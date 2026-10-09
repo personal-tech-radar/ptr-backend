@@ -46,6 +46,16 @@ function documentFor(page: SeedPage): string {
   });
 }
 
+function editorJsDocumentFor(page: SeedPage): string {
+  return JSON.stringify({
+    blocks: [
+      { type: 'header', data: { level: 2, text: page.heading } },
+      ...page.paragraphs.map((text) => ({ type: 'paragraph', data: { text } })),
+    ],
+    version: '2.x',
+  });
+}
+
 export class SeedDefaultInfoPages1786002000000 implements MigrationInterface {
   name = 'SeedDefaultInfoPages1786002000000';
 
@@ -65,11 +75,16 @@ export class SeedDefaultInfoPages1786002000000 implements MigrationInterface {
 
   public async down(queryRunner: QueryRunner): Promise<void> {
     for (const page of PAGES) {
-      const marker = `%"systemKey":"${page.key}"%`;
       await queryRunner.query(
         `DELETE FROM "info_pages"
-         WHERE "title" = $1 AND "fullText" LIKE $2`,
-        [page.title, marker],
+         WHERE "title" = $1
+           AND CASE
+             WHEN pg_input_is_valid("fullText", 'jsonb')
+             THEN "fullText"::jsonb->>'systemKey' = $2
+               OR "fullText"::jsonb = $3::jsonb
+             ELSE false
+           END`,
+        [page.title, page.key, editorJsDocumentFor(page)],
       );
     }
   }

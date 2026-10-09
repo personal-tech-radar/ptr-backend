@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-09
+
+- Changed administrator-managed info-page `fullText` from a JSON string in a text column to a
+  validated Editor.js OutputData object stored as PostgreSQL `jsonb`; legacy page content is
+  converted with a reversible storage-type migration and unsafe markup is escaped.
+
 ## 2026-10-06
 
 - Added administrator-authenticated `POST /admin/technology-interests` to create-or-reuse a

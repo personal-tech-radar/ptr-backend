@@ -1,4 +1,5 @@
 import { Column, DeleteDateColumn, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import type { InfoPageDocument } from '../models/info-page-document.model';
 
 @Entity('info_pages')
 export class InfoPage {
@@ -8,8 +9,8 @@ export class InfoPage {
   @Column({ type: 'varchar', length: 255 })
   title: string;
 
-  @Column({ type: 'text' })
-  fullText: string;
+  @Column({ type: 'jsonb' })
+  fullText: InfoPageDocument;
 
   @Column({ type: 'boolean', default: true })
   isActive: boolean;

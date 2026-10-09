@@ -141,9 +141,10 @@ and remains ordered strictly by publication date. `POST /public/feed/preview` is
 scores a pre-registration selection without creating a user.
 
 Information pages are managed through `/admin/info-pages` and exposed publicly through API-key-only
-`GET /info-pages` routes. Their `fullText` is a text column containing an editor-neutral JSON
-document string; the migration seeds editable examples for Legal Notice, Privacy Policy, and
-Cookies Policy.
+`GET /info-pages` routes. Their `fullText` is a PostgreSQL `jsonb` Editor.js OutputData object;
+list responses omit the content while detail responses include it. Supported blocks are headers
+(levels 2–6) and paragraphs with validated safe inline formatting and links. See the
+[info-pages API contract and migration notes](src/info-pages/README.md).
 
 `GET /public/feed/statistics` exposes API-key-only rolling pipeline statistics for the last 24
 hours: active sources, collected articles, and fully analyzed articles. `POST /public/feed/preview`
